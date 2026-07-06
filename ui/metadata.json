@@ -1,0 +1,8 @@
+{
+  "name": "Remix: WinPlanner",
+  "description": "Enterprise-grade resource scheduling, project capacity planner, and vacation allocation board featuring real-time visual timeline management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
