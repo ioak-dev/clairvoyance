@@ -91,7 +91,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
 
   return (
     <>
-      <div className="fixed left-[110px] top-14 bottom-0 w-80 bg-surface border-r border-default shadow-app-md z-30 flex flex-col">
+      <div className="fixed left-[110px] top-14 bottom-0 w-80 bg-surface border-r border-default shadow-app-md z-50 flex flex-col">
         <div className="app-card-header px-4 py-3 flex items-center justify-between shrink-0">
           <div>
             <h3 className="text-sm font-semibold text-primary">Filters</h3>

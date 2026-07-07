@@ -673,7 +673,7 @@ export default function App() {
 
         {/* Left rail — fixed to viewport, does not scroll with page content */}
         {isScheduleArea(activeTab) && (
-          <aside className="fixed top-14 left-0 bottom-0 z-20 w-[110px] bg-rail border-r border-default flex flex-col shrink-0">
+          <aside className="fixed top-14 left-0 bottom-0 z-40 w-[110px] bg-rail border-r border-default flex flex-col shrink-0">
             <div className="flex flex-col gap-1 py-4 px-2 flex-1 min-h-0 overflow-y-auto">
 
               {/* Projects sidebar selector */}
