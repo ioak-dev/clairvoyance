@@ -9,6 +9,7 @@ export const ROUTES = {
   masterPeople: '/master/people',
   dashboard: '/dashboard',
   reports: '/reports',
+  lab: '/lab',
   settings: '/settings',
 } as const;
 
@@ -20,6 +21,7 @@ export type AppTab =
   | 'requests'
   | 'dashboard'
   | 'reports'
+  | 'lab'
   | 'settings';
 
 export type ScheduleSidebar = 'projects' | 'resources';
@@ -38,6 +40,7 @@ const PATH_TO_ROUTE: Record<string, ParsedRoute> = {
   [ROUTES.masterPeople]: { tab: 'resources', scheduleSidebar: 'resources' },
   [ROUTES.dashboard]: { tab: 'dashboard', scheduleSidebar: 'resources' },
   [ROUTES.reports]: { tab: 'reports', scheduleSidebar: 'resources' },
+  [ROUTES.lab]: { tab: 'lab', scheduleSidebar: 'resources' },
   [ROUTES.settings]: { tab: 'settings', scheduleSidebar: 'resources' },
 };
 

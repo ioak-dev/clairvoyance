@@ -16,6 +16,7 @@ import { RequestsTab } from './components/RequestsTab';
 import { DashboardTab } from './components/DashboardTab';
 import { ReportsTab } from './components/ReportsTab';
 import { SettingsTab } from './components/SettingsTab';
+import { LabTab } from './components/LabTab';
 import { FilterSidebar } from './components/FilterSidebar';
 import type { FilterFormValues } from './components/FilterFormModal';
 
@@ -41,6 +42,13 @@ import {
   ChevronDown,
   Settings,
   LogOut,
+  CalendarDays,
+  Palmtree,
+  Database,
+  LayoutDashboard,
+  BarChart3,
+  FlaskConical,
+  type LucideIcon,
 } from 'lucide-react';
 import { useCreatePerson, useDeletePerson, usePeople, useUpdatePerson } from './hooks/usePeople';
 import { useCreateProject, useDeleteProject, useProjects, useUpdateProject } from './hooks/useProjects';
@@ -57,28 +65,53 @@ import {
   parsePathname,
   isScheduleArea,
 } from './lib/routes';
+import { CURRENT_DATE_STRING, countWeekdays } from './lib/dateUtils';
 
-const CURRENT_DATE_STRING = '2026-06-22'; // System date matching metadata
+// Helper to compute weekdays (excluding Sat/Sun) — re-exported via dateUtils
+const calculateWeekdays = countWeekdays;
 
-// Helper to compute weekdays (excluding Sat/Sun)
-const calculateWeekdays = (startStr: string, endStr: string): number => {
-  const start = new Date(startStr);
-  const end = new Date(endStr);
-  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return 0;
+function navMenuItemClass(isActive: boolean): string {
+  return `inline-flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-medium tracking-[0.02em] leading-none transition-colors cursor-pointer whitespace-nowrap ${
+    isActive
+      ? 'bg-nav-active text-primary'
+      : 'text-secondary hover:text-primary hover:bg-surface-hover'
+  }`;
+}
 
-  let count = 0;
-  const current = new Date(start);
-  let loops = 0;
-  while (current <= end && loops < 10000) {
-    loops++;
-    const day = current.getDay();
-    if (day !== 0 && day !== 6) {
-      count++;
-    }
-    current.setDate(current.getDate() + 1);
-  }
-  return count;
+function navMenuIconClass(isActive: boolean): string {
+  return `w-[15px] h-[15px] shrink-0 ${isActive ? 'text-primary' : 'text-tertiary'}`;
+}
+
+type NavMenuItemProps = {
+  label: string;
+  icon: LucideIcon;
+  isActive?: boolean;
+  onClick: () => void;
+  showChevron?: boolean;
+  chevronOpen?: boolean;
 };
+
+function NavMenuItem({
+  label,
+  icon: Icon,
+  isActive = false,
+  onClick,
+  showChevron = false,
+  chevronOpen = false,
+}: NavMenuItemProps) {
+  return (
+    <button type="button" onClick={onClick} className={navMenuItemClass(isActive)}>
+      <Icon className={navMenuIconClass(isActive)} strokeWidth={1.75} />
+      <span>{label}</span>
+      {showChevron && (
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-tertiary transition-transform ${chevronOpen ? 'rotate-180' : ''}`}
+          strokeWidth={1.75}
+        />
+      )}
+    </button>
+  );
+}
 
 export default function App() {
   // Theme state
@@ -482,48 +515,44 @@ export default function App() {
             />
           </a>
 
-          {/* Core Navigation — isolated items */}
-          <nav className="flex items-center gap-1">
-            {([
-              { path: ROUTES.schedulePeople, label: 'Schedule', isActive: isScheduleArea(activeTab) },
-              { path: ROUTES.timeOff, label: 'Time Off', isActive: activeTab === 'vacation' },
-            ]).map((tab) => (
-                <button
-                  key={tab.path}
-                  onClick={() => {
-                    setMasterDataMenuOpen(false);
-                    navigate(tab.path);
-                  }}
-                  className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
-                    tab.isActive
-                      ? 'bg-nav-active text-primary'
-                      : 'text-secondary hover:text-primary hover:bg-surface-hover'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
+          {/* Core Navigation */}
+          <nav className="flex items-center gap-0.5" aria-label="Main">
+            <NavMenuItem
+              label="Schedule"
+              icon={CalendarDays}
+              isActive={isScheduleArea(activeTab)}
+              onClick={() => {
+                setMasterDataMenuOpen(false);
+                navigate(ROUTES.schedulePeople);
+              }}
+            />
+            <NavMenuItem
+              label="Time Off"
+              icon={Palmtree}
+              isActive={activeTab === 'vacation'}
+              onClick={() => {
+                setMasterDataMenuOpen(false);
+                navigate(ROUTES.timeOff);
+              }}
+            />
 
             {/* Master Data dropdown */}
             <div className="relative" ref={masterDataMenuRef}>
-              <button
+              <NavMenuItem
+                label="Master Data"
+                icon={Database}
+                isActive={activeTab === 'projects' || activeTab === 'resources' || masterDataMenuOpen}
+                showChevron
+                chevronOpen={masterDataMenuOpen}
                 onClick={() => setMasterDataMenuOpen((open) => !open)}
-                className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap inline-flex items-center gap-1 ${
-                  activeTab === 'projects' || activeTab === 'resources' || masterDataMenuOpen
-                    ? 'bg-nav-active text-primary'
-                    : 'text-secondary hover:text-primary hover:bg-surface-hover'
-                }`}
-              >
-                Master Data
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${masterDataMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
+              />
 
               {masterDataMenuOpen && (
-                <div className="absolute top-full left-0 mt-2 w-72 bg-surface-raised rounded-2xl shadow-app-md border border-subtle p-4 z-50">
-                  <p className="text-[10px] font-semibold text-tertiary uppercase tracking-wider mb-2 px-1">
+                <div className="absolute top-full left-0 mt-2 w-72 bg-surface-raised rounded-2xl shadow-app-md border border-subtle p-3 z-50">
+                  <p className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] mb-2 px-2">
                     Master Data
                   </p>
-                  <div className="space-y-1">
+                  <div className="space-y-0.5">
                     {([
                       {
                         path: ROUTES.masterProjects,
@@ -545,18 +574,19 @@ export default function App() {
                       return (
                         <button
                           key={item.path}
+                          type="button"
                           onClick={() => {
                             navigate(item.path);
                             setMasterDataMenuOpen(false);
                           }}
-                          className={`w-full text-left p-3 rounded-xl flex items-start gap-3 transition-colors cursor-pointer ${
+                          className={`w-full text-left px-3 py-2.5 rounded-xl flex items-start gap-3 transition-colors cursor-pointer ${
                             isActive ? 'bg-surface-muted' : 'hover:bg-surface-muted'
                           }`}
                         >
-                          <Icon className="w-4 h-4 text-tertiary mt-0.5 shrink-0" />
+                          <Icon className={`w-[15px] h-[15px] mt-0.5 shrink-0 ${isActive ? 'text-primary' : 'text-tertiary'}`} strokeWidth={1.75} />
                           <div className="min-w-0">
-                            <div className="text-sm font-medium text-primary">{item.label}</div>
-                            <div className="text-xs text-secondary leading-snug">{item.description}</div>
+                            <div className="text-[13px] font-medium tracking-[0.02em] text-primary">{item.label}</div>
+                            <div className="text-xs text-secondary leading-snug tracking-wide mt-0.5">{item.description}</div>
                           </div>
                         </button>
                       );
@@ -566,29 +596,42 @@ export default function App() {
               )}
             </div>
 
-            {([
-              { path: ROUTES.dashboard, tab: 'dashboard' as const, label: 'Dashboard' },
-              { path: ROUTES.reports, tab: 'reports' as const, label: 'Reports' },
-              { path: ROUTES.settings, tab: 'settings' as const, label: 'Settings' },
-            ]).map((tab) => {
-              const isActive = activeTab === tab.tab;
-              return (
-                <button
-                  key={tab.path}
-                  onClick={() => {
-                    setMasterDataMenuOpen(false);
-                    navigate(tab.path);
-                  }}
-                  className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
-                    isActive
-                      ? 'bg-nav-active text-primary'
-                      : 'text-secondary hover:text-primary hover:bg-surface-hover'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
+            <NavMenuItem
+              label="Dashboard"
+              icon={LayoutDashboard}
+              isActive={activeTab === 'dashboard'}
+              onClick={() => {
+                setMasterDataMenuOpen(false);
+                navigate(ROUTES.dashboard);
+              }}
+            />
+            <NavMenuItem
+              label="Reports"
+              icon={BarChart3}
+              isActive={activeTab === 'reports'}
+              onClick={() => {
+                setMasterDataMenuOpen(false);
+                navigate(ROUTES.reports);
+              }}
+            />
+            <NavMenuItem
+              label="Lab"
+              icon={FlaskConical}
+              isActive={activeTab === 'lab'}
+              onClick={() => {
+                setMasterDataMenuOpen(false);
+                navigate(ROUTES.lab);
+              }}
+            />
+            <NavMenuItem
+              label="Settings"
+              icon={Settings}
+              isActive={activeTab === 'settings'}
+              onClick={() => {
+                setMasterDataMenuOpen(false);
+                navigate(ROUTES.settings);
+              }}
+            />
           </nav>
 
         </div>
@@ -870,6 +913,9 @@ export default function App() {
               resources={resources}
               projects={projects}
               allocations={allocations}
+              requests={requests}
+              vacations={vacations}
+              referenceDate={CURRENT_DATE_STRING}
             />
           )}
 
@@ -880,6 +926,8 @@ export default function App() {
               allocations={allocations}
             />
           )}
+
+          {activeTab === 'lab' && <LabTab />}
 
           {activeTab === 'settings' && (
             <SettingsTab
