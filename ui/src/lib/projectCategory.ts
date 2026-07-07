@@ -176,15 +176,23 @@ export function getAllocationBlockChrome(category: ProjectCategory): AllocationB
   };
 }
 
-/** Request-lane blocks (assigned vs open skill request). */
-export function getRequestBlockChrome(assigned: boolean): AllocationBlockChrome {
-  const fill: Rgb = assigned ? { r: 59, g: 130, b: 246 } : { r: 96, g: 165, b: 250 };
+/** Open / unassigned request — transparent category tint + dotted outline (no stripes). */
+export function getRequestBlockChrome(category: ProjectCategory = 'Billable'): AllocationBlockChrome {
+  const { fill, border } = getProjectCategoryBlockRgb(category);
   return {
-    fillColor: rgb(fill),
-    borderColor: assigned ? 'rgb(147, 197, 253)' : 'rgb(96, 165, 250)',
-    stripeColor: lightenRgb(fill, 0.035),
-    textClass: 'text-white',
-    badgeClass: SCHEDULE_BLOCK_BADGE_CLASS,
+    fillColor: `rgba(${fill.r}, ${fill.g}, ${fill.b}, 0.2)`,
+    borderColor: rgb(border),
+    stripeColor: 'transparent',
+    textClass: 'text-primary',
+    badgeClass: 'bg-black/8 text-primary border border-black/10 dark:bg-white/10 dark:text-primary dark:border-white/15',
+  };
+}
+
+/** Unassigned requests — transparent fill only, no allocation stripe pattern. */
+export function getRequestBlockBackground(chrome: AllocationBlockChrome): BlockBackgroundStyle {
+  return {
+    backgroundColor: chrome.fillColor,
+    borderColor: chrome.borderColor,
   };
 }
 

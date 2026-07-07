@@ -10,6 +10,7 @@ import {
   getProjectCategory,
   getAllocationBlockChrome,
   getRequestBlockChrome,
+  getRequestBlockBackground,
   getAllocationBlockBackground,
   SCHEDULE_BLOCK_BADGE_CLASS,
   type ProjectCategory,
@@ -428,12 +429,25 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                     let blockChrome: AllocationBlockChrome | null = null;
 
                     if (viewMode === 'requests' && lane.request) {
-                      blockChrome = getRequestBlockChrome(!!lane.request.resourceId);
-                      blockSurfaceStyle = getAllocationBlockBackground(alloc.billablePercent, blockChrome);
+                      const isAssigned = !!lane.request.resourceId;
+                      const category = row.project
+                        ? getProjectCategory(row.project)
+                        : 'Billable';
+                      if (isAssigned) {
+                        blockCategory = category;
+                        blockChrome = getAllocationBlockChrome(category);
+                        blockSurfaceStyle = getAllocationBlockBackground(
+                          alloc.billablePercent,
+                          blockChrome,
+                        );
+                      } else {
+                        blockChrome = getRequestBlockChrome(category);
+                        blockSurfaceStyle = getRequestBlockBackground(blockChrome);
+                      }
                       textClass = blockChrome.textClass;
                       badgeClass = blockChrome.badgeClass;
-                      if (!lane.request.resourceId) {
-                        borderClass = 'border border-dashed';
+                      if (!isAssigned) {
+                        borderClass = 'border border-dotted';
                       }
                     } else {
                       const proj =
@@ -488,7 +502,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                               {blockLabel}
                             </span>
                             {showPersonIcon && (
-                              <User className="w-3 h-3 text-blue-600 hover:scale-110 transition-transform shrink-0" />
+                              <User className="w-3 h-3 text-secondary hover:scale-110 transition-transform shrink-0" />
                             )}
                             {showUserCheckIcon && (
                               <UserCheck className="w-3.5 h-3.5 text-blue-600 hover:scale-110 transition-transform shrink-0" />
@@ -499,9 +513,9 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                           </span>
                         </div>
                         <div className="flex justify-between items-end leading-none w-full">
-                          {(viewMode !== 'requests' || !lane.request) ? (
+                          {(viewMode !== 'requests' || !lane.request || !!lane.request.resourceId) ? (
                             <span className="text-[9px] font-medium opacity-85 truncate mr-2">
-                              {isTimeOff ? 'Time Off' : blockCategory || 'Billable'}
+                              {isTimeOff ? 'Time Off' : blockCategory || (lane.request ? 'Open request' : 'Billable')}
                             </span>
                           ) : (
                             <div className="flex-1" />
