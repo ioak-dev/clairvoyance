@@ -6,8 +6,8 @@
   --color-blue-200: #bfd6f6;
   --color-blue-300: #96bbec;
   --color-blue-400: #689ae0;
-  --color-blue-500: #4e82c2; /* Base muted blue */
-  --color-blue-600: #4e82c2; /* Also mapped to muted blue for strong visibility */
+  --color-blue-500: #4e82c2;
+  --color-blue-600: #4e82c2;
   --color-blue-700: #38649b;
   --color-blue-800: #2c4e7a;
   --color-blue-900: #254166;
@@ -16,530 +16,234 @@
 
 @variant dark (&:where(.dark, .dark *));
 
+/* ── Design tokens ──
+   Light: neutral slate workspace
+   Dark: Linear-inspired layered grays (L0 backdrop → L3 cards → L4 popovers)
+   Reference: linear.app — warm charcoal, not pure black; borders + elevation separate layers
+── */
+:root {
+  color-scheme: light;
+
+  --app-bg: #f4f6f8;
+  --app-bg-subtle: #eceff3;
+  --app-surface: #ffffff;
+  --app-surface-raised: #ffffff;
+  --app-surface-muted: #f8fafc;
+  --app-surface-hover: #f1f5f9;
+  --app-header: #ffffff;
+  --app-rail: #ffffff;
+  --app-border: #e2e8f0;
+  --app-border-subtle: #eef2f6;
+  --app-text: #0f172a;
+  --app-text-secondary: #64748b;
+  --app-text-tertiary: #94a3b8;
+  --app-input-bg: #f8fafc;
+  --app-nav-active: #eef2f6;
+  --app-overlay: rgba(15, 23, 42, 0.45);
+  --app-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --app-shadow-md: 0 4px 16px rgba(15, 23, 42, 0.08);
+  --app-scrollbar-track: #f1f5f9;
+  --app-scrollbar-thumb: #cbd5e1;
+  --app-weekend-cell: rgba(241, 245, 249, 0.65);
+  --app-grid-header: #f8fafc;
+  --app-stripe-a: rgba(245, 158, 11, 0.08);
+  --app-stripe-b: rgba(245, 158, 11, 0.18);
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* L0 — outer backdrop */
+  --app-bg: #141417;
+  /* L1 — scrollable main area (slightly lifted from backdrop) */
+  --app-bg-subtle: #18181c;
+  /* L1.5 — persistent chrome (header, left rail) */
+  --app-header: #1c1c21;
+  --app-rail: #1c1c21;
+  /* L2 — recessed areas: table headers, inputs, filter bars */
+  --app-surface-muted: #1f1f24;
+  --app-input-bg: #1f1f24;
+  --app-grid-header: #1f1f24;
+  /* L3 — primary cards & panels (clearly above canvas) */
+  --app-surface: #26262c;
+  /* L4 — dropdowns, modals, elevated popovers */
+  --app-surface-raised: #2f2f36;
+  --app-surface-hover: #36363e;
+  --app-nav-active: #2f2f36;
+
+  --app-border-subtle: #32323a;
+  --app-border: #43434d;
+
+  --app-text: #ededf0;
+  --app-text-secondary: #a8a8b3;
+  --app-text-tertiary: #787884;
+
+  --app-overlay: rgba(8, 8, 12, 0.62);
+  --app-shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --app-shadow-md: 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 32px rgba(0, 0, 0, 0.38);
+
+  --app-scrollbar-track: #18181c;
+  --app-scrollbar-thumb: #43434d;
+
+  --app-weekend-cell: color-mix(in srgb, var(--app-surface-muted) 70%, #2a2a32);
+  --app-stripe-a: rgba(245, 158, 11, 0.07);
+  --app-stripe-b: rgba(245, 158, 11, 0.14);
+}
+
+/* ── Semantic utilities ── */
+@utility bg-canvas {
+  background-color: var(--app-bg);
+}
+@utility bg-canvas-subtle {
+  background-color: var(--app-bg-subtle);
+}
+@utility bg-surface {
+  background-color: var(--app-surface);
+}
+@utility bg-surface-raised {
+  background-color: var(--app-surface-raised);
+}
+@utility bg-surface-muted {
+  background-color: var(--app-surface-muted);
+}
+@utility bg-surface-hover {
+  background-color: var(--app-surface-hover);
+}
+@utility bg-header {
+  background-color: var(--app-header);
+}
+@utility bg-rail {
+  background-color: var(--app-rail);
+}
+@utility bg-input {
+  background-color: var(--app-input-bg);
+}
+@utility bg-grid-header {
+  background-color: var(--app-grid-header);
+}
+@utility bg-weekend-cell {
+  background-color: var(--app-weekend-cell);
+}
+@utility bg-nav-active {
+  background-color: var(--app-nav-active);
+}
+@utility border-subtle {
+  border-color: var(--app-border-subtle);
+}
+@utility border-default {
+  border-color: var(--app-border);
+}
+@utility text-primary {
+  color: var(--app-text);
+}
+@utility text-secondary {
+  color: var(--app-text-secondary);
+}
+@utility text-tertiary {
+  color: var(--app-text-tertiary);
+}
+@utility shadow-app-sm {
+  box-shadow: var(--app-shadow-sm);
+}
+@utility shadow-app-md {
+  box-shadow: var(--app-shadow-md);
+}
+
 @utility bg-stripes {
   background-image: repeating-linear-gradient(
     45deg,
-    rgba(245, 158, 11, 0.08),
-    rgba(245, 158, 11, 0.08) 6px,
-    rgba(245, 158, 11, 0.18) 6px,
-    rgba(245, 158, 11, 0.18) 12px
+    var(--app-stripe-a),
+    var(--app-stripe-a) 6px,
+    var(--app-stripe-b) 6px,
+    var(--app-stripe-b) 12px
   );
 }
 
-/* Base Dark Mode Styling Overrides */
-.dark body,
-.dark #root {
-  background-color: #060913;
-  color: #f8fafc;
+/* ── Base ── */
+body,
+#root {
+  background-color: var(--app-bg);
+  color: var(--app-text);
 }
 
-.dark #winplanner-root-app {
-  background-color: #060913 !important;
+input,
+select,
+textarea {
+  background-color: var(--app-input-bg);
+  border-color: var(--app-border);
+  color: var(--app-text);
 }
 
-.dark main {
-  background-color: #060913 !important;
+input::placeholder,
+textarea::placeholder {
+  color: var(--app-text-tertiary);
 }
 
-/* Generalized dark utilities to target grid background elements perfectly */
-.dark .bg-white {
-  background-color: #0c101d !important;
-}
-
-.dark .bg-slate-50 {
-  background-color: #121829 !important;
-}
-
-.dark .bg-slate-[50\/45], 
-.dark .bg-slate-50\/45,
-.dark [class*="bg-slate-50"] {
-  background-color: rgba(18, 24, 41, 0.45) !important;
-}
-
-.dark .hover\:bg-slate-50\/50:hover,
-.dark .hover\:bg-slate-50\/60:hover,
-.dark .hover\:bg-slate-50\/85:hover {
-  background-color: rgba(30, 41, 59, 0.5) !important;
-}
-
-.dark .border-gray-100,
-.dark .border-gray-120,
-.dark .border-gray-150,
-.dark .border-slate-200,
-.dark .border-r,
-.dark .border-b,
-.dark .border-t,
-.dark .border-gray-300 {
-  border-color: #1f293d !important;
-}
-
-/* Text Overrides to guarantee readability and contrast (excluding buttons and their contents) */
-.dark .text-slate-800:not(button):not(button *),
-.dark .text-gray-850:not(button):not(button *),
-.dark .text-gray-800:not(button):not(button *),
-.dark .text-gray-700:not(button):not(button *),
-.dark .text-slate-700:not(button):not(button *),
-.dark .text-slate-900:not(button):not(button *),
-.dark .text-gray-900:not(button):not(button *) {
-  color: #f8fafc !important;
-}
-
-.dark .text-slate-600:not(button):not(button *),
-.dark .text-gray-600:not(button):not(button *),
-.dark .text-slate-500:not(button):not(button *),
-.dark .text-gray-500:not(button):not(button *),
-.dark .text-gray-400:not(button):not(button *),
-.dark .text-slate-400:not(button):not(button *) {
-  color: #94a3b8 !important;
-}
-
-.dark .text-slate-300:not(button):not(button *),
-.dark .text-gray-300:not(button):not(button *) {
-  color: #cbd5e1 !important;
-}
-
-/* Dark Mode Button Styling Standardizer */
-.dark button {
-  transition: all 0.2s ease-in-out;
-}
-
-/* Secondary / Outline / Gray / White buttons in dark mode */
-.dark button.bg-white,
-.dark button.bg-slate-100,
-.dark button.bg-slate-50,
-.dark button.bg-gray-50,
-.dark button.bg-gray-100,
-.dark button.border-gray-200,
-.dark button.border-gray-300,
-.dark button.border-slate-200 {
-  background-color: #121829 !important;
-  border-color: #1f293d !important;
-  color: #cbd5e1 !important;
-}
-
-.dark button.bg-white *,
-.dark button.bg-slate-100 *,
-.dark button.bg-slate-50 *,
-.dark button.bg-gray-50 *,
-.dark button.bg-gray-100 *,
-.dark button.border-gray-200 *,
-.dark button.border-gray-300 *,
-.dark button.border-slate-200 * {
-  color: inherit !important;
-}
-
-.dark button.bg-white:hover,
-.dark button.bg-slate-100:hover,
-.dark button.bg-slate-50:hover,
-.dark button.bg-gray-50:hover,
-.dark button.bg-gray-100:hover,
-.dark button.border-gray-200:hover,
-.dark button.border-gray-300:hover,
-.dark button.border-slate-200:hover {
-  background-color: #1e293b !important;
-  color: #ffffff !important;
-}
-
-/* Active / Status Toggle buttons & containers in dark mode */
-.dark button.bg-blue-50,
-.dark .bg-blue-50 {
-  background-color: rgba(30, 58, 138, 0.3) !important;
-  color: #60a5fa !important;
-}
-.dark button.bg-blue-50 *,
-.dark .bg-blue-50 * {
-  color: #60a5fa !important;
-}
-
-.dark button.bg-amber-50,
-.dark .bg-amber-50 {
-  background-color: rgba(120, 53, 4, 0.25) !important;
-  color: #fbbf24 !important;
-}
-.dark button.bg-amber-50 *,
-.dark .bg-amber-50 * {
-  color: #fbbf24 !important;
-}
-
-.dark button.bg-emerald-50,
-.dark .bg-emerald-50 {
-  background-color: rgba(6, 78, 59, 0.3) !important;
-  color: #34d399 !important;
-}
-.dark button.bg-emerald-50 *,
-.dark .bg-emerald-50 * {
-  color: #34d399 !important;
-}
-
-.dark button.bg-indigo-50,
-.dark .bg-indigo-50 {
-  background-color: rgba(67, 56, 202, 0.25) !important;
-  color: #818cf8 !important;
-}
-.dark button.bg-indigo-50 *,
-.dark .bg-indigo-50 * {
-  color: #818cf8 !important;
-}
-
-.dark button.bg-red-50,
-.dark .bg-red-50 {
-  background-color: rgba(153, 27, 27, 0.25) !important;
-  color: #f87171 !important;
-}
-.dark button.bg-red-50 *,
-.dark .bg-red-50 * {
-  color: #f87171 !important;
-}
-
-/* Generic icon-only or text-less buttons */
-.dark button.text-gray-400:hover,
-.dark button.text-slate-400:hover {
-  color: #ffffff !important;
-}
-
-/* Header */
-.dark header {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3) !important;
-}
-
-/* Navigation tabs */
-.dark nav button {
-  color: #94a3b8 !important;
-}
-
-.dark nav button:hover {
-  color: #ffffff !important;
-  background-color: rgba(30, 41, 59, 0.3) !important;
-}
-
-.dark nav button.text-blue-600 {
-  color: #3b82f6 !important;
-  background-color: rgba(59, 130, 246, 0.15) !important;
-  border-color: #3b82f6 !important;
-}
-
-/* Sidebar and Main Split Pane aside */
-.dark aside {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-}
-
-.dark aside button {
-  color: #94a3b8 !important;
-}
-
-.dark aside button:hover {
-  background-color: #121829 !important;
-  color: #f8fafc !important;
-}
-
-.dark aside button.bg-blue-50 {
-  background-color: rgba(30, 64, 175, 0.3) !important;
-  border-color: #3b82f6 !important;
-  color: #60a5fa !important;
-}
-
-.dark aside div.border-t {
-  border-color: #1f293d !important;
-}
-
-/* Filter button at the bottom of aside in dark mode when closed */
-.dark aside button.border-dashed {
-  border: none !important;
-  background-color: #121829 !important;
-  color: #94a3b8 !important;
-}
-
-.dark aside button.border-dashed:hover {
-  background-color: rgba(30, 64, 175, 0.2) !important;
-  color: #60a5fa !important;
-}
-
-/* Sidebar Drawer Panel & Content Overrides */
-.dark div.absolute.left-\[110px\] {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-  box-shadow: 10px 0 30px -5px rgba(0, 0, 0, 0.5) !important;
-  color: #f8fafc !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-slate-50\/50,
-.dark div.absolute.left-\[110px\] div.border-b {
-  background-color: #121829 !important;
-  border-color: #1f293d !important;
-}
-
-/* Sidebar lists container background */
-.dark div.absolute.left-\[110px\] div.bg-slate-50\/30 {
-  background-color: #060913 !important;
-}
-
-/* Individual list item cards */
-.dark div.absolute.left-\[110px\] div.bg-white {
-  background-color: #121829 !important;
-  border-color: #1f293d !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-white:hover {
-  border-color: #334155 !important;
-}
-
-/* Fix hover color in dark mode for list items inside the drawer */
-.dark div.absolute.left-\[110px\] div.hover\:bg-gray-50:hover {
-  background-color: #1e293b !important;
-}
-
-.dark div.absolute.left-\[110px\] div.hover\:bg-gray-50:hover * {
-  color: #ffffff !important;
-}
-
-/* Selected list item card styles */
-.dark div.absolute.left-\[110px\] div.bg-blue-50\/70 {
-  background-color: rgba(30, 64, 175, 0.25) !important;
-  border-color: #3b82f6 !important;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15) !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-blue-50\/70 span.text-blue-800 {
-  color: #60a5fa !important;
-}
-
-/* Non-selected Group Headers */
-.dark div.absolute.left-\[110px\] div.bg-slate-100\/85 {
-  background-color: #1a2236 !important;
-  border-color: #2e3c5a !important;
-  color: #e2e8f0 !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-slate-100\/85:hover {
-  background-color: #232e48 !important;
-  border-color: #3b82f6 !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-slate-100\/85 span.text-slate-500 {
-  color: #94a3b8 !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-slate-100\/85 span.bg-slate-200 {
-  background-color: #2d3748 !important;
-  color: #cbd5e1 !important;
-}
-
-/* Selected Group Headers */
-.dark div.absolute.left-\[110px\] div.bg-blue-600 {
-  background-color: #2563eb !important;
-  border-color: #3b82f6 !important;
-  color: #ffffff !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-blue-600 span.text-white {
-  color: #ffffff !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-blue-600 span.bg-blue-700 {
-  background-color: #1d4ed8 !important;
-  color: #eff6ff !important;
-}
-
-/* Input search field inside drawer */
-.dark div.absolute.left-\[110px\] input {
-  background-color: #121829 !important;
-  border-color: #1f293d !important;
-  color: #f8fafc !important;
-}
-
-.dark div.absolute.left-\[110px\] input::placeholder {
-  color: #64748b !important;
-}
-
-.dark div.absolute.left-\[110px\] input:focus {
-  border-color: #3b82f6 !important;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25) !important;
-}
-
-/* Close button and other action buttons */
-.dark div.absolute.left-\[110px\] button.hover\:bg-gray-100:hover {
-  background-color: #1e293b !important;
-  color: #f8fafc !important;
-}
-
-.dark div.absolute.left-\[110px\] div.bg-blue-50 {
-  background-color: rgba(30, 64, 175, 0.2) !important;
-  border-color: #3b82f6 !important;
-  color: #60a5fa !important;
-}
-
-.dark div.absolute.left-\[110px\] button.hover\:bg-blue-100:hover {
-  background-color: rgba(30, 64, 175, 0.4) !important;
-  color: #93c5fd !important;
-}
-
-/* Labels & texts inside cards */
-.dark div.absolute.left-\[110px\] span.text-blue-600.bg-blue-50 {
-  background-color: rgba(30, 64, 175, 0.2) !important;
-  color: #60a5fa !important;
-}
-
-.dark div.absolute.left-\[110px\] span.text-blue-800.bg-blue-200 {
-  background-color: rgba(30, 64, 175, 0.4) !important;
-  color: #93c5fd !important;
-}
-
-.dark div.absolute.left-\[110px\] span.text-gray-600,
-.dark div.absolute.left-\[110px\] span.text-gray-550,
-.dark div.absolute.left-\[110px\] span.text-gray-500,
-.dark div.absolute.left-\[110px\] div.text-gray-600,
-.dark div.absolute.left-\[110px\] div.text-gray-550,
-.dark div.absolute.left-\[110px\] div.text-gray-500 {
-  color: #94a3b8 !important;
-}
-
-.dark div.absolute.left-\[110px\] span.text-gray-450 {
-  color: #64748b !important;
-}
-
-.dark div.absolute.left-\[110px\] h3,
-.dark div.absolute.left-\[110px\] h4,
-.dark div.absolute.left-\[110px\] pre {
-  color: #f8fafc !important;
-}
-
-.dark div.absolute.left-\[110px\] p,
-.dark div.absolute.left-\[110px\] span {
-  color: #94a3b8 !important;
-}
-
-/* SchedulerGrid & Boards */
-.dark div#scheduler-grid-main-board {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3) !important;
-}
-
-.dark div.bg-white.shadow-amber-50,
-.dark div.bg-white.rounded-2xl {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-}
-
-/* Grid Headers */
-.dark div.bg-slate-50.border-b {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-}
-
-.dark div.bg-slate-50.border-b div.sticky,
-.dark div.bg-slate-50.border-b div {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-  color: #94a3b8 !important;
-}
-
-/* Sticky Column rows in scheduler */
-.dark .divide-y > div {
-  border-color: #1f293d !important;
-}
-
-.dark div.w-\[190px\].sticky {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-  color: #f8fafc !important;
-}
-
-.dark div.w-\[190px\].sticky h4 {
-  color: #f8fafc !important;
-}
-
-.dark div.w-\[190px\].sticky p {
-  color: #94a3b8 !important;
-}
-
-/* Custom background cells on the grid */
-.dark div.border-r {
-  border-color: #1f293d !important;
-}
-
-/* Add Resource empty row */
-.dark div#add-resource-grid-row {
-  background-color: rgba(12, 16, 29, 0.4) !important;
-}
-
-.dark div#add-resource-grid-row:hover {
-  background-color: rgba(16, 185, 129, 0.08) !important;
-}
-
-.dark div#add-resource-grid-row div.sticky {
-  background-color: #0c101d !important;
-}
-
-/* Vacation, Requests, Settings and Dashboard items */
-.dark select,
-.dark input[type="text"],
-.dark input[type="date"],
-.dark input[type="number"],
-.dark input[type="url"],
-.dark textarea {
-  background-color: #121829 !important;
-  border-color: #27354f !important;
-  color: #ffffff !important;
-}
-
-.dark select:focus,
-.dark input:focus,
-.dark textarea:focus {
-  border-color: #3b82f6 !important;
+input:focus,
+select:focus,
+textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25) !important;
+  border-color: var(--color-blue-500);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-blue-500) 25%, transparent);
 }
 
-.dark div.bg-white.rounded-xl,
-.dark div.bg-white.rounded-2xl.border,
-.dark div.bg-white.border {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
+.tint-blue {
+  background-color: color-mix(in srgb, var(--color-blue-500) 12%, var(--app-surface));
+  color: var(--color-blue-700);
+  border-color: color-mix(in srgb, var(--color-blue-500) 22%, var(--app-border));
+}
+.dark .tint-blue {
+  color: #93c5fd;
 }
 
-.dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6 {
-  color: #f8fafc !important;
+.tint-emerald {
+  background-color: color-mix(in srgb, #10b981 12%, var(--app-surface));
+  color: #047857;
+  border-color: color-mix(in srgb, #10b981 22%, var(--app-border));
+}
+.dark .tint-emerald {
+  color: #6ee7b7;
 }
 
-.dark p, .dark label, .dark span.text-gray-600, .dark span.text-gray-500 {
-  color: #94a3b8 !important;
+.tint-amber {
+  background-color: color-mix(in srgb, #f59e0b 12%, var(--app-surface));
+  color: #b45309;
+  border-color: color-mix(in srgb, #f59e0b 22%, var(--app-border));
+}
+.dark .tint-amber {
+  color: #fcd34d;
 }
 
-/* Modal and backdrop custom styles */
-.dark div.fixed.inset-0.bg-black\/50 {
-  background-color: rgba(0, 0, 0, 0.75) !important;
+.tint-red {
+  background-color: color-mix(in srgb, #ef4444 12%, var(--app-surface));
+  color: #b91c1c;
+  border-color: color-mix(in srgb, #ef4444 22%, var(--app-border));
+}
+.dark .tint-red {
+  color: #fca5a5;
 }
 
-.dark div.fixed.inset-0.bg-black\/50 div.bg-white {
-  background-color: #0c101d !important;
-  border-color: #1f293d !important;
-  color: #f8fafc !important;
+.tint-purple {
+  background-color: color-mix(in srgb, #8b5cf6 12%, var(--app-surface));
+  color: #6d28d9;
+  border-color: color-mix(in srgb, #8b5cf6 22%, var(--app-border));
+}
+.dark .tint-purple {
+  color: #c4b5fd;
 }
 
-.dark div.fixed.inset-0.bg-black\/50 div.bg-slate-50 {
-  background-color: #121829 !important;
-  border-color: #1f293d !important;
+.modal-overlay {
+  background-color: var(--app-overlay);
 }
 
-/* Weekend Column backgrounds in scheduler grid */
-.dark .bg-slate-50\/40,
-.dark .bg-slate-50\/45,
-.dark .bg-slate-100\/50 {
-  background-color: rgba(18, 24, 41, 0.45) !important;
+.dark .app-logo {
+  filter: brightness(0) invert(1);
+  opacity: 0.88;
 }
 
-/* Custom scrollbar support for clean modern look in both light and dark mode */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 #f1f5f9;
-}
-
-.dark * {
-  scrollbar-color: #1f293d #060913;
+  scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
 }
 
 ::-webkit-scrollbar {
@@ -548,39 +252,36 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: var(--app-scrollbar-track);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--app-scrollbar-thumb);
   border-radius: 4px;
-  border: 1.5px solid #f1f5f9;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-/* Dark mode overrides for scrollbars */
-.dark ::-webkit-scrollbar-track {
-  background: #060913;
-}
-
-.dark ::-webkit-scrollbar-thumb {
-  background: #1f293d;
-  border-radius: 4px;
-  border: 1.5px solid #060913;
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
-
-/* Extra sleek thin scrollbars for scheduler grid */
 .scrollbar-thin::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
+.app-card {
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 0.75rem;
+  box-shadow: var(--app-shadow-sm);
+}
 
+.dark .app-card {
+  border-color: var(--app-border);
+}
+
+.app-card-header {
+  background-color: var(--app-surface-muted);
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.dark .app-card-header {
+  border-bottom-color: var(--app-border);
+}

@@ -105,7 +105,7 @@ export const VacationTab: React.FC<VacationTabProps> = ({
   return (
     <div className="space-y-6" id="vacation-tab-container">
       {/* Modern Filter Section */}
-      <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-gray-100 dark:border-slate-800/80 shadow-sm" id="vacation-filter-section">
+      <div className="app-card p-5" id="vacation-filter-section">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Resource Search */}
           <div className="relative">
@@ -166,7 +166,7 @@ export const VacationTab: React.FC<VacationTabProps> = ({
       </div>
 
        {/* Vacation Table View */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800/80 shadow-sm overflow-hidden" id="vacation-list-wrapper">
+      <div className="app-card overflow-hidden" id="vacation-list-wrapper">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse table-auto" id="vacation-details-table">
             <thead>

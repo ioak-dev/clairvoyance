@@ -3,9 +3,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { Resource, Project, Allocation, Vacation, BookingRequest } from '../types';
-import { Edit2, AlertCircle, Info, Calendar, Plus, User, X, Check, Award, Search, UserCheck } from 'lucide-react';
+import { Edit2, AlertCircle, Info, Calendar, Plus, User, X, Check, Award, Search, UserCheck, Loader2 } from 'lucide-react';
+import {
+  getProjectCategory,
+  getAllocationBlockChrome,
+  getRequestBlockChrome,
+  getAllocationBlockBackground,
+  SCHEDULE_BLOCK_BADGE_CLASS,
+  type ProjectCategory,
+  type AllocationBlockChrome,
+} from '../lib/projectCategory';
+import {
+  filterPeople,
+  filterProjects,
+  filterRequests,
+} from '../lib/filterEngine';
+import { buildDateRange, addDays } from '../lib/dateUtils';
+import { useSchedulesInRange } from '../hooks/useSchedules';
+import { useHorizontalTimelineWindow } from '../hooks/useHorizontalTimelineWindow';
+
+const COL_WIDTH = 52;
+const FETCH_BUFFER_DAYS = 21;
 
 interface SchedulerGridProps {
   resources: Resource[];
@@ -13,7 +33,7 @@ interface SchedulerGridProps {
   allocations: Allocation[];
   vacations: Vacation[];
   requests?: BookingRequest[];
-  searchQuery: string;
+  filterCriteria?: Record<string, unknown> | null;
   timelineStartDate: string;
   timelineEndDate: string;
   viewMode?: 'resources' | 'projects' | 'requests';
@@ -21,17 +41,17 @@ interface SchedulerGridProps {
   onOpenScheduleModalWithRes: (resId: string, projId?: string) => void;
   onAddResourceClick: () => void;
   onAddProjectClick?: () => void;
-  onApproveRequestWithResource?: (requestId: string, resourceId: string) => void;
-  onUnassignRequest?: (requestId: string) => void;
+  onApproveRequestWithResource?: (requestId: string, resourceId: string) => void | Promise<void>;
+  onUnassignRequest?: (requestId: string) => void | Promise<void>;
 }
 
 export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
   resources,
   projects,
-  allocations,
+  allocations: _allocations,
   vacations,
   requests = [],
-  searchQuery,
+  filterCriteria = null,
   timelineStartDate,
   timelineEndDate,
   viewMode = 'resources',
@@ -45,65 +65,28 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
   const [selectedRequestForSkills, setSelectedRequestForSkills] = useState<BookingRequest | null>(null);
   const [popupSearch, setPopupSearch] = useState('');
 
-  // Define full date window for scheduler based on input date range
-  const dateRange = useMemo(() => {
-    let start = new Date(timelineStartDate || '2026-06-01');
-    let end = new Date(timelineEndDate || '2026-07-25');
+  const { scrollRef, windowStart, windowEnd, handleScroll } = useHorizontalTimelineWindow(
+    timelineStartDate,
+    timelineEndDate,
+  );
 
-    // Safe falls backs on invalid entries
-    if (isNaN(start.getTime())) {
-      start = new Date(2026, 5, 1);
-    }
-    if (isNaN(end.getTime())) {
-      end = new Date(2026, 6, 25);
-    }
+  const fetchStart = addDays(windowStart, -FETCH_BUFFER_DAYS);
+  const fetchEnd = addDays(windowEnd, FETCH_BUFFER_DAYS);
+  const {
+    data: rangeAllocations = [],
+    isFetching: isFetchingSchedules,
+  } = useSchedulesInRange(fetchStart, fetchEnd);
 
-    // Keep range chronologically sorted
-    if (start > end) {
-      const temp = start;
-      start = end;
-      end = temp;
-    }
+  const allocations = rangeAllocations;
 
-    // Cap the date range to max 366 days to avoid browser freezing
-    const diffTime = Math.abs(end.getTime() - start.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    if (diffDays > 366) {
-      end = new Date(start);
-      end.setDate(end.getDate() + 365);
-    }
+  const onTimelineScroll = useCallback(() => {
+    handleScroll(COL_WIDTH);
+  }, [handleScroll]);
 
-    const daysList: { dateStr: string; dayLabel: string; dayNum: number; isWeekend: boolean; monthName: string }[] = [];
-    const temp = new Date(start);
-
-    let loops = 0;
-    while (temp <= end && loops < 500) {
-      loops++;
-      const year = temp.getFullYear();
-      const month = String(temp.getMonth() + 1).padStart(2, '0');
-      const dayRaw = String(temp.getDate()).padStart(2, '0');
-      const dateStr = `${year}-${month}-${dayRaw}`;
-
-      const dayOfWeek = temp.getDay();
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-      const labels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-      const dayLabel = labels[dayOfWeek];
-
-      const monthName = temp.toLocaleString('default', { month: 'long', year: 'numeric' });
-
-      daysList.push({
-        dateStr,
-        dayLabel,
-        dayNum: temp.getDate(),
-        isWeekend,
-        monthName,
-      });
-
-      temp.setDate(temp.getDate() + 1);
-    }
-    return daysList;
-  }, [timelineStartDate, timelineEndDate]);
+  const dateRange = useMemo(
+    () => buildDateRange(windowStart, windowEnd),
+    [windowStart, windowEnd],
+  );
 
   // Group days by month to draw the top-level month titles
   const monthsHeader = useMemo(() => {
@@ -132,7 +115,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
   };
 
   // Grid dimensions
-  const colWidth = 52; // exact cell pixel width
+  const colWidth = COL_WIDTH;
   const gridWidth = dateRange.length * colWidth;
 
   // Group allocations into sequential lanes per resource or project depending on viewMode
@@ -153,19 +136,12 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
     }[] = [];
 
     if (viewMode === 'requests') {
-      // Filter projects matching search query
-      const filteredProjects = projects.filter((proj) => {
-        if (!searchQuery) return true;
-        const q = searchQuery.toLowerCase();
-        return (
-          (proj.name || '').toLowerCase().includes(q) ||
-          (proj.client || '').toLowerCase().includes(q) ||
-          (proj.group || '').toLowerCase().includes(q)
+      projects.forEach((proj) => {
+        const projRequests = filterRequests(
+          requests.filter((r) => r.projectId === proj.id && (r.status === 'Pending' || r.status === 'Approved')),
+          filterCriteria,
+          projects,
         );
-      });
-
-      filteredProjects.forEach((proj) => {
-        const projRequests = requests.filter((r) => r.projectId === proj.id && (r.status === 'Pending' || r.status === 'Approved'));
 
         const projectLanes: Lane[] = [];
 
@@ -197,25 +173,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
         }
       });
     } else if (viewMode === 'projects') {
-      // Filter projects matching search query
-      const filteredProjects = projects.filter((proj) => {
-        if (!searchQuery) return true;
-        const q = searchQuery.toLowerCase();
-        const matchProjName = (proj.name || '').toLowerCase().includes(q);
-        const matchClient = (proj.client || '').toLowerCase().includes(q);
-        const matchGroup = (proj.group || '').toLowerCase().includes(q);
-        const hasMatchingResource = allocations
-          .filter((alloc) => alloc.projectId === proj.id)
-          .some((alloc) => {
-            const res = resources.find((r) => r.id === alloc.resourceId);
-            if (!res) return false;
-            return (
-              (res.name || '').toLowerCase().includes(q) ||
-              (res.role || '').toLowerCase().includes(q)
-            );
-          });
-        return matchProjName || matchClient || matchGroup || hasMatchingResource;
-      });
+      const filteredProjects = filterProjects(projects, filterCriteria);
 
       filteredProjects.forEach((proj) => {
         const projAllocs = allocations.filter((a) => a.projectId === proj.id);
@@ -249,15 +207,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
         });
       });
     } else {
-      // Filter resources matching modern search query
-      const filteredResources = resources.filter((res) => {
-        if (!searchQuery) return true;
-        const q = searchQuery.toLowerCase();
-        const matchName = res.name.toLowerCase().includes(q);
-        const matchRole = res.role.toLowerCase().includes(q);
-        const matchGroup = (res.group || '').toLowerCase().includes(q);
-        return matchName || matchRole || matchGroup;
-      });
+      const filteredResources = filterPeople(resources, filterCriteria);
 
       filteredResources.forEach((res) => {
         // Find all allocations for this resource
@@ -271,7 +221,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
         if (allocatedProjIds.length === 0) {
           // Render at least an empty lane pointing to an empty state or default project to invite booking
           projectLanes.push({
-            project: { id: 'none', name: 'Unassigned', client: '-', color: 'bg-gray-100', textColor: 'text-gray-400' },
+            project: { id: 'none', name: 'Unassigned', client: '-', color: 'bg-gray-400', textColor: 'text-gray-400' },
             allocs: [],
           });
         } else {
@@ -280,8 +230,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
               id: pId,
               name: 'Project',
               client: 'Client',
-              color: 'bg-[#4e82c2]',
-              textColor: 'text-white'
+              color: 'bg-emerald-500',
+              textColor: 'text-white',
             };
             
             const groupAllocs = resAllocs.filter((a) => a.projectId === pId);
@@ -301,7 +251,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
     }
 
     return rows;
-  }, [resources, projects, allocations, searchQuery, viewMode]);
+  }, [resources, projects, allocations, requests, filterCriteria, viewMode]);
 
   // Find vacations for a resource that overlap with the timeline
   const getApprovedVacationsForResource = (resourceId: string) => {
@@ -312,18 +262,15 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
     const resourceVacations = (viewMode === 'projects' || viewMode === 'requests') ? [] : (row.resource ? getApprovedVacationsForResource(row.resource.id) : []);
  
     return (
-      <div key={row.id} className="flex hover:bg-slate-50/60 items-stretch relative group border-b border-gray-100 min-h-[56px]">
+      <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[56px]">
         
         {/* Left Sticky Column */}
-        <div className="w-[190px] min-w-[190px] border-r border-gray-100 px-4 bg-white sticky left-0 z-20 flex items-center justify-between shadow-[2px_0_5px_rgba(0,0,0,0.02)] min-h-[56px]">
+        <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[56px]">
           <div className="flex items-center gap-2 overflow-hidden py-3 w-full">
             {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
               // Project Row Sticky Visual Details
               <div className="truncate text-left flex-1">
-                <div className="flex items-center gap-1.5 mb-1 overflow-hidden">
-                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${row.project.color || 'bg-blue-500'}`} />
-                  <h4 className="text-xs font-black text-gray-800 truncate" title={row.project.name}>{row.project.name}</h4>
-                </div>
+                <h4 className="text-xs font-black text-primary truncate" title={row.project.name}>{row.project.name}</h4>
               </div>
             ) : row.resource ? (
               // Resource Row Sticky Visual Details
@@ -333,7 +280,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                     referrerPolicy="no-referrer"
                     src={row.resource.avatarUrl}
                     alt={row.resource.name}
-                    className="w-8 h-8 rounded-full object-cover shrink-0 border border-gray-100"
+                    className="w-8 h-8 rounded-full object-cover shrink-0 border border-subtle"
                   />
                 ) : (
                   <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 text-xs font-bold flex items-center justify-center shrink-0">
@@ -341,8 +288,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                   </div>
                 )}
                 <div className="truncate text-left flex-1">
-                  <h4 className="text-xs font-bold text-gray-700 truncate">{row.resource.name}</h4>
-                  <p className="text-[10px] text-gray-400 capitalize truncate">{row.resource.role}</p>
+                  <h4 className="text-xs font-bold text-primary truncate">{row.resource.name}</h4>
+                  <p className="text-[10px] text-tertiary capitalize truncate">{row.resource.role}</p>
                 </div>
               </>
             ) : null}
@@ -352,7 +299,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
           {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
             <button
               onClick={() => onOpenScheduleModalWithRes('', row.project!.id)}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-100 text-slate-500 rounded cursor-pointer transition-opacity"
+              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-surface-hover text-secondary rounded cursor-pointer transition-opacity"
               title={`Schedule on ${row.project.name}`}
             >
               <Plus className="w-3.5 h-3.5" />
@@ -376,8 +323,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
               <div
                 key={`grid-${day.dateStr}`}
                 style={{ width: `${colWidth}px` }}
-                className={`h-full border-r border-gray-100 shrink-0 ${
-                  day.isWeekend ? 'bg-slate-50/40' : ''
+                className={`h-full border-r border-subtle shrink-0 ${
+                  day.isWeekend ? 'bg-weekend-cell' : ''
                 }`}
               />
             ))}
@@ -406,7 +353,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                   top: '50%',
                   transform: 'translateY(-50%)',
                 }}
-                className="absolute bg-stripes bg-slate-100 border border-slate-200 text-slate-500 rounded px-2 flex items-center justify-center text-[9px] font-bold tracking-wider uppercase pointer-events-none z-[4]"
+                className="absolute bg-slate-200 dark:bg-zinc-600 border border-slate-300 dark:border-zinc-500 text-slate-600 dark:text-slate-300 rounded px-2 flex items-center justify-center text-[9px] font-bold tracking-wider uppercase pointer-events-none z-[4]"
                 title={`Absence/Vacation Approved: ${v.reason || 'Annual Leave'}`}
               >
                 🌴 Time Off
@@ -440,8 +387,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                     const width = spanDays * colWidth;
 
                     // Style categorization variables
-                    let isOpportunity = false;
                     let isTimeOff = false;
+                    let blockCategory: ProjectCategory | null = null;
                     let blockTitle = '';
                     let blockLabel = '';
                     let showPersonIcon = false;
@@ -449,7 +396,6 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
 
                     if (viewMode === 'requests' && lane.request) {
                       const req = lane.request;
-                      isOpportunity = req.billableType === 'Opportunity';
                       const assignedRes = req.resourceId ? resources.find((r) => r.id === req.resourceId) : null;
                       if (assignedRes) {
                         blockTitle = `Assigned Resource: ${assignedRes.name}\nRequired Skill: ${req.requiredSkill || 'General'}\nDates: ${req.startDate} to ${req.endDate}\nCommitment: ${req.billablePercent}%\nNotes: ${req.notes || ''}`;
@@ -463,44 +409,58 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                     } else if (viewMode === 'projects' || (viewMode === 'requests' && lane.resource)) {
                       const p = row.project;
                       if (!p) return null;
-                      isOpportunity = alloc.billableType === 'Opportunity' || p.isOpportunity || (p.name || '').toLowerCase().includes('opportunity') || (p.client || '').toLowerCase().includes('opportunity');
                       isTimeOff = (p.name || '').toLowerCase().includes('time off') || (p.name || '').toLowerCase().includes('absence') || (p.name || '').toLowerCase().includes('vacation');
                       blockTitle = `${lane.resource?.name || 'Resource'}: ${alloc.billablePercent}% (${alloc.billableType})`;
                       blockLabel = lane.resource?.name || 'Resource';
                     } else {
                       const pr = lane.project;
                       if (!pr) return null;
-                      isOpportunity = alloc.billableType === 'Opportunity' || pr.isOpportunity || (pr.name || '').toLowerCase().includes('opportunity') || (pr.client || '').toLowerCase().includes('opportunity');
                       isTimeOff = (pr.name || '').toLowerCase().includes('time off') || (pr.name || '').toLowerCase().includes('absence') || (pr.name || '').toLowerCase().includes('vacation');
-                      blockTitle = `${pr.name || 'TMS'} Project: ${alloc.billablePercent}% (${alloc.billableType})`;
+                      blockTitle = `${pr.name || 'Project'}: ${alloc.billablePercent}% (${alloc.billableType})`;
                       blockLabel = pr.name || 'Project';
                     }
 
-                    let colorClass = 'bg-[#5c8fcb]'; // muted blue
-                    let borderClass = 'border-[#4274b0]';
-                    let textClass = 'text-white';
-                    let borderStyle = 'border-l-4';
+                    let colorClass = '';
+                    let borderClass = 'border';
+                    let textClass = 'text-slate-800';
+                    let badgeClass = SCHEDULE_BLOCK_BADGE_CLASS;
+                    let blockSurfaceStyle: React.CSSProperties | undefined;
+                    let blockChrome: AllocationBlockChrome | null = null;
 
                     if (viewMode === 'requests' && lane.request) {
-                      if (lane.request.resourceId) {
-                        colorClass = 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-800';
-                        borderClass = 'border-blue-300 border-2';
-                        textClass = 'text-blue-800';
-                        borderStyle = 'border-l-4 border-l-blue-500';
-                      } else {
-                        colorClass = 'bg-blue-50/95 hover:bg-blue-100/90 text-blue-800';
-                        borderClass = 'border-blue-400 border-2 border-dashed';
-                        textClass = 'text-blue-800';
-                        borderStyle = '';
+                      blockChrome = getRequestBlockChrome(!!lane.request.resourceId);
+                      blockSurfaceStyle = getAllocationBlockBackground(alloc.billablePercent, blockChrome);
+                      textClass = blockChrome.textClass;
+                      badgeClass = blockChrome.badgeClass;
+                      if (!lane.request.resourceId) {
+                        borderClass = 'border border-dashed';
                       }
-                    } else if (isTimeOff) {
-                      colorClass = 'bg-slate-200 bg-stripes';
-                      borderClass = 'border-slate-300';
-                      textClass = 'text-slate-500';
-                    } else if (isOpportunity) {
-                      colorClass = 'bg-[#a78bfa]'; // muted purple
-                      borderClass = 'border-[#8b5cf6]';
-                      textClass = 'text-white';
+                    } else {
+                      const proj =
+                        lane.project ||
+                        row.project ||
+                        projects.find((p) => p.id === alloc.projectId);
+                      if (proj) {
+                        isTimeOff =
+                          isTimeOff ||
+                          (proj.name || '').toLowerCase().includes('time off') ||
+                          (proj.name || '').toLowerCase().includes('absence') ||
+                          (proj.name || '').toLowerCase().includes('vacation');
+                        if (isTimeOff) {
+                          colorClass = 'bg-slate-200 dark:bg-zinc-600';
+                          borderClass = 'border-slate-300 dark:border-zinc-500';
+                          textClass = 'text-slate-600 dark:text-slate-300';
+                        } else {
+                          blockCategory = getProjectCategory(proj);
+                          blockChrome = getAllocationBlockChrome(blockCategory);
+                          blockSurfaceStyle = getAllocationBlockBackground(
+                            alloc.billablePercent,
+                            blockChrome,
+                          );
+                          textClass = blockChrome.textClass;
+                          badgeClass = blockChrome.badgeClass;
+                        }
+                      }
                     }
 
                     return (
@@ -510,6 +470,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                           left: `${left}px`,
                           width: `${width - 2}px`,
                           height: '38px',
+                          ...blockSurfaceStyle,
                         }}
                         onClick={() => {
                           if (viewMode === 'requests' && lane.request) {
@@ -518,7 +479,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                             onEditAllocation(alloc);
                           }
                         }}
-                        className={`absolute select-none overflow-hidden text-left p-1.5 rounded-lg ${borderStyle} transition-transform hover:scale-[1.02] cursor-pointer shadow-sm flex flex-col justify-between ${colorClass} ${borderClass} ${textClass} z-[5]`}
+                        className={`absolute select-none overflow-hidden text-left p-1.5 rounded-lg transition-transform hover:scale-[1.02] cursor-pointer shadow-sm flex flex-col justify-between ${colorClass} ${borderClass} ${textClass} z-[5]`}
                         title={blockTitle}
                       >
                         <div className="flex justify-between items-center gap-1.5 w-full">
@@ -533,14 +494,14 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                               <UserCheck className="w-3.5 h-3.5 text-blue-600 hover:scale-110 transition-transform shrink-0" />
                             )}
                           </div>
-                          <span className="text-[8px] opacity-90 px-1 bg-white/20 rounded font-semibold leading-none shrink-0 ml-1">
+                          <span className={`text-[8px] px-1 py-0.5 rounded font-bold leading-none shrink-0 ml-1 border ${badgeClass}`}>
                             {alloc.billablePercent}%
                           </span>
                         </div>
                         <div className="flex justify-between items-end leading-none w-full">
                           {(viewMode !== 'requests' || !lane.request) ? (
                             <span className="text-[9px] font-medium opacity-85 truncate mr-2">
-                              {isTimeOff ? 'Time Off' : isOpportunity ? 'Opportunity' : 'Billable'}
+                              {isTimeOff ? 'Time Off' : blockCategory || 'Billable'}
                             </span>
                           ) : (
                             <div className="flex-1" />
@@ -604,21 +565,31 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
   }, [selectedRequestForSkills, resources, popupSearch]);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden" id="scheduler-grid-main-board">
-      {/* Scrollable grid area */}
-      <div className="overflow-x-auto select-none relative max-h-[600px] scrollbar-thin">
+    <div className="app-card overflow-hidden flex flex-col h-full min-h-0" id="scheduler-grid-main-board">
+      {/* Scrollable grid — horizontal lazy load + vertical row scroll */}
+      <div
+        ref={scrollRef}
+        onScroll={onTimelineScroll}
+        className="flex-1 min-h-0 overflow-auto select-none relative scrollbar-thin"
+      >
+        {isFetchingSchedules && (
+          <div className="absolute top-2 right-3 z-30 flex items-center gap-1.5 rounded-full bg-surface/95 border border-default px-2.5 py-1 text-[10px] font-medium text-secondary shadow-app-sm pointer-events-none">
+            <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+            Loading…
+          </div>
+        )}
         <div style={{ width: `calc(190px + ${gridWidth}px)` }} className="flex flex-col">
           
           {/* Header Row 1: Months */}
-          <div className="flex bg-slate-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider h-10 items-center">
-            <div className="w-[190px] min-w-[190px] border-r border-gray-100 px-4 flex items-center bg-slate-50 sticky left-0 z-20 h-full">
+          <div className="flex bg-grid-header border-b border-subtle text-xs font-bold text-secondary uppercase tracking-wider h-10 items-center sticky top-0 z-30">
+            <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40 h-full">
               {(viewMode === 'projects' || viewMode === 'requests') ? 'Projects' : 'Resources'}
             </div>
             {monthsHeader.map((m) => (
               <div
                 key={m.monthName}
                 style={{ width: `${m.count * colWidth}px` }}
-                className="text-left pl-4 font-semibold text-gray-700 tracking-wide border-r border-gray-100"
+                className="text-left pl-4 font-semibold text-primary tracking-wide border-r border-subtle"
               >
                 {m.monthName}
               </div>
@@ -626,9 +597,9 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
           </div>
 
           {/* Header Row 2: Days */}
-          <div className="flex bg-slate-50 border-b border-gray-200 text-[11px] font-semibold text-gray-400 h-10 items-center">
-            <div className="w-[190px] min-w-[190px] border-r border-gray-100 px-4 flex items-center bg-slate-50 sticky left-0 z-20 h-full">
-              <span className="text-gray-400 text-[10px] uppercase">
+          <div className="flex bg-grid-header border-b border-default text-[11px] font-semibold text-tertiary h-10 items-center sticky top-10 z-30">
+            <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40 h-full">
+              <span className="text-tertiary text-[10px] uppercase">
                 {(viewMode === 'projects' || viewMode === 'requests') ? 'RESOURCE ALLOCATION' : 'PROJECT ALLOCATION'}
               </span>
             </div>
@@ -636,12 +607,12 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
               <div
                 key={day.dateStr}
                 style={{ width: `${colWidth}px` }}
-                className={`text-center h-full flex flex-col justify-center border-r border-gray-100 ${
-                  day.isWeekend ? 'bg-slate-100/50 text-gray-300' : ''
+                className={`text-center h-full flex flex-col justify-center border-r border-subtle ${
+                  day.isWeekend ? 'bg-weekend-cell text-tertiary' : ''
                 }`}
               >
                 <span>{day.dayLabel}</span>
-                <span className="font-bold text-gray-600">{day.dayNum}</span>
+                <span className="font-bold text-secondary">{day.dayNum}</span>
               </div>
             ))}
           </div>
@@ -649,7 +620,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
           {/* Grid Rows */}
           <div className="divide-y divide-gray-100">
             {assignmentRows.length === 0 ? (
-              <div className="flex items-center justify-center py-20 bg-slate-50 text-gray-400 text-sm">
+              <div className="flex items-center justify-center py-20 bg-surface-muted text-tertiary text-sm">
                 {(viewMode === 'projects' || viewMode === 'requests') ? 'No active projects found matching search filters.' : 'No active resources found matching search filters.'}
               </div>
             ) : (
@@ -663,17 +634,17 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
 
       {/* Candidate Resources with Skills Popup Modal */}
       {selectedRequestForSkills && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 overflow-y-auto animate-fade-in" id="resources-skills-popup">
-          <div className="bg-white dark:bg-[#0b101f] border border-gray-100 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col h-[550px] transform transition-all animate-scale-up">
+        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay backdrop-blur-sm p-4 overflow-y-auto animate-fade-in" id="resources-skills-popup">
+          <div className="bg-surface border border-subtle rounded-xl shadow-app-md w-full max-w-lg overflow-hidden flex flex-col h-[550px] transform transition-all animate-scale-up">
             
             {/* Modal Header */}
-            <div className="px-5 py-4 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-[#0c1224]">
+            <div className="app-card-header px-5 py-4 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider flex items-center gap-1.5">
+                <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-1.5">
                   <Award className="w-4 h-4 text-blue-600" /> Skill Matcher
                 </h3>
-                <p className="text-[11px] text-gray-400 font-medium">
-                  Project: <span className="font-bold text-slate-600 dark:text-slate-300">{requestProject?.name || 'Unknown Project'}</span>
+                <p className="text-[11px] text-tertiary font-medium">
+                  Project: <span className="font-bold text-secondary">{requestProject?.name || 'Unknown Project'}</span>
                 </p>
               </div>
               <button 
@@ -681,53 +652,53 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                   setSelectedRequestForSkills(null);
                   setPopupSearch('');
                 }}
-                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                className="p-1.5 rounded-lg text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Modal Content Details */}
-            <div className="px-5 py-3.5 bg-blue-50/50 dark:bg-blue-950/20 border-b border-blue-100/50 dark:border-blue-900/30 flex justify-between items-center text-xs">
+            <div className="px-5 py-3.5 tint-blue border-b border-subtle flex justify-between items-center text-xs">
               <div className="flex-1 pr-4">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] font-extrabold px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded uppercase tracking-wider">
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 tint-blue rounded uppercase tracking-wider">
                     {selectedRequestForSkills.requiredSkill || 'General Skill'}
                   </span>
-                  <span className="text-gray-400 dark:text-gray-500">•</span>
-                  <span className="font-semibold text-slate-600 dark:text-slate-400">
+                  <span className="text-tertiary">•</span>
+                  <span className="font-semibold text-secondary">
                     {selectedRequestForSkills.billablePercent}% Allocation
                   </span>
                 </div>
-                <div className="text-[10px] text-gray-400 font-medium truncate italic" title={selectedRequestForSkills.notes}>
+                <div className="text-[10px] text-tertiary font-medium truncate italic" title={selectedRequestForSkills.notes}>
                   "{selectedRequestForSkills.notes || 'No notes provided.'}"
                 </div>
               </div>
-              <div className="text-right text-[10px] text-slate-500 font-bold bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 px-2.5 py-1 rounded-lg shadow-xs">
+              <div className="text-right text-[10px] text-secondary font-bold bg-surface-raised border border-default px-2.5 py-1 rounded-lg shadow-app-sm">
                 <div>📅 {selectedRequestForSkills.startDate}</div>
-                <div className="text-gray-400 dark:text-gray-500 font-medium">to {selectedRequestForSkills.endDate}</div>
+                <div className="text-tertiary font-medium">to {selectedRequestForSkills.endDate}</div>
               </div>
             </div>
 
             {/* Candidate Search Bar */}
-            <div className="p-3 bg-white dark:bg-[#0b101f] border-b border-gray-100 dark:border-slate-800">
+            <div className="p-3 bg-surface border-b border-subtle">
               <div className="relative">
-                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
+                <Search className="w-4 h-4 text-tertiary absolute left-3 top-2.5" />
                 <input
                   type="text"
                   placeholder="Search resources by name, role or skill..."
                   value={popupSearch}
                   onChange={(e) => setPopupSearch(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 border border-gray-200 dark:border-slate-800 rounded-lg text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none bg-slate-50/50 dark:bg-slate-900"
+                  className="w-full pl-9 pr-4 py-2 border border-default rounded-lg text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none bg-input"
                 />
               </div>
             </div>
 
             {/* Resources List */}
-            <div className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-slate-800/60 p-3 space-y-2">
+            <div className="flex-1 overflow-y-auto divide-y divide-[var(--app-border-subtle)] p-3 space-y-2">
               {matchingResources.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500 text-xs">
-                  <User className="w-8 h-8 text-gray-300 dark:text-gray-700 mb-2" />
+                <div className="flex flex-col items-center justify-center py-12 text-tertiary text-xs">
+                  <User className="w-8 h-8 text-tertiary mb-2 opacity-50" />
                   No resources matched your search.
                 </div>
               ) : (
@@ -738,8 +709,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                       key={res.id} 
                       className={`p-3 rounded-lg border transition-all flex items-start gap-3 ${
                         res.hasSkill 
-                          ? 'bg-blue-50/20 dark:bg-blue-950/5 border-blue-100/70 dark:border-blue-900/30' 
-                          : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800/80 hover:bg-slate-50/50'
+                          ? 'tint-blue' 
+                          : 'bg-surface border-subtle hover:bg-surface-muted'
                       }`}
                     >
                       {/* Avatar */}
@@ -748,10 +719,10 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                           referrerPolicy="no-referrer"
                           src={res.avatarUrl}
                           alt={res.name}
-                          className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-100 dark:border-slate-800 mt-0.5"
+                          className="w-9 h-9 rounded-full object-cover shrink-0 border border-subtle mt-0.5"
                         />
                       ) : (
-                        <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 text-xs font-black flex items-center justify-center shrink-0 mt-0.5">
+                        <div className="w-9 h-9 rounded-full tint-blue text-xs font-black flex items-center justify-center shrink-0 mt-0.5">
                           {(res.name || '').split(' ').map((n) => n[0] || '').join('')}
                         </div>
                       )}
@@ -759,11 +730,11 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                       {/* Details */}
                       <div className="flex-1 min-w-0 text-left">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{res.name}</h4>
-                          <span className="text-[9px] text-gray-400 dark:text-gray-500">•</span>
-                          <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium truncate capitalize">{res.role}</span>
+                          <h4 className="text-xs font-bold text-primary truncate">{res.name}</h4>
+                          <span className="text-[9px] text-tertiary">•</span>
+                          <span className="text-[10px] text-secondary font-medium truncate capitalize">{res.role}</span>
                           {res.hasSkill && (
-                            <span className="text-[8px] font-extrabold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50 rounded-full flex items-center gap-0.5 uppercase tracking-wide">
+                            <span className="text-[8px] font-extrabold px-1.5 py-0.2 tint-emerald rounded-full flex items-center gap-0.5 uppercase tracking-wide">
                               <Check className="w-2.5 h-2.5 stroke-[3]" /> Match
                             </span>
                           )}
@@ -778,8 +749,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                                 key={sk} 
                                 className={`text-[9px] px-1.5 py-0.5 rounded-md font-medium transition-colors ${
                                   isExactMatch 
-                                    ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800 font-bold' 
-                                    : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-slate-800'
+                                    ? 'tint-blue font-bold' 
+                                    : 'bg-surface-muted text-secondary border border-subtle'
                                 }`}
                               >
                                 {sk}
@@ -792,30 +763,30 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                       {/* Action */}
                       {selectedRequestForSkills.resourceId === res.id ? (
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             if (onUnassignRequest) {
-                              onUnassignRequest(selectedRequestForSkills.id);
+                              await onUnassignRequest(selectedRequestForSkills.id);
                             }
                             setSelectedRequestForSkills(null);
                             setPopupSearch('');
                           }}
-                          className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer bg-red-50 text-red-600 hover:bg-red-100 border border-red-100 dark:bg-red-950/20 dark:text-red-400 dark:border-red-900/30"
+                          className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all shadow-app-sm flex items-center gap-1 cursor-pointer tint-red"
                         >
                           Unassign <X className="w-3 h-3 stroke-[3]" />
                         </button>
                       ) : (
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             if (onApproveRequestWithResource) {
-                              onApproveRequestWithResource(selectedRequestForSkills.id, res.id);
+                              await onApproveRequestWithResource(selectedRequestForSkills.id, res.id);
                             }
                             setSelectedRequestForSkills(null);
                             setPopupSearch('');
                           }}
-                          className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer ${
+                          className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all shadow-app-sm flex items-center gap-1 cursor-pointer ${
                             res.hasSkill
                               ? 'bg-blue-600 text-white hover:bg-blue-700'
-                              : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+                              : 'bg-surface-muted hover:bg-surface-hover text-primary'
                           }`}
                         >
                           Assign <Check className="w-3 h-3 stroke-[3]" />
@@ -828,7 +799,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
             </div>
 
             {/* Modal Footer info */}
-            <div className="p-3 border-t border-gray-100 dark:border-slate-800 text-[10px] text-gray-400 text-center font-medium bg-slate-50/50 dark:bg-[#0c1224]">
+            <div className="p-3 border-t border-subtle text-[10px] text-tertiary text-center font-medium bg-surface-muted">
               Showing all database resources sorted by match suitability
             </div>
           </div>

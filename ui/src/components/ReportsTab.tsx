@@ -15,15 +15,15 @@ interface ReportsTabProps {
 
 export const ReportsTab: React.FC<ReportsTabProps> = () => {
   return (
-    <div className="flex flex-col items-center justify-center py-20 px-6 text-center bg-white rounded-xl border border-gray-100 shadow-sm" id="reports-coming-soon">
-      <div className="p-4 bg-emerald-50 text-emerald-600 rounded-full mb-4">
+    <div className="flex flex-col items-center justify-center py-20 px-6 text-center app-card" id="reports-coming-soon">
+      <div className="p-4 tint-emerald rounded-full mb-4">
         <FileSpreadsheet className="w-8 h-8 animate-pulse" />
       </div>
-      <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight">Breakdown Reports</h2>
-      <p className="mt-2 text-sm text-gray-500 max-w-sm">
+      <h2 className="text-2xl font-extrabold text-primary tracking-tight">Breakdown Reports</h2>
+      <p className="mt-2 text-sm text-secondary max-w-sm">
         Advanced spreadsheet exporting and aggregated analytics reports are currently in development.
       </p>
-      <div className="mt-6 px-4 py-1.5 bg-emerald-50 text-emerald-750 text-xs font-bold uppercase tracking-wider rounded-full">
+      <div className="mt-6 px-4 py-1.5 tint-emerald text-xs font-bold uppercase tracking-wider rounded-full">
         Coming Soon
       </div>
     </div>

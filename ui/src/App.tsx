@@ -3,16 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Resource, Project, Allocation, Vacation, BookingRequest } from './types';
-import {
-  INITIAL_RESOURCES,
-  INITIAL_PROJECTS,
-  INITIAL_ALLOCATIONS,
-  INITIAL_VACATIONS,
-  INITIAL_REQUESTS,
-  REQUESTS_TAB_MOCK_DATA,
-} from './data';
 
 // Components
 import { SchedulerGrid } from './components/SchedulerGrid';
@@ -23,6 +16,8 @@ import { RequestsTab } from './components/RequestsTab';
 import { DashboardTab } from './components/DashboardTab';
 import { ReportsTab } from './components/ReportsTab';
 import { SettingsTab } from './components/SettingsTab';
+import { FilterSidebar } from './components/FilterSidebar';
+import type { FilterFormValues } from './components/FilterFormModal';
 
 // Modals
 import {
@@ -38,23 +33,30 @@ import {
 import {
   Users,
   FolderKanban,
-  Calendar,
-  Search,
-  FileSpreadsheet,
-  LayoutDashboard,
-  SlidersHorizontal,
-  Settings,
-  Plus,
-  Compass,
-  CheckCircle,
   Clock,
-  Briefcase,
-  AlertCircle,
   Filter,
   X,
   Sun,
   Moon,
+  ChevronDown,
+  Settings,
+  LogOut,
 } from 'lucide-react';
+import { useCreatePerson, useDeletePerson, usePeople, useUpdatePerson } from './hooks/usePeople';
+import { useCreateProject, useDeleteProject, useProjects, useUpdateProject } from './hooks/useProjects';
+import { useCreateRequest, useDeleteRequest, useRequests, useUpdateRequest, requestQueryKeys } from './hooks/useRequests';
+import { useCreateSchedule, useDeleteSchedule, useDeleteSchedulesByRequest, useSchedules, useUpdateSchedule, scheduleQueryKeys } from './hooks/useSchedules';
+import { useCreateVacation, useDeleteVacation, useUpdateVacation, useVacations } from './hooks/useVacations';
+import { usePersonFilters, useProjectFilters, useRequestFilters } from './hooks/useFilters';
+import { useLookups } from './hooks/useLookups';
+import { useQueryClient } from '@tanstack/react-query';
+import type { SavedFilter } from './types';
+import {
+  ROUTES,
+  DEFAULT_ROUTE,
+  parsePathname,
+  isScheduleArea,
+} from './lib/routes';
 
 const CURRENT_DATE_STRING = '2026-06-22'; // System date matching metadata
 
@@ -99,98 +101,158 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Navigation
-  const [activeTab, setActiveTab] = useState<'scheduler' | 'vacation' | 'projects' | 'resources' | 'requests' | 'dashboard' | 'reports' | 'settings'>('scheduler');
-  const [sidebarActive, setSidebarActive] = useState<'projects' | 'resources'>('resources');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const route = parsePathname(location.pathname);
+  const activeTab = route?.tab ?? 'scheduler';
+  const sidebarActive = route?.scheduleSidebar ?? 'resources';
 
-  // Core Persisted Work States
-  const [resources, setResources] = useState<Resource[]>(() => {
-    try {
-      const saved = localStorage.getItem('winplanner_resources');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+  const [masterDataMenuOpen, setMasterDataMenuOpen] = useState(false);
+  const masterDataMenuRef = useRef<HTMLDivElement>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!masterDataMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (masterDataMenuRef.current && !masterDataMenuRef.current.contains(e.target as Node)) {
+        setMasterDataMenuOpen(false);
       }
-      return INITIAL_RESOURCES;
-    } catch (e) {
-      console.warn("Storage restricted - using initial resources memory state:", e);
-      return INITIAL_RESOURCES;
-    }
-  });
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [masterDataMenuOpen]);
 
-  const [projects, setProjects] = useState<Project[]>(() => {
-    try {
-      const saved = localStorage.getItem('winplanner_projects');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
       }
-      return INITIAL_PROJECTS;
-    } catch (e) {
-      console.warn("Storage restricted - using initial projects memory state:", e);
-      return INITIAL_PROJECTS;
-    }
-  });
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [userMenuOpen]);
 
-  const [allocations, setAllocations] = useState<Allocation[]>(() => {
-    try {
-      const saved = localStorage.getItem('winplanner_allocations');
-      const parsed = saved ? JSON.parse(saved) : INITIAL_ALLOCATIONS;
-      const safeParsed = Array.isArray(parsed) ? parsed : INITIAL_ALLOCATIONS;
-      return safeParsed.map((a: any) => ({
-        ...a,
-        billableType: a.billableType === 'Non-Billable' ? 'Opportunity' : a.billableType
-      }));
-    } catch (e) {
-      console.warn("Storage restricted - using initial allocations memory state:", e);
-      return INITIAL_ALLOCATIONS;
-    }
-  });
+  const { data: resources = [] } = usePeople();
+  const { data: projects = [] } = useProjects();
+  const { data: allocations = [] } = useSchedules();
+  const { data: vacations = [] } = useVacations();
+  const { data: requests = [] } = useRequests();
+  const {
+    data: projectFilters = [],
+    create: createProjectFilter,
+    update: updateProjectFilter,
+    remove: deleteProjectFilter,
+  } = useProjectFilters();
+  const {
+    data: personFilters = [],
+    create: createPersonFilter,
+    update: updatePersonFilter,
+    remove: deletePersonFilter,
+  } = usePersonFilters();
+  const {
+    data: requestFilters = [],
+    create: createRequestFilter,
+    update: updateRequestFilter,
+    remove: deleteRequestFilter,
+  } = useRequestFilters();
+  const { data: lookups } = useLookups();
 
-  const [vacations, setVacations] = useState<Vacation[]>(() => {
-    try {
-      const saved = localStorage.getItem('winplanner_vacations');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-      return INITIAL_VACATIONS;
-    } catch (e) {
-      console.warn("Storage restricted - using initial vacations memory state:", e);
-      return INITIAL_VACATIONS;
-    }
-  });
+  const createPerson = useCreatePerson();
+  const updatePerson = useUpdatePerson();
+  const deletePerson = useDeletePerson();
+  const createProject = useCreateProject();
+  const updateProject = useUpdateProject();
+  const deleteProject = useDeleteProject();
+  const createRequest = useCreateRequest();
+  const updateRequest = useUpdateRequest();
+  const deleteRequest = useDeleteRequest();
+  const createSchedule = useCreateSchedule();
+  const updateSchedule = useUpdateSchedule();
+  const deleteSchedule = useDeleteSchedule();
+  const deleteSchedulesByRequest = useDeleteSchedulesByRequest();
+  const createVacation = useCreateVacation();
+  const updateVacation = useUpdateVacation();
+  const deleteVacation = useDeleteVacation();
 
-  const [requests, setRequests] = useState<BookingRequest[]>(() => {
-    try {
-      const saved = localStorage.getItem('winplanner_requests');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length >= 8) {
-          return parsed.map((r: any) => ({
-            ...r,
-            billableType: r.billableType === 'Non-Billable' ? 'Opportunity' : r.billableType
-          }));
-        }
-      }
-      return REQUESTS_TAB_MOCK_DATA;
-    } catch (e) {
-      console.warn("Storage restricted - using initial requests memory state:", e);
-      return REQUESTS_TAB_MOCK_DATA;
-    }
-  });
+  const queryClient = useQueryClient();
+  const refreshSchedulingData = useCallback(async () => {
+    await Promise.all([
+      queryClient.refetchQueries({ queryKey: requestQueryKeys.all }),
+      queryClient.refetchQueries({ queryKey: scheduleQueryKeys.all }),
+    ]);
+  }, [queryClient]);
 
-  // Filter Query States
-  const [searchQuery, setSearchQuery] = useState('');
+  // Filter state
   const [timelineStartDate, setTimelineStartDate] = useState('2026-06-01');
-  const [timelineEndDate, setTimelineEndDate] = useState('2026-07-25');
+  const [timelineEndDate, setTimelineEndDate] = useState('2027-12-31');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerSearch, setDrawerSearch] = useState('');
-  const [selectedFilterChip, setSelectedFilterChip] = useState<{
-    type: 'resource' | 'group' | 'project';
-    name: string;
-    id?: string;
-  } | null>(null);
+  const [activeProjectFilterId, setActiveProjectFilterId] = useState<string | null>(null);
+  const [activePersonFilterId, setActivePersonFilterId] = useState<string | null>(null);
+  const [activeRequestFilterId, setActiveRequestFilterId] = useState<string | null>(null);
+
+  const filterViewContext = useMemo(() => {
+    if (activeTab === 'requests') return 'requests' as const;
+    return sidebarActive === 'projects' ? ('projects' as const) : ('resources' as const);
+  }, [activeTab, sidebarActive]);
+
+  const sidebarFilters = useMemo(() => {
+    if (filterViewContext === 'projects') return projectFilters;
+    if (filterViewContext === 'resources') return personFilters;
+    return requestFilters;
+  }, [filterViewContext, projectFilters, personFilters, requestFilters]);
+
+  const activeFilterId = useMemo(() => {
+    if (filterViewContext === 'projects') return activeProjectFilterId;
+    if (filterViewContext === 'resources') return activePersonFilterId;
+    return activeRequestFilterId;
+  }, [filterViewContext, activeProjectFilterId, activePersonFilterId, activeRequestFilterId]);
+
+  const filterCriteria = useMemo(() => {
+    if (!activeFilterId) return null;
+    const match = sidebarFilters.find((f) => f.id === activeFilterId);
+    return match?.criteria ?? null;
+  }, [activeFilterId, sidebarFilters]);
+
+  const handleSelectFilter = useCallback((filter: SavedFilter | null) => {
+    const id = filter?.id ?? null;
+    if (filterViewContext === 'projects') setActiveProjectFilterId(id);
+    else if (filterViewContext === 'resources') setActivePersonFilterId(id);
+    else setActiveRequestFilterId(id);
+  }, [filterViewContext]);
+
+  const handleCreateFilter = useCallback(async (values: FilterFormValues) => {
+    const payload = {
+      name: values.name,
+      description: values.description || undefined,
+      criteria: values.criteria,
+      isActive: values.isActive,
+      sortOrder: values.sortOrder,
+    };
+    if (filterViewContext === 'projects') await createProjectFilter.mutateAsync(payload);
+    else if (filterViewContext === 'resources') await createPersonFilter.mutateAsync(payload);
+    else await createRequestFilter.mutateAsync(payload);
+  }, [filterViewContext, createProjectFilter, createPersonFilter, createRequestFilter]);
+
+  const handleUpdateFilter = useCallback(async (id: string, values: FilterFormValues) => {
+    const patch = {
+      name: values.name,
+      description: values.description || undefined,
+      criteria: values.criteria,
+      isActive: values.isActive,
+      sortOrder: values.sortOrder,
+    };
+    if (filterViewContext === 'projects') await updateProjectFilter.mutateAsync({ id, patch });
+    else if (filterViewContext === 'resources') await updatePersonFilter.mutateAsync({ id, patch });
+    else await updateRequestFilter.mutateAsync({ id, patch });
+  }, [filterViewContext, updateProjectFilter, updatePersonFilter, updateRequestFilter]);
+
+  const handleDeleteFilter = useCallback(async (id: string) => {
+    if (filterViewContext === 'projects') await deleteProjectFilter.mutateAsync(id);
+    else if (filterViewContext === 'resources') await deletePersonFilter.mutateAsync(id);
+    else await deleteRequestFilter.mutateAsync(id);
+  }, [filterViewContext, deleteProjectFilter, deletePersonFilter, deleteRequestFilter]);
 
   // Modal Visibility States
   const [isCapacityFinderOpen, setIsCapacityFinderOpen] = useState(false);
@@ -205,47 +267,6 @@ export default function App() {
   const [prefilledProjectId, setPrefilledProjectId] = useState('');
   const [prefilledStartDate, setPrefilledStartDate] = useState('');
   const [prefilledEndDate, setPrefilledEndDate] = useState('');
-
-  // Save to LocalStorage side-effects
-  useEffect(() => {
-    try {
-      localStorage.setItem('winplanner_resources', JSON.stringify(resources));
-    } catch (e) {
-      // Quiet fail if cookies / DOMStorage are blocked
-    }
-  }, [resources]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('winplanner_projects', JSON.stringify(projects));
-    } catch (e) {
-      // Quiet fail
-    }
-  }, [projects]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('winplanner_allocations', JSON.stringify(allocations));
-    } catch (e) {
-      // Quiet fail
-    }
-  }, [allocations]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('winplanner_vacations', JSON.stringify(vacations));
-    } catch (e) {
-      // Quiet fail
-    }
-  }, [vacations]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('winplanner_requests', JSON.stringify(requests));
-    } catch (e) {
-      // Quiet fail
-    }
-  }, [requests]);
 
   // Compute Scheduled Time hours dynamically to show in the gorgeous header metrics cards
   const scheduledTimeKPIs = useMemo(() => {
@@ -288,138 +309,145 @@ export default function App() {
   }, [allocations]);
 
   // Operational State Mutators
-  const handleSaveNewAllocation = (newAlloc: Omit<Allocation, 'id'>) => {
-    const allocationId = `alloc-${Date.now()}`;
-    const cleanAlloc: Allocation = {
-      id: allocationId,
-      ...newAlloc,
-    };
-    setAllocations((prev) => [...prev, cleanAlloc]);
+  const handleSaveNewAllocation = async (newAlloc: Omit<Allocation, 'id'>) => {
+    await createSchedule.mutateAsync(newAlloc);
   };
 
-  const handleUpdateAllocation = (updatedAlloc: Allocation) => {
-    setAllocations((prev) => prev.map((a) => (a.id === updatedAlloc.id ? updatedAlloc : a)));
+  const handleUpdateAllocation = async (updatedAlloc: Allocation) => {
+    await updateSchedule.mutateAsync(updatedAlloc);
   };
 
-  const handleDeleteAllocation = (id: string) => {
-    setAllocations((prev) => prev.filter((a) => a.id !== id));
+  const handleDeleteAllocation = async (id: string) => {
+    await deleteSchedule.mutateAsync(id);
   };
 
-  const handleApproveVacation = (id: string) => {
-    setVacations((prev) => prev.map((v) => (v.id === id ? { ...v, status: 'Approved' } : v)));
+  const handleApproveVacation = async (id: string) => {
+    await updateVacation.mutateAsync({ id, patch: { status: 'Approved' } });
   };
 
-  const handleRejectVacation = (id: string) => {
-    setVacations((prev) => prev.map((v) => (v.id === id ? { ...v, status: 'Rejected' } : v)));
+  const handleRejectVacation = async (id: string) => {
+    await updateVacation.mutateAsync({ id, patch: { status: 'Rejected' } });
   };
 
-  const handleSubmitVacation = (newVac: Omit<Vacation, 'id' | 'status'>) => {
-    const cleanVac: Vacation = {
-      id: `vac-${Date.now()}`,
-      ...newVac,
-      status: 'Pending',
-    };
-    setVacations((prev) => [...prev, cleanVac]);
+  const handleSubmitVacation = async (newVac: Omit<Vacation, 'id' | 'status'>) => {
+    await createVacation.mutateAsync(newVac);
   };
 
-  const handleDeleteVacation = (id: string) => {
-    setVacations((prev) => prev.filter((v) => v.id !== id));
+  const handleDeleteVacation = async (id: string) => {
+    await deleteVacation.mutateAsync(id);
   };
 
-  const handleApproveRequest = (id: string) => {
+  const handleApproveRequest = async (id: string) => {
     const proposal = requests.find((r) => r.id === id);
-    if (!proposal) return;
+    if (!proposal || !proposal.resourceId) return;
 
-    // Place allocation timeline event
-    handleSaveNewAllocation({
+    await deleteSchedulesByRequest.mutateAsync(id);
+
+    await createSchedule.mutateAsync({
       resourceId: proposal.resourceId,
       projectId: proposal.projectId,
       startDate: proposal.startDate,
       endDate: proposal.endDate,
       billablePercent: proposal.billablePercent,
       billableType: proposal.billableType,
+      requestId: proposal.id,
     });
 
-    // Mark proposal requested log as Approved
-    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: 'Approved' } : r)));
+    const updatedRequest = await updateRequest.mutateAsync({
+      id,
+      patch: { resourceId: proposal.resourceId, status: 'Approved' },
+    });
+
+    queryClient.setQueryData<BookingRequest[]>(requestQueryKeys.list(), (current) =>
+      current?.map((r) => (r.id === updatedRequest.id ? updatedRequest : r)),
+    );
+
+    await refreshSchedulingData();
   };
 
-  const handleApproveRequestWithResource = (requestId: string, resourceId: string) => {
+  const handleApproveRequestWithResource = async (requestId: string, resourceId: string) => {
     const proposal = requests.find((r) => r.id === requestId);
     if (!proposal) return;
 
-    // Place allocation timeline event
-    handleSaveNewAllocation({
-      resourceId: resourceId,
+    // Replace any existing schedule for this request (reassignment support).
+    await deleteSchedulesByRequest.mutateAsync(requestId);
+
+    await createSchedule.mutateAsync({
+      resourceId,
       projectId: proposal.projectId,
       startDate: proposal.startDate,
       endDate: proposal.endDate,
       billablePercent: proposal.billablePercent,
       billableType: proposal.billableType,
+      requestId,
     });
 
-    // Mark proposal requested log as Approved and set assigned resourceId
-    setRequests((prev) => prev.map((r) => (r.id === requestId ? { ...r, resourceId, status: 'Approved' } : r)));
+    const updatedRequest = await updateRequest.mutateAsync({
+      id: requestId,
+      patch: { resourceId, status: 'Approved' },
+    });
+
+    queryClient.setQueryData<BookingRequest[]>(requestQueryKeys.list(), (current) =>
+      current?.map((r) => (r.id === updatedRequest.id ? updatedRequest : r)),
+    );
+
+    await refreshSchedulingData();
   };
 
-  const handleUnassignRequest = (requestId: string) => {
-    const proposal = requests.find((r) => r.id === requestId);
-    if (!proposal) return;
+  const handleUnassignRequest = async (requestId: string) => {
+    await deleteSchedulesByRequest.mutateAsync(requestId);
+    const updatedRequest = await updateRequest.mutateAsync({
+      id: requestId,
+      patch: { resourceId: '', status: 'Pending' },
+    });
 
-    if (proposal.resourceId) {
-      // Find the allocation created for this request
-      const matchingAlloc = allocations.find((a) =>
-        a.resourceId === proposal.resourceId &&
-        a.projectId === proposal.projectId &&
-        a.startDate === proposal.startDate &&
-        a.endDate === proposal.endDate
-      );
-      if (matchingAlloc) {
-        setAllocations((prev) => prev.filter((a) => a.id !== matchingAlloc.id));
-      }
-    }
+    queryClient.setQueryData<BookingRequest[]>(requestQueryKeys.list(), (current) =>
+      current?.map((r) => (r.id === updatedRequest.id ? updatedRequest : r)),
+    );
 
-    // Mark proposal requested log as Pending and clear resourceId
-    setRequests((prev) => prev.map((r) => (r.id === requestId ? { ...r, resourceId: undefined, status: 'Pending' } : r)));
+    await refreshSchedulingData();
   };
 
-  const handleRejectRequest = (id: string) => {
-    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: 'Rejected' } : r)));
+  const handleRejectRequest = async (id: string) => {
+    await deleteSchedulesByRequest.mutateAsync(id);
+    await updateRequest.mutateAsync({ id, patch: { status: 'Rejected' } });
+
+    await refreshSchedulingData();
   };
 
-  const handleDeleteRequest = (id: string) => {
-    setRequests((prev) => prev.filter((r) => r.id !== id));
+  const handleDeleteRequest = async (id: string) => {
+    await deleteSchedulesByRequest.mutateAsync(id);
+    await deleteRequest.mutateAsync(id);
+
+    await refreshSchedulingData();
   };
 
-  const handleSaveBookingRequest = (newReq: Omit<BookingRequest, 'id' | 'status'>) => {
-    const proposal: BookingRequest = {
-      id: `req-${Date.now()}`,
-      ...newReq,
-      status: 'Pending',
-    };
-    setRequests((prev) => [proposal, ...prev]);
+  const handleSaveBookingRequest = async (newReq: Omit<BookingRequest, 'id' | 'status'>) => {
+    await createRequest.mutateAsync(newReq);
   };
 
-  const handleAddResource = (newRes: Omit<Resource, 'id'>) => {
-    setResources((prev) => [...prev, { id: `res-${Date.now()}`, ...newRes }]);
+  const handleAddResource = async (newRes: Omit<Resource, 'id'>) => {
+    await createPerson.mutateAsync(newRes);
   };
 
-  const handleDeleteResource = (id: string) => {
-    setResources((prev) => prev.filter((r) => r.id !== id));
-    // Cascade delete allocations
-    setAllocations((prev) => prev.filter((a) => a.resourceId !== id));
-    // Cascade delete vacations
-    setVacations((prev) => prev.filter((v) => v.resourceId !== id));
+  const handleUpdateResource = async (updatedRes: Resource) => {
+    await updatePerson.mutateAsync(updatedRes);
   };
 
-  const handleAddProject = (newProj: Omit<Project, 'id'>) => {
-    setProjects((prev) => [...prev, { id: `proj-${Date.now()}`, ...newProj }]);
+  const handleDeleteResource = async (id: string) => {
+    await deletePerson.mutateAsync(id);
   };
 
-  const handleDeleteProject = (id: string) => {
-    setProjects((prev) => prev.filter((p) => p.id !== id));
-    // Cascade delete allocations
-    setAllocations((prev) => prev.filter((a) => a.projectId !== id));
+  const handleAddProject = async (newProj: Omit<Project, 'id'>) => {
+    await createProject.mutateAsync(newProj);
+  };
+
+  const handleUpdateProject = async (updatedProj: Project) => {
+    await updateProject.mutateAsync(updatedProj);
+  };
+
+  const handleDeleteProject = async (id: string) => {
+    await deleteProject.mutateAsync(id);
   };
 
   // Pre-fill schedule prompt from capacity helper
@@ -434,36 +462,130 @@ export default function App() {
   const projectsCount = projects.length;
   const staffCount = resources.length;
 
-  return (
-    <div className="min-h-screen bg-[#f4f7f6] flex flex-col font-sans" id="winplanner-root-app">
+  if (!route) {
+    return <Navigate to={DEFAULT_ROUTE} replace />;
+  }
 
-      {/* 1. Global Navigation Bar Header matches screenshot layout */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-40 h-14 shrink-0 flex items-center justify-between px-6 shadow-sm">
-        <div className="flex items-center gap-10">
+  return (
+    <div className="h-screen bg-canvas flex flex-col font-sans overflow-hidden" id="winplanner-root-app">
+
+      {/* 1. Global Navigation Bar Header */}
+      <header className="bg-header border-b border-default z-40 h-14 shrink-0 flex items-center justify-between px-6">
+        <div className="flex items-center gap-8">
 
           {/* Logo */}
-          <div className="flex items-center gap-2">
+          <a href={ROUTES.schedulePeople} className="flex items-center gap-2 shrink-0" onClick={(e) => { e.preventDefault(); navigate(ROUTES.schedulePeople); }}>
             <img
               src={new URL('../assets/Westermnacher-logotype-gray.svg', import.meta.url).href}
               alt="Westermnacher"
-              className="h-4 w-auto max-w-[240px] object-contain"
+              className="app-logo h-4 w-auto max-w-[240px] object-contain"
             />
-          </div>
+          </a>
 
-          {/* Core Navigation Tabs (Scheduler, Vacation, Dashboard, Reports, Settings) */}
-          <nav className="flex h-14">
-            {(['scheduler', 'vacation', 'projects', 'resources', 'dashboard', 'reports', 'settings'] as const).map((tab) => {
-              const isActive = activeTab === 'requests' ? tab === 'scheduler' : activeTab === tab;
+          {/* Core Navigation — isolated items */}
+          <nav className="flex items-center gap-1">
+            {([
+              { path: ROUTES.schedulePeople, label: 'Schedule', isActive: isScheduleArea(activeTab) },
+              { path: ROUTES.timeOff, label: 'Time Off', isActive: activeTab === 'vacation' },
+            ]).map((tab) => (
+                <button
+                  key={tab.path}
+                  onClick={() => {
+                    setMasterDataMenuOpen(false);
+                    navigate(tab.path);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    tab.isActive
+                      ? 'bg-nav-active text-primary'
+                      : 'text-secondary hover:text-primary hover:bg-surface-hover'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+
+            {/* Master Data dropdown */}
+            <div className="relative" ref={masterDataMenuRef}>
+              <button
+                onClick={() => setMasterDataMenuOpen((open) => !open)}
+                className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap inline-flex items-center gap-1 ${
+                  activeTab === 'projects' || activeTab === 'resources' || masterDataMenuOpen
+                    ? 'bg-nav-active text-primary'
+                    : 'text-secondary hover:text-primary hover:bg-surface-hover'
+                }`}
+              >
+                Master Data
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${masterDataMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {masterDataMenuOpen && (
+                <div className="absolute top-full left-0 mt-2 w-72 bg-surface-raised rounded-2xl shadow-app-md border border-subtle p-4 z-50">
+                  <p className="text-[10px] font-semibold text-tertiary uppercase tracking-wider mb-2 px-1">
+                    Master Data
+                  </p>
+                  <div className="space-y-1">
+                    {([
+                      {
+                        path: ROUTES.masterProjects,
+                        tab: 'projects' as const,
+                        label: 'Projects',
+                        description: 'Portfolio, clients, and assignments',
+                        icon: FolderKanban,
+                      },
+                      {
+                        path: ROUTES.masterPeople,
+                        tab: 'resources' as const,
+                        label: 'People',
+                        description: 'Team members, roles, and capacity',
+                        icon: Users,
+                      },
+                    ]).map((item) => {
+                      const Icon = item.icon;
+                      const isActive = activeTab === item.tab;
+                      return (
+                        <button
+                          key={item.path}
+                          onClick={() => {
+                            navigate(item.path);
+                            setMasterDataMenuOpen(false);
+                          }}
+                          className={`w-full text-left p-3 rounded-xl flex items-start gap-3 transition-colors cursor-pointer ${
+                            isActive ? 'bg-surface-muted' : 'hover:bg-surface-muted'
+                          }`}
+                        >
+                          <Icon className="w-4 h-4 text-tertiary mt-0.5 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-primary">{item.label}</div>
+                            <div className="text-xs text-secondary leading-snug">{item.description}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {([
+              { path: ROUTES.dashboard, tab: 'dashboard' as const, label: 'Dashboard' },
+              { path: ROUTES.reports, tab: 'reports' as const, label: 'Reports' },
+              { path: ROUTES.settings, tab: 'settings' as const, label: 'Settings' },
+            ]).map((tab) => {
+              const isActive = activeTab === tab.tab;
               return (
                 <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`h-full px-5 text-xs font-bold uppercase tracking-wider relative flex items-center justify-center transition-all cursor-pointer ${isActive
-                    ? 'text-blue-600 border-b-4 border-blue-500 font-extrabold bg-blue-50/20'
-                    : 'text-gray-500 hover:text-gray-900 border-b-4 border-transparent hover:border-gray-205'
-                    }`}
+                  key={tab.path}
+                  onClick={() => {
+                    setMasterDataMenuOpen(false);
+                    navigate(tab.path);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    isActive
+                      ? 'bg-nav-active text-primary'
+                      : 'text-secondary hover:text-primary hover:bg-surface-hover'
+                  }`}
                 >
-                  {tab}
+                  {tab.label}
                 </button>
               );
             })}
@@ -471,453 +593,213 @@ export default function App() {
 
         </div>
 
-        {/* Global profile user identifier client-safe */}
-        <div className="flex items-center gap-4">
+        {/* Profile */}
+        <div className="flex items-center gap-3">
           <button
             onClick={() => setDarkMode(!darkMode)}
-            className="p-2.5 rounded-xl border border-gray-200 hover:bg-slate-50 text-gray-500 hover:text-gray-900 transition-all flex items-center justify-center cursor-pointer shadow-sm relative group dark:border-slate-800 dark:hover:bg-slate-800/85 dark:text-gray-300 dark:hover:text-white"
-            title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            className="p-2 rounded-full text-tertiary hover:text-primary hover:bg-surface-hover transition-colors flex items-center justify-center cursor-pointer"
+            title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             id="theme-toggle-button"
           >
             {darkMode ? (
-              <Sun className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: '6s' }} />
+              <Sun className="w-4 h-4 text-amber-500" style={{ animationDuration: '6s' }} />
             ) : (
-              <Moon className="w-4 h-4 text-indigo-500" />
+              <Moon className="w-4 h-4" />
             )}
           </button>
 
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <span className="text-[10px] font-bold text-gray-400 block uppercase">Administrator</span>
-              <span className="text-xs font-bold text-gray-700 block truncate max-w-[160px]">
-                divanshu.jagtani
-              </span>
+          <div className="relative flex items-center gap-2.5 pl-2 border-l border-default" ref={userMenuRef}>
+            <div className="text-right hidden sm:block">
+              <span className="text-sm font-medium text-primary block leading-tight">Elizabeth Taylor</span>
+              <span className="text-xs text-tertiary block">Resource Planner</span>
             </div>
-            <div className="w-9 h-9 rounded-full bg-[#4e82c2] text-white font-bold flex items-center justify-center shadow-sm">
-              DJ
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMasterDataMenuOpen(false);
+                setUserMenuOpen((open) => !open);
+              }}
+              className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center hover:ring-2 hover:ring-blue-400/50 transition-shadow cursor-pointer"
+              aria-expanded={userMenuOpen}
+              aria-haspopup="menu"
+              id="user-menu-button"
+            >
+              ET
+            </button>
+
+            {userMenuOpen && (
+              <div
+                className="absolute top-full right-0 mt-2 w-52 bg-surface-raised rounded-xl shadow-app-md border border-subtle py-1 z-50"
+                role="menu"
+                id="user-menu-dropdown"
+              >
+                <div className="px-3 py-2 border-b border-subtle sm:hidden">
+                  <p className="text-sm font-medium text-primary">Elizabeth Taylor</p>
+                  <p className="text-xs text-tertiary">Resource Planner</p>
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    setMasterDataMenuOpen(false);
+                    navigate(ROUTES.settings);
+                  }}
+                  className="w-full text-left px-3 py-2.5 text-sm text-primary hover:bg-surface-muted flex items-center gap-2.5 transition-colors cursor-pointer"
+                >
+                  <Settings className="w-4 h-4 text-tertiary shrink-0" />
+                  Profile settings
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    window.alert('Logged out (demo)');
+                  }}
+                  className="w-full text-left px-3 py-2.5 text-sm text-red-500 hover:bg-surface-muted flex items-center gap-2.5 transition-colors cursor-pointer border-t border-subtle"
+                >
+                  <LogOut className="w-4 h-4 shrink-0" />
+                  Log out
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
 
       {/* 2. Main Split Pane Body */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
 
-        {/* Left Vertical Sub-Panel: Projects and Resources triggers */}
-        {(activeTab === 'scheduler' || activeTab === 'requests') && (
-          <aside className="w-[110px] bg-white border-r border-gray-200 flex flex-col shrink-0">
-            <div className="flex flex-col gap-1 py-4 px-2">
+        {/* Left rail — fixed to viewport, does not scroll with page content */}
+        {isScheduleArea(activeTab) && (
+          <aside className="fixed top-14 left-0 bottom-0 z-20 w-[110px] bg-rail border-r border-default flex flex-col shrink-0">
+            <div className="flex flex-col gap-1 py-4 px-2 flex-1 min-h-0 overflow-y-auto">
 
               {/* Projects sidebar selector */}
               <button
                 onClick={() => {
-                  setSidebarActive('projects');
-                  setSearchQuery('');
-                  setDrawerSearch('');
-                  setSelectedFilterChip(null);
-                  setActiveTab('scheduler');
+                  setActiveProjectFilterId(null);
+                  navigate(ROUTES.scheduleProjects);
                 }}
                 className={`p-3 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${sidebarActive === 'projects' && activeTab === 'scheduler'
-                  ? 'bg-blue-50 text-blue-600 font-bold border border-blue-100'
-                  : 'text-gray-400 hover:text-gray-700 hover:bg-slate-50'
+                  ? 'tint-blue font-bold border'
+                  : 'text-tertiary hover:text-primary hover:bg-surface-muted'
                   }`}
               >
                 <FolderKanban className="w-5 h-5" />
                 <div className="text-[10px] font-semibold text-center leading-none">
                   Projects
-                  <span className="block text-[8px] text-gray-400 mt-1">({projectsCount})</span>
+                  <span className="block text-[8px] text-tertiary mt-1">({projectsCount})</span>
                 </div>
               </button>
 
               {/* Resources sidebar selector */}
               <button
                 onClick={() => {
-                  setSidebarActive('resources');
-                  setSearchQuery('');
-                  setDrawerSearch('');
-                  setSelectedFilterChip(null);
-                  setActiveTab('scheduler');
+                  setActivePersonFilterId(null);
+                  navigate(ROUTES.schedulePeople);
                 }}
                 className={`p-3 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${sidebarActive === 'resources' && activeTab === 'scheduler'
-                  ? 'bg-blue-50 text-blue-600 font-bold border border-blue-100'
-                  : 'text-gray-400 hover:text-gray-700 hover:bg-slate-50'
+                  ? 'tint-blue font-bold border'
+                  : 'text-tertiary hover:text-primary hover:bg-surface-muted'
                   }`}
               >
                 <Users className="w-5 h-5" />
                 <div className="text-[10px] font-semibold text-center leading-none">
                   Resources
-                  <span className="block text-[8px] text-gray-400 mt-1">({staffCount})</span>
+                  <span className="block text-[8px] text-tertiary mt-1">({staffCount})</span>
                 </div>
               </button>
 
               {/* Request sidebar selector */}
               <button
                 onClick={() => {
-                  setActiveTab('requests');
+                  setActiveRequestFilterId(null);
+                  navigate(ROUTES.scheduleRequests);
                 }}
                 className={`p-3 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${activeTab === 'requests'
-                  ? 'bg-blue-50 text-blue-600 font-bold border border-blue-100'
-                  : 'text-gray-400 hover:text-gray-700 hover:bg-slate-50'
+                  ? 'tint-blue font-bold border'
+                  : 'text-tertiary hover:text-primary hover:bg-surface-muted'
                   }`}
               >
                 <Clock className="w-5 h-5" />
                 <div className="text-[10px] font-semibold text-center leading-none">
                   Request
-                  <span className="block text-[8px] text-gray-400 mt-1">({requests.filter(r => r.status === 'Pending').length})</span>
+                  <span className="block text-[8px] text-tertiary mt-1">({requests.filter(r => r.status === 'Pending').length})</span>
                 </div>
               </button>
 
             </div>
 
-            {/* Filter icon button at the bottom wrapper */}
-            <div className="mt-auto px-2 pt-2 pb-2 border-t border-gray-100">
+            {/* Filter — pinned to bottom of fixed rail */}
+            <div className="shrink-0 px-2 pt-2 pb-3 border-t border-subtle bg-rail">
               <button
                 onClick={() => setIsDrawerOpen((prev) => !prev)}
-                className={`w-full py-2.5 px-2 rounded-xl flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${isDrawerOpen
-                  ? 'bg-blue-600 text-white font-bold shadow-md'
-                  : 'bg-slate-50 text-gray-500 hover:text-blue-600 hover:bg-blue-50 border border-dashed border-gray-200'
-                  }`}
+                className={`w-full py-2.5 px-2 rounded-lg flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${
+                  isDrawerOpen
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-secondary hover:text-blue-500 hover:bg-surface-muted'
+                }`}
               >
                 <Filter className="w-4 h-4" />
-                <span className="text-[9px] font-black tracking-tight uppercase">Filter</span>
+                <span className="text-[9px] font-semibold tracking-wide">Filter</span>
               </button>
             </div>
           </aside>
         )}
 
-        {/* Sidebar Drawer Panel */}
-        {(activeTab === 'scheduler' || activeTab === 'requests') && isDrawerOpen && (
-          activeTab === 'requests' ? (
-            <div className="absolute left-[110px] top-0 bottom-0 w-80 bg-black border-r border-neutral-900 shadow-xl z-30 flex flex-col animate-fade-in">
-              <div className="p-4 border-b border-neutral-900 flex items-center justify-between bg-neutral-950">
-                <div>
-                  <h3 className="text-xs font-black text-neutral-400 uppercase tracking-wider">
-                    Filters
-                  </h3>
-                  <p className="text-[10px] text-neutral-600 mt-0.5 font-medium">
-                    Empty for Request Mode
-                  </p>
-                </div>
-                <button
-                  onClick={() => setIsDrawerOpen(false)}
-                  className="p-1.5 hover:bg-neutral-900 rounded-lg text-neutral-500 hover:text-neutral-200 cursor-pointer transition"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="flex-1 bg-black text-white flex flex-col items-center justify-center p-6 text-center select-none">
-                <Filter className="w-8 h-8 text-neutral-800 mb-2 animate-pulse" />
-                <p className="text-[11px] font-bold text-neutral-600 tracking-wider uppercase">No Filters Available</p>
-                <p className="text-[10px] text-neutral-700 mt-1 max-w-[200px]">
-                  Filters are disabled when Request Tab is active
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="absolute left-[110px] top-0 bottom-0 w-80 bg-white border-r border-gray-200 shadow-xl z-30 flex flex-col animate-fade-in">
-              <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-slate-50/50">
-                <div>
-                  <h3 className="text-xs font-black text-gray-800 uppercase tracking-wider">
-                    {sidebarActive === 'resources' ? 'Resource Workloads' : 'Project Assignments'}
-                  </h3>
-                  <p className="text-[10px] text-gray-400 mt-0.5 font-medium">
-                    {sidebarActive === 'resources' ? 'Resource utilization & projects' : 'Project scope & resources'}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setIsDrawerOpen(false)}
-                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-700 cursor-pointer transition"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Filter input */}
-              <div className="p-3 border-b border-gray-100 bg-white space-y-2">
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    placeholder={
-                      sidebarActive === 'resources'
-                        ? 'Search resource or group...'
-                        : 'Search projects or clients...'
-                    }
-                    value={drawerSearch}
-                    onChange={(e) => setDrawerSearch(e.target.value)}
-                    className="w-full pl-8.5 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none bg-slate-50/50 text-gray-850"
-                  />
-                </div>
-
-                {/* Active Filter Chip Display */}
-                {selectedFilterChip && (
-                  <div className="flex items-center gap-1.5 flex-wrap pt-1 animate-fade-in">
-                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">Filtered:</span>
-                    <div className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 pl-2 pr-1.5 py-0.5 rounded-full text-[10px] font-bold shadow-sm">
-                      <span className="truncate max-w-[150px]">
-                        {selectedFilterChip.type === 'group' ? '👥' : selectedFilterChip.type === 'project' ? '📂' : '👤'} {selectedFilterChip.name}
-                      </span>
-                      <button
-                        onClick={() => {
-                          setSelectedFilterChip(null);
-                          setSearchQuery('');
-                        }}
-                        className="p-0.5 hover:bg-blue-100 rounded-full text-blue-500 hover:text-blue-800 transition cursor-pointer"
-                        title="Clear filter"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* List items */}
-              <div className="flex-1 overflow-y-auto p-2 space-y-1.5 bg-slate-50/30">
-                {sidebarActive === 'resources' ? (
-                  // LIST OF ALL RESOURCES with number of projects assigned
-                  (() => {
-                    const filteredResources = resources.filter((res) => {
-                      if (!drawerSearch) return true;
-                      const q = drawerSearch.toLowerCase();
-                      return (
-                        (res.name || '').toLowerCase().includes(q) ||
-                        (res.role || '').toLowerCase().includes(q) ||
-                        (res.group || '').toLowerCase().includes(q)
-                      );
-                    });
-
-                    if (filteredResources.length === 0) {
-                      return (
-                        <div className="p-4 text-center text-xs text-gray-400">
-                          No resources found matching the filter.
-                        </div>
-                      );
-                    }
-
-                    const groupedResources: { [groupName: string]: Resource[] } = {};
-                    filteredResources.forEach((res) => {
-                      const g = res.group || 'Unassigned';
-                      if (!groupedResources[g]) {
-                        groupedResources[g] = [];
-                      }
-                      groupedResources[g].push(res);
-                    });
-
-                    return Object.entries(groupedResources).map(([groupName, groupRes]) => {
-                      const isGroupSelected = selectedFilterChip?.type === 'group' && selectedFilterChip.name === groupName;
-                      return (
-                        <div key={groupName} className="space-y-1.5 mb-4">
-                          {/* Clickable Group Header */}
-                          <div
-                            onClick={() => {
-                              if (isGroupSelected) {
-                                setSelectedFilterChip(null);
-                                setSearchQuery('');
-                              } else {
-                                setSelectedFilterChip({ type: 'group', name: groupName });
-                                setSearchQuery(groupName);
-                              }
-                            }}
-                            className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border cursor-pointer transition-all select-none ${isGroupSelected
-                              ? 'bg-blue-600 text-white border-blue-700 shadow-md'
-                              : 'bg-slate-100/85 text-slate-700 border-slate-200/50 hover:bg-blue-50 hover:border-blue-300'
-                              }`}
-                            title="Click to filter timeline by this group"
-                          >
-                            <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1 ${isGroupSelected ? 'text-white' : 'text-slate-500'
-                              }`}>
-                              👥 {groupName}
-                            </span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${isGroupSelected ? 'bg-blue-700 text-blue-100' : 'bg-slate-200 text-slate-600'
-                              }`}>
-                              {groupRes.length}
-                            </span>
-                          </div>
-
-                          <div className="space-y-1 pl-4.5 border-l border-gray-100">
-                            {groupRes.map((res) => {
-                              const isResSelected = selectedFilterChip?.type === 'resource' && selectedFilterChip.id === res.id;
-
-                              return (
-                                <div
-                                  key={res.id}
-                                  onClick={() => {
-                                    if (isResSelected) {
-                                      setSelectedFilterChip(null);
-                                      setSearchQuery('');
-                                    } else {
-                                      setSelectedFilterChip({ type: 'resource', name: res.name, id: res.id });
-                                      setSearchQuery(res.name);
-                                    }
-                                  }}
-                                  className={`flex items-center gap-2 text-xs py-1.5 px-2 rounded-md cursor-pointer transition-colors select-none ${isResSelected
-                                    ? 'bg-blue-50 text-blue-700 font-bold'
-                                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                                    }`}
-                                  title="Click to filter timeline by this resource"
-                                >
-                                  <span className="truncate" title={res.name}>
-                                    {res.name}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()
-                ) : (
-                  // LIST OF ALL PROJECTS with number of resources assigned
-                  (() => {
-                    const filteredProjects = projects.filter((proj) => {
-                      if (!drawerSearch) return true;
-                      const q = drawerSearch.toLowerCase();
-                      const matchProjName = (proj.name || '').toLowerCase().includes(q);
-                      const matchClient = (proj.client || '').toLowerCase().includes(q);
-                      const matchGroup = (proj.group || '').toLowerCase().includes(q);
-                      const hasMatchingResource = allocations
-                        .filter((alloc) => alloc.projectId === proj.id)
-                        .some((alloc) => {
-                          const res = resources.find((r) => r.id === alloc.resourceId);
-                          if (!res) return false;
-                          return (
-                            (res.name || '').toLowerCase().includes(q) ||
-                            (res.role || '').toLowerCase().includes(q)
-                          );
-                        });
-                      return matchProjName || matchClient || matchGroup || hasMatchingResource;
-                    });
-
-                    if (filteredProjects.length === 0) {
-                      return (
-                        <div className="p-4 text-center text-xs text-gray-400">
-                          No projects found matching the filter.
-                        </div>
-                      );
-                    }
-
-                    const groupedProjects: { [groupName: string]: Project[] } = {};
-                    filteredProjects.forEach((proj) => {
-                      const g = proj.group || 'Unassigned';
-                      if (!groupedProjects[g]) {
-                        groupedProjects[g] = [];
-                      }
-                      groupedProjects[g].push(proj);
-                    });
-
-                    return Object.entries(groupedProjects).map(([groupName, groupProjs]) => {
-                      const isGroupSelected = selectedFilterChip?.type === 'group' && selectedFilterChip.name === groupName;
-                      return (
-                        <div key={groupName} className="space-y-1.5 mb-4">
-                          {/* Clickable Group Header */}
-                          <div
-                            onClick={() => {
-                              if (isGroupSelected) {
-                                setSelectedFilterChip(null);
-                                setSearchQuery('');
-                              } else {
-                                setSelectedFilterChip({ type: 'group', name: groupName });
-                                setSearchQuery(groupName);
-                              }
-                            }}
-                            className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border cursor-pointer transition-all select-none ${isGroupSelected
-                              ? 'bg-blue-600 text-white border-blue-700 shadow-md'
-                              : 'bg-slate-100/85 text-slate-700 border-slate-200/50 hover:bg-blue-50 hover:border-blue-300'
-                              }`}
-                            title="Click to filter timeline by this group"
-                          >
-                            <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1 ${isGroupSelected ? 'text-white' : 'text-slate-500'
-                              }`}>
-                              📂 {groupName}
-                            </span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${isGroupSelected ? 'bg-blue-700 text-blue-100' : 'bg-slate-200 text-slate-600'
-                              }`}>
-                              {groupProjs.length}
-                            </span>
-                          </div>
-
-                          <div className="space-y-1 pl-4.5 border-l border-gray-100">
-                            {groupProjs.map((proj) => {
-                              const isProjSelected = selectedFilterChip?.type === 'project' && selectedFilterChip.id === proj.id;
-                              return (
-                                <div
-                                  key={proj.id}
-                                  onClick={() => {
-                                    if (isProjSelected) {
-                                      setSelectedFilterChip(null);
-                                      setSearchQuery('');
-                                    } else {
-                                      setSelectedFilterChip({ type: 'project', name: proj.name, id: proj.id });
-                                      setSearchQuery(proj.name);
-                                    }
-                                  }}
-                                  className={`flex items-center gap-2 text-xs py-1.5 px-2 rounded-md cursor-pointer transition-colors select-none ${isProjSelected
-                                    ? 'bg-blue-50 text-blue-700 font-bold'
-                                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                                    }`}
-                                  title="Click to filter timeline by this project"
-                                >
-                                  <span className="truncate" title={proj.name}>
-                                    {proj.name}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()
-                )}
-              </div>
-            </div>
-          ))}
+        <FilterSidebar
+          isOpen={isScheduleArea(activeTab) && isDrawerOpen}
+          onClose={() => setIsDrawerOpen(false)}
+          viewContext={filterViewContext}
+          filters={sidebarFilters}
+          activeFilterId={activeFilterId}
+          lookups={lookups}
+          onSelectFilter={handleSelectFilter}
+          onCreateFilter={handleCreateFilter}
+          onUpdateFilter={handleUpdateFilter}
+          onDeleteFilter={handleDeleteFilter}
+        />
 
         {/* Right Active Work Area */}
-        <main className="flex-1 p-8 overflow-y-auto bg-[#fafbfc]">
+        <main
+          className={`flex-1 min-h-0 bg-canvas-subtle ${
+            isScheduleArea(activeTab)
+              ? 'ml-[110px] p-8 overflow-hidden flex flex-col'
+              : 'p-8 overflow-y-auto'
+          }`}
+        >
 
           {/* Main content tabs dispatching router routing */}
-          {(activeTab === 'scheduler' || activeTab === 'requests') && (
-            <div className="space-y-6">
+          {isScheduleArea(activeTab) && (
+            <div className="flex flex-col flex-1 min-h-0 gap-6">
 
 
 
               {/* Grid interactive Filters Toolbar exactly like visual mockup */}
-              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800/80 p-2 shadow-sm flex items-center justify-between flex-wrap gap-4">
+              <div className="app-card p-2 shrink-0 flex items-center justify-between flex-wrap gap-4">
 
                 <div className="flex items-center gap-1 flex-wrap flex-1 max-w-xl">
-                  {/* Search filter input 
-                  <div className="relative flex-1 min-w-[180px]">
-                    <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                    <input
-                      type="text"
-                      placeholder="Filter resources or roles..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none bg-slate-50/50"
-                    />
-                  </div>
-*/}
                   {/* Interactive Date Range Selector with From and To date pickers */}
-                  <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800 p-2 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300">
+                  <div className="flex items-center gap-2 bg-surface-muted p-2 border border-default rounded-lg text-xs font-bold text-primary">
                     <span className="flex items-center gap-1">
-                      🗓️ <span className="text-gray-400 dark:text-gray-500">From:</span>
+                      🗓️ <span className="text-tertiary">From:</span>
                     </span>
                     <input
                       type="date"
                       value={timelineStartDate}
                       onChange={(e) => setTimelineStartDate(e.target.value)}
-                      className="border-0 bg-transparent text-gray-800 dark:text-gray-100 font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
+                      className="border-0 bg-transparent text-primary font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
                     />
-                    <span className="text-gray-400 dark:text-gray-500 mx-1">→</span>
-                    <span className="text-gray-400 dark:text-gray-500">To:</span>
+                    <span className="text-tertiary mx-1">→</span>
+                    <span className="text-tertiary">To:</span>
                     <input
                       type="date"
                       value={timelineEndDate}
                       onChange={(e) => setTimelineEndDate(e.target.value)}
-                      className="border-0 bg-transparent text-gray-800 dark:text-gray-100 font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
+                      className="border-0 bg-transparent text-primary font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
+                      title="Maximum scroll range"
                     />
                   </div>
                 </div>
@@ -925,13 +807,14 @@ export default function App() {
 
 
               {/* Main Timeline Allocation Grid Board */}
+              <div className="flex-1 min-h-0">
               <SchedulerGrid
                 resources={resources}
                 projects={projects}
                 allocations={allocations}
                 vacations={vacations}
                 requests={requests}
-                searchQuery={searchQuery}
+                filterCriteria={filterCriteria}
                 timelineStartDate={timelineStartDate}
                 timelineEndDate={timelineEndDate}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
@@ -948,6 +831,7 @@ export default function App() {
                 onApproveRequestWithResource={handleApproveRequestWithResource}
                 onUnassignRequest={handleUnassignRequest}
               />
+              </div>
 
             </div>
           )}
@@ -966,12 +850,18 @@ export default function App() {
           {activeTab === 'projects' && (
             <ProjectTab
               projects={projects}
+              onAddProject={handleAddProject}
+              onUpdateProject={handleUpdateProject}
+              onDeleteProject={handleDeleteProject}
             />
           )}
 
           {activeTab === 'resources' && (
             <ResourceTab
               resources={resources}
+              onAddResource={handleAddResource}
+              onUpdateResource={handleUpdateResource}
+              onDeleteResource={handleDeleteResource}
             />
           )}
 

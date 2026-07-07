@@ -6,6 +6,7 @@
 import React, { useState, useMemo } from 'react';
 import { Resource, Project, Allocation } from '../types';
 import { LayoutDashboard, TrendingUp, Users, FolderKanban, CheckCircle, PieChart, BarChart3, HelpCircle, SlidersHorizontal, RotateCcw } from 'lucide-react';
+import { getProjectCategoryDotClassForProject } from '../lib/projectCategory';
 
 interface DashboardTabProps {
   resources: Resource[];
@@ -164,7 +165,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
     const projectHoursList = activeProjectsList.map((p) => ({
       name: p.name,
       hours: Math.round(projectHoursMap[p.id] || 0),
-      color: p.color,
+      color: getProjectCategoryDotClassForProject(p),
     })).filter(p => p.hours > 0);
 
     const billableRatio = totalPlannedHours > 0 ? (billableHours / totalPlannedHours) * 105 : 0;
@@ -191,15 +192,15 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
     <div className="space-y-6" id="dashboard-tab-board">
       
       {/* Top Filter Section Line */}
-      <div className="bg-white px-5 py-4 rounded-xl border border-gray-100 shadow-sm flex flex-wrap items-center justify-between gap-4" id="dashboard-top-filter-bar">
+      <div className="app-card flex flex-wrap items-center justify-between gap-4" id="dashboard-top-filter-bar">
         <div className="flex flex-wrap items-center gap-4">
           {/* Initiative Dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold text-gray-400">Project:</span>
+            <span className="text-[11px] font-bold text-tertiary">Project:</span>
             <select
               value={filterProject}
               onChange={(e) => setFilterProject(e.target.value)}
-              className="text-xs bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-400 focus:outline-none transition font-semibold cursor-pointer text-gray-800 dark:text-gray-100"
+              className="text-xs bg-surface-muted hover:bg-surface-hover border border-default rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-400 focus:outline-none transition font-semibold cursor-pointer text-primary"
             >
               <option value="all">All Projects</option>
               {projects.map((p) => (
@@ -212,11 +213,11 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
 
           {/* Team Group Dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold text-gray-400">Team Group:</span>
+            <span className="text-[11px] font-bold text-tertiary">Team Group:</span>
             <select
               value={filterGroup}
               onChange={(e) => setFilterGroup(e.target.value)}
-              className="text-xs bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-400 focus:outline-none transition font-semibold cursor-pointer text-gray-800 dark:text-gray-100"
+              className="text-xs bg-surface-muted hover:bg-surface-hover border border-default rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-400 focus:outline-none transition font-semibold cursor-pointer text-primary"
             >
               <option value="all">All Groups</option>
               {groups.map((g) => (
@@ -230,11 +231,11 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
 
         {/* Time Horizon Dropdown */}
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-gray-400">Time Horizon:</span>
+          <span className="text-[11px] font-bold text-tertiary">Time Horizon:</span>
           <select
             value={filterTime}
             onChange={(e) => setFilterTime(e.target.value)}
-            className="text-xs bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-400 focus:outline-none transition font-semibold cursor-pointer text-gray-800 dark:text-gray-100"
+            className="text-xs bg-surface-muted hover:bg-surface-hover border border-default rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-400 focus:outline-none transition font-semibold cursor-pointer text-primary"
           >
             <option value="all">All Weeks (Jun & Jul)</option>
             <option value="june">June 2026 Only</option>
@@ -245,9 +246,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         
-        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between">
+        <div className="app-card flex flex-col justify-between">
           <div>
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Total Scheduled Time</span>
+            <span className="text-xs font-bold text-tertiary uppercase tracking-widest block">Total Scheduled Time</span>
             <span className="text-3xl font-extrabold text-slate-800 block mt-2">{stats.totalHours} Hours</span>
           </div>
           <p className="text-xs text-slate-500 mt-4 pt-4 border-t border-slate-50 font-medium">
@@ -255,9 +256,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
           </p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between">
+        <div className="app-card flex flex-col justify-between">
           <div>
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Billability Ratio</span>
+            <span className="text-xs font-bold text-tertiary uppercase tracking-widest block">Billability Ratio</span>
             <span className="text-3xl font-extrabold text-emerald-600 block mt-2">{stats.billablePercent}%</span>
           </div>
           {/* Progress bar */}
@@ -269,9 +270,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
           </p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between">
+        <div className="app-card flex flex-col justify-between">
           <div>
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Core Headcount</span>
+            <span className="text-xs font-bold text-tertiary uppercase tracking-widest block">Core Headcount</span>
             <span className="text-3xl font-extrabold text-[#a855f7] block mt-2">{stats.activeResources} Members</span>
           </div>
           <p className="text-xs text-slate-500 mt-4 pt-4 border-t border-slate-50 font-medium flex items-center gap-1">
@@ -279,9 +280,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
           </p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between">
+        <div className="app-card flex flex-col justify-between">
           <div>
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Active Initiatives</span>
+            <span className="text-xs font-bold text-tertiary uppercase tracking-widest block">Active Initiatives</span>
             <span className="text-3xl font-extrabold text-amber-500 block mt-2">{stats.activeProjects} Projects</span>
           </div>
           <p className="text-xs text-slate-500 mt-4 pt-4 border-t border-slate-50 font-medium flex items-center gap-1">
@@ -295,16 +296,16 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Project bar chart */}
-        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm space-y-4">
+        <div className="app-card space-y-4">
           <div className="flex items-center gap-2 border-b border-gray-55 pb-3 justify-between">
             <div className="flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-gray-600" />
-              <h3 className="text-md font-bold text-gray-800">Planned Hours by Project</h3>
+              <BarChart3 className="w-5 h-5 text-secondary" />
+              <h3 className="text-md font-bold text-primary">Planned Hours by Project</h3>
             </div>
           </div>
 
           {stats.projectHours.length === 0 ? (
-            <div className="text-center py-20 text-gray-400 text-sm">
+            <div className="text-center py-20 text-tertiary text-sm">
               Allocate resource hours to projects to display visual analytics.
             </div>
           ) : (
@@ -316,10 +317,10 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
                 return (
                   <div key={item.name} className="space-y-1.5 shadow-sm p-1 rounded-lg">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-gray-700">{item.name}</span>
-                      <span className="font-semibold text-gray-500">{item.hours} hours planned</span>
+                      <span className="font-bold text-primary">{item.name}</span>
+                      <span className="font-semibold text-secondary">{item.hours} hours planned</span>
                     </div>
-                    <div className="w-full bg-slate-100 rounded-full h-4 relative">
+                    <div className="w-full bg-surface-muted rounded-full h-4 relative">
                       <div
                         style={{ width: `${percentage}%` }}
                         className={`h-4 rounded-full transition-all duration-500 ${colorHex}`}
@@ -333,10 +334,10 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
         </div>
 
         {/* Billable composition share (Donut Visualizer) */}
-        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm space-y-4 flex flex-col justify-between">
+        <div className="app-card space-y-4 flex flex-col justify-between">
           <div className="flex items-center gap-2 border-b border-gray-55 pb-3">
-            <PieChart className="w-5 h-5 text-gray-600" />
-            <h3 className="text-md font-bold text-gray-800">Allocation Type Composition</h3>
+            <PieChart className="w-5 h-5 text-secondary" />
+            <h3 className="text-md font-bold text-primary">Allocation Type Composition</h3>
           </div>
 
           <div className="flex flex-col md:flex-row items-center justify-around py-4 gap-6 grow">
@@ -359,8 +360,8 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
               </svg>
               {/* Inner absolute centering */}
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-xl font-black text-gray-800">{stats.billablePercent}%</span>
-                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Billable</span>
+                <span className="text-xl font-black text-primary">{stats.billablePercent}%</span>
+                <span className="text-[9px] font-bold text-tertiary uppercase tracking-widest">Billable</span>
               </div>
             </div>
 
@@ -369,15 +370,15 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ resources, projects,
               <div className="p-2 border border-emerald-100 rounded-lg hover:bg-emerald-50/50 transition-colors">
                 <div className="flex items-center gap-2">
                   <span className="w-3.5 h-3.5 bg-emerald-500 rounded" />
-                  <span className="text-xs font-bold text-gray-700">Client Billable</span>
+                  <span className="text-xs font-bold text-primary">Client Billable</span>
                 </div>
                 <p className="text-sm font-extrabold text-emerald-600 pl-5 mt-0.5">{stats.billableHours} hrs</p>
               </div>
 
-              <div className="p-2 border border-slate-100 rounded-lg hover:bg-slate-50 transition-colors">
+              <div className="p-2 border border-subtle rounded-lg hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <span className="w-3.5 h-3.5 bg-purple-400 rounded" />
-                  <span className="text-xs font-bold text-gray-700">Opportunity</span>
+                  <span className="text-xs font-bold text-primary">Opportunity</span>
                 </div>
                 <p className="text-sm font-extrabold text-purple-600 pl-5 mt-0.5">{stats.nonBillableHours.toFixed(0)} hrs</p>
               </div>
