@@ -29,6 +29,8 @@ export interface Resource {
   siteId?: string | null;
   consultingUnitId?: string | null;
   practiceAreaId?: string | null;
+  avatarUrl?: string;
+  skills?: string[];
 }
 
 export type FilterKind = 'project' | 'person' | 'request';

@@ -24,6 +24,7 @@ import {
 import { buildDateRange, addDays } from '../lib/dateUtils';
 import { useSchedulesInRange } from '../hooks/useSchedules';
 import { useHorizontalTimelineWindow } from '../hooks/useHorizontalTimelineWindow';
+import { SkillMatcherModal } from './SkillMatcherModal';
 
 const COL_WIDTH = 52;
 const FETCH_BUFFER_DAYS = 21;
@@ -646,179 +647,20 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
         </div>
       </div>
 
-      {/* Candidate Resources with Skills Popup Modal */}
-      {selectedRequestForSkills && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay backdrop-blur-sm p-4 overflow-y-auto animate-fade-in" id="resources-skills-popup">
-          <div className="bg-surface border border-subtle rounded-xl shadow-app-md w-full max-w-lg overflow-hidden flex flex-col h-[550px] transform transition-all animate-scale-up">
-            
-            {/* Modal Header */}
-            <div className="app-card-header px-5 py-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-1.5">
-                  <Award className="w-4 h-4 text-blue-600" /> Skill Matcher
-                </h3>
-                <p className="text-[11px] text-tertiary font-medium">
-                  Project: <span className="font-bold text-secondary">{requestProject?.name || 'Unknown Project'}</span>
-                </p>
-              </div>
-              <button 
-                onClick={() => {
-                  setSelectedRequestForSkills(null);
-                  setPopupSearch('');
-                }}
-                className="p-1.5 rounded-lg text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Modal Content Details */}
-            <div className="px-5 py-3.5 tint-blue border-b border-subtle flex justify-between items-center text-xs">
-              <div className="flex-1 pr-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] font-extrabold px-2 py-0.5 tint-blue rounded uppercase tracking-wider">
-                    {selectedRequestForSkills.requiredSkill || 'General Skill'}
-                  </span>
-                  <span className="text-tertiary">•</span>
-                  <span className="font-semibold text-secondary">
-                    {selectedRequestForSkills.billablePercent}% Allocation
-                  </span>
-                </div>
-                <div className="text-[10px] text-tertiary font-medium truncate italic" title={selectedRequestForSkills.notes}>
-                  "{selectedRequestForSkills.notes || 'No notes provided.'}"
-                </div>
-              </div>
-              <div className="text-right text-[10px] text-secondary font-bold bg-surface-raised border border-default px-2.5 py-1 rounded-lg shadow-app-sm">
-                <div>📅 {selectedRequestForSkills.startDate}</div>
-                <div className="text-tertiary font-medium">to {selectedRequestForSkills.endDate}</div>
-              </div>
-            </div>
-
-            {/* Candidate Search Bar */}
-            <div className="p-3 bg-surface border-b border-subtle">
-              <div className="relative">
-                <Search className="w-4 h-4 text-tertiary absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  placeholder="Search resources by name, role or skill..."
-                  value={popupSearch}
-                  onChange={(e) => setPopupSearch(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 border border-default rounded-lg text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none bg-input"
-                />
-              </div>
-            </div>
-
-            {/* Resources List */}
-            <div className="flex-1 overflow-y-auto divide-y divide-[var(--app-border-subtle)] p-3 space-y-2">
-              {matchingResources.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-tertiary text-xs">
-                  <User className="w-8 h-8 text-tertiary mb-2 opacity-50" />
-                  No resources matched your search.
-                </div>
-              ) : (
-                matchingResources.map((res) => {
-                  const reqSkill = (selectedRequestForSkills.requiredSkill || '').toLowerCase();
-                  return (
-                    <div 
-                      key={res.id} 
-                      className={`p-3 rounded-lg border transition-all flex items-start gap-3 ${
-                        res.hasSkill 
-                          ? 'tint-blue' 
-                          : 'bg-surface border-subtle hover:bg-surface-muted'
-                      }`}
-                    >
-                      {/* Avatar */}
-                      {res.avatarUrl ? (
-                        <img
-                          referrerPolicy="no-referrer"
-                          src={res.avatarUrl}
-                          alt={res.name}
-                          className="w-9 h-9 rounded-full object-cover shrink-0 border border-subtle mt-0.5"
-                        />
-                      ) : (
-                        <div className="w-9 h-9 rounded-full tint-blue text-xs font-black flex items-center justify-center shrink-0 mt-0.5">
-                          {(res.name || '').split(' ').map((n) => n[0] || '').join('')}
-                        </div>
-                      )}
-
-                      {/* Details */}
-                      <div className="flex-1 min-w-0 text-left">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <h4 className="text-xs font-bold text-primary truncate">{res.name}</h4>
-                          <span className="text-[9px] text-tertiary">•</span>
-                          <span className="text-[10px] text-secondary font-medium truncate capitalize">{res.role}</span>
-                          {res.hasSkill && (
-                            <span className="text-[8px] font-extrabold px-1.5 py-0.2 tint-emerald rounded-full flex items-center gap-0.5 uppercase tracking-wide">
-                              <Check className="w-2.5 h-2.5 stroke-[3]" /> Match
-                            </span>
-                          )}
-                        </div>
-                        
-                        {/* Skills badges */}
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {(res.skills || []).map((sk) => {
-                            const isExactMatch = sk.toLowerCase().includes(reqSkill);
-                            return (
-                              <span 
-                                key={sk} 
-                                className={`text-[9px] px-1.5 py-0.5 rounded-md font-medium transition-colors ${
-                                  isExactMatch 
-                                    ? 'tint-blue font-bold' 
-                                    : 'bg-surface-muted text-secondary border border-subtle'
-                                }`}
-                              >
-                                {sk}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Action */}
-                      {selectedRequestForSkills.resourceId === res.id ? (
-                        <button
-                          onClick={async () => {
-                            if (onUnassignRequest) {
-                              await onUnassignRequest(selectedRequestForSkills.id);
-                            }
-                            setSelectedRequestForSkills(null);
-                            setPopupSearch('');
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all shadow-app-sm flex items-center gap-1 cursor-pointer tint-red"
-                        >
-                          Unassign <X className="w-3 h-3 stroke-[3]" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={async () => {
-                            if (onApproveRequestWithResource) {
-                              await onApproveRequestWithResource(selectedRequestForSkills.id, res.id);
-                            }
-                            setSelectedRequestForSkills(null);
-                            setPopupSearch('');
-                          }}
-                          className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all shadow-app-sm flex items-center gap-1 cursor-pointer ${
-                            res.hasSkill
-                              ? 'bg-blue-600 text-white hover:bg-blue-700'
-                              : 'bg-surface-muted hover:bg-surface-hover text-primary'
-                          }`}
-                        >
-                          Assign <Check className="w-3 h-3 stroke-[3]" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Modal Footer info */}
-            <div className="p-3 border-t border-subtle text-[10px] text-tertiary text-center font-medium bg-surface-muted">
-              Showing all database resources sorted by match suitability
-            </div>
-          </div>
-        </div>
-      )}
+      <SkillMatcherModal
+        isOpen={!!selectedRequestForSkills}
+        request={selectedRequestForSkills}
+        requestProject={requestProject}
+        popupSearch={popupSearch}
+        matchingResources={matchingResources}
+        onClose={() => {
+          setSelectedRequestForSkills(null);
+          setPopupSearch('');
+        }}
+        onSearchChange={setPopupSearch}
+        onUnassignRequest={onUnassignRequest}
+        onApproveRequestWithResource={onApproveRequestWithResource}
+      />
     </div>
   );
 };
