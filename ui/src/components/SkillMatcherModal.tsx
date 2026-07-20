@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Award, Check, Search, User, X } from 'lucide-react';
 import { BookingRequest, Project, Resource } from '../types';
+import { useLookups } from '../hooks/useLookups';
 
 interface SkillMatchResource extends Resource {
     hasSkill: boolean;
@@ -19,16 +20,20 @@ interface SkillMatcherModalProps {
 }
 
 interface FilterState {
+    market: string;
     cu: string;
     practice: string;
     cc: string;
+    site: string;
     level: string;
 }
 
 const defaultFilters: FilterState = {
+    market: 'all',
     cu: 'all',
     practice: 'all',
     cc: 'all',
+    site: 'all',
     level: 'all',
 };
 
@@ -44,6 +49,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
     onApproveRequestWithResource,
 }) => {
     const [selectedFilters, setSelectedFilters] = useState<FilterState>(defaultFilters);
+    const { data: lookups } = useLookups();
 
     useEffect(() => {
         if (!isOpen) {
@@ -52,12 +58,11 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
     }, [isOpen]);
 
     const filterOptions = useMemo(() => {
-        const collect = (key: keyof Pick<Resource, 'group' | 'practiceArea' | 'role' | 'jobCategory'>) => {
+        const collect = (key: keyof Pick<Resource, 'group' | 'practiceArea' | 'jobCategory'>) => {
             const values = matchingResources
                 .map((res) => {
                     if (key === 'group') return res.group || 'Unassigned';
                     if (key === 'practiceArea') return res.practiceArea || 'Unassigned';
-                    if (key === 'role') return res.role || 'Unassigned';
                     return res.jobCategory || res.role || 'Unassigned';
                 })
                 .filter(Boolean)
@@ -66,13 +71,32 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
             return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
         };
 
+        const collectLookupNames = (entries: { name: string }[] | undefined) => {
+            return (entries || [])
+                .map((entry) => entry.name.trim())
+                .filter(Boolean)
+                .sort((a, b) => a.localeCompare(b));
+        };
+
+        const filteredCompetencyCenters = (lookups?.competencyCenters || []).filter((entry) => {
+            return selectedFilters.practice === 'all' || entry.practice_area?.name === selectedFilters.practice;
+        });
+
         return {
-            cu: collect('group'),
-            practice: collect('practiceArea'),
-            cc: collect('role'),
+            market: collectLookupNames(lookups?.marketUnits),
+            cu: collectLookupNames(lookups?.consultingUnits),
+            practice: collectLookupNames(lookups?.practiceAreas),
+            cc: collectLookupNames(filteredCompetencyCenters),
+            site: collectLookupNames(lookups?.sites),
             level: collect('jobCategory'),
         };
-    }, [matchingResources]);
+    }, [lookups, matchingResources, selectedFilters.practice]);
+
+    useEffect(() => {
+        if (selectedFilters.cc !== 'all' && !filterOptions.cc.includes(selectedFilters.cc)) {
+            setSelectedFilters((current) => ({ ...current, cc: 'all' }));
+        }
+    }, [filterOptions.cc, selectedFilters.cc]);
 
     const displayedResources = useMemo(() => {
         const search = popupSearch.toLowerCase().trim();
@@ -84,10 +108,14 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
 
             const matchesCu = selectedFilters.cu === 'all' || (res.group || 'Unassigned').toLowerCase() === selectedFilters.cu.toLowerCase();
             const matchesPractice = selectedFilters.practice === 'all' || (res.practiceArea || 'Unassigned').toLowerCase() === selectedFilters.practice.toLowerCase();
-            const matchesCc = selectedFilters.cc === 'all' || (res.role || 'Unassigned').toLowerCase() === selectedFilters.cc.toLowerCase();
+            const matchesCc = selectedFilters.cc === 'all' || (res.competencyCenter || 'Unassigned').toLowerCase() === selectedFilters.cc.toLowerCase();
+            const matchesSite = selectedFilters.site === 'all' || (res.site || 'Unassigned').toLowerCase() === selectedFilters.site.toLowerCase();
             const matchesLevel = selectedFilters.level === 'all' || (res.jobCategory || res.role || 'Unassigned').toLowerCase() === selectedFilters.level.toLowerCase();
+            const matchesMarket =
+                selectedFilters.market === 'all' ||
+                (requestProject?.client || 'Unassigned').toLowerCase() === selectedFilters.market.toLowerCase();
 
-            return matchesCu && matchesPractice && matchesCc && matchesLevel;
+            return matchesMarket && matchesCu && matchesPractice && matchesCc && matchesSite && matchesLevel;
         });
 
         return filtered.sort((a, b) => {
@@ -95,7 +123,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
             if (!a.hasSkill && b.hasSkill) return 1;
             return a.name.localeCompare(b.name);
         });
-    }, [matchingResources, popupSearch, selectedFilters]);
+    }, [matchingResources, popupSearch, requestProject?.client, selectedFilters]);
 
     if (!isOpen || !request) {
         return null;
@@ -174,8 +202,10 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                             <p className="mt-1 text-[11px] text-tertiary">Refine the candidate pool by the available profile attributes.</p>
                         </div>
                         {renderFilterGroup('cu', 'CU', filterOptions.cu)}
+                        {renderFilterGroup('market', 'Market Unit', filterOptions.market)}
                         {renderFilterGroup('practice', 'Practice', filterOptions.practice)}
                         {renderFilterGroup('cc', 'CC', filterOptions.cc)}
+                        {renderFilterGroup('site', 'Site', filterOptions.site)}
                         {renderFilterGroup('level', 'Level', filterOptions.level)}
 
                         <button
@@ -246,8 +276,10 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
 
                                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-tertiary">
                                                     {res.group && <span className="rounded-full border border-subtle bg-surface-muted px-2 py-0.5">CU: {res.group}</span>}
+                                                    {requestProject?.client && <span className="rounded-full border border-subtle bg-surface-muted px-2 py-0.5">Market: {requestProject.client}</span>}
                                                     {res.practiceArea && <span className="rounded-full border border-subtle bg-surface-muted px-2 py-0.5">Practice: {res.practiceArea}</span>}
-                                                    {res.role && <span className="rounded-full border border-subtle bg-surface-muted px-2 py-0.5">CC: {res.role}</span>}
+                                                    {res.competencyCenter && <span className="rounded-full border border-subtle bg-surface-muted px-2 py-0.5">CC: {res.competencyCenter}</span>}
+                                                    {res.site && <span className="rounded-full border border-subtle bg-surface-muted px-2 py-0.5">Site: {res.site}</span>}
                                                     {(res.jobCategory || res.role) && <span className="rounded-full border border-subtle bg-surface-muted px-2 py-0.5">Level: {res.jobCategory || res.role}</span>}
                                                 </div>
 

@@ -19,6 +19,8 @@ export interface Resource {
   lastName?: string;
   role: string;
   group?: string;
+  competencyCenter?: string;
+  site?: string;
   status?: PersonStatus;
   lifecycleStatus?: LifecycleStatus;
   jobCategory?: JobCategory;
