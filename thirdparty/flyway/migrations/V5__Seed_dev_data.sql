@@ -38,14 +38,14 @@ VALUES
 ON CONFLICT (name) DO NOTHING;
 
 -- Lookup: competency centers
-INSERT INTO competency_center (id, name)
+INSERT INTO competency_center (id, practice_area_id, name)
 VALUES
-  (seed_uuid('cc-frontend'), 'Frontend Development'),
-  (seed_uuid('cc-sap-fico'), 'SAP FICO'),
-  (seed_uuid('cc-uiux'), 'UI/UX Design'),
-  (seed_uuid('cc-pm'), 'Project Management'),
-  (seed_uuid('cc-backend'), 'Backend Development')
-ON CONFLICT (name) DO NOTHING;
+  (seed_uuid('cc-frontend'), seed_uuid('pa-digital'), 'Frontend Development'),
+  (seed_uuid('cc-sap-fico'), seed_uuid('pa-sap'), 'SAP FICO'),
+  (seed_uuid('cc-uiux'), seed_uuid('pa-design'), 'UI/UX Design'),
+  (seed_uuid('cc-pm'), seed_uuid('pa-delivery'), 'Project Management'),
+  (seed_uuid('cc-backend'), seed_uuid('pa-engineering'), 'Backend Development')
+ON CONFLICT (practice_area_id, name) DO NOTHING;
 
 -- Lookup: sites
 INSERT INTO site (id, name)

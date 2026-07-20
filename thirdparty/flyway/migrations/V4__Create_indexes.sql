@@ -1,6 +1,7 @@
 CREATE INDEX idx_market_unit_name ON market_unit(name);
 CREATE INDEX idx_consulting_unit_name ON consulting_unit(name);
 CREATE INDEX idx_practice_area_name ON practice_area(name);
+CREATE INDEX idx_competency_center_practice_area_id ON competency_center(practice_area_id);
 CREATE INDEX idx_competency_center_name ON competency_center(name);
 CREATE INDEX idx_site_name ON site(name);
 

@@ -25,9 +25,11 @@ CREATE TABLE practice_area (
 
 CREATE TABLE competency_center (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL UNIQUE,
+    practice_area_id UUID NOT NULL REFERENCES practice_area(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT competency_center_practice_area_name_unique UNIQUE (practice_area_id, name)
 );
 
 CREATE TABLE site (
