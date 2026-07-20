@@ -1,30 +1,59 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
+interface SimulationInput {
+    type: string;
+    payload: Record<string, unknown>[];
+}
+
 interface LabCreateModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onCreate: (notes: string) => void;
+    onCreate: (input: SimulationInput, rawText: string) => void;
 }
 
 export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose, onCreate }) => {
     const [draftNotes, setDraftNotes] = useState('');
+    const [error, setError] = useState('');
 
     useEffect(() => {
         if (isOpen) {
             setDraftNotes('');
+            setError('');
         }
     }, [isOpen]);
 
     if (!isOpen) return null;
 
     const handleCreate = () => {
-        const notes = draftNotes.trim();
-        if (!notes) return;
+        const text = draftNotes.trim();
+        if (!text) {
+            setError('Paste a JSON object before creating.');
+            return;
+        }
 
-        onCreate(notes);
-        setDraftNotes('');
-        onClose();
+        try {
+            const parsed = JSON.parse(text) as { type?: unknown; payload?: unknown };
+            if (typeof parsed.type !== 'string' || !parsed.type.trim()) {
+                setError('The field "type" is required and must be a non-empty string.');
+                return;
+            }
+
+            if (!Array.isArray(parsed.payload)) {
+                setError('The field "payload" is required and must be an array.');
+                return;
+            }
+
+            onCreate(
+                { type: parsed.type.trim(), payload: parsed.payload as Record<string, unknown>[] },
+                text,
+            );
+            setDraftNotes('');
+            setError('');
+            onClose();
+        } catch {
+            setError('Invalid JSON. Please fix the JSON and try again.');
+        }
     };
 
     return (
@@ -39,14 +68,15 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
 
                 <div className="p-5 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-secondary mb-2">Notes</label>
+                        <label className="block text-sm font-medium text-secondary mb-2">Simulation JSON</label>
                         <textarea
                             value={draftNotes}
                             onChange={(e) => setDraftNotes(e.target.value)}
                             rows={8}
                             className="w-full resize-y rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            placeholder="Write the draft content here..."
+                            placeholder='{"type":"Request","payload":[{"id":"lab-row-001"}]}'
                         />
+                        {error && <p className="mt-2 text-xs font-semibold text-red-600">{error}</p>}
                     </div>
 
                     <div className="flex justify-end gap-3">

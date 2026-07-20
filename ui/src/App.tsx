@@ -927,7 +927,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'lab' && <LabTab requests={requests} resources={resources} projects={projects} />}
+          {activeTab === 'lab' && <LabTab />}
 
           {activeTab === 'settings' && (
             <SettingsTab

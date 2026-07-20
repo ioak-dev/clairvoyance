@@ -1,41 +1,31 @@
-import React, { useMemo, useState } from 'react';
-import { FlaskConical, Plus } from 'lucide-react';
-import type { BookingRequest, Project, Resource } from '../types';
+import React, { useState } from 'react';
+import { FlaskConical, Plus, X } from 'lucide-react';
 import { LabCreateModal } from './LabCreateModal.tsx';
 
-interface LabTabProps {
-  requests: BookingRequest[];
-  resources: Resource[];
-  projects: Project[];
+interface SimulationRow {
+  id: string;
+  timestamp: string;
+  simulationType: string;
+  recordCount: number;
+  rawPayloadText: string;
 }
 
-export const LabTab: React.FC<LabTabProps> = ({ requests, resources, projects }) => {
+export const LabTab: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [notes, setNotes] = useState<Array<{ id: string; text: string; createdAt: string }>>([]);
+  const [simulationRows, setSimulationRows] = useState<SimulationRow[]>([]);
+  const [selectedRow, setSelectedRow] = useState<SimulationRow | null>(null);
 
-  const visibleRequests = useMemo(
-    () => requests.filter((request) => request.status === 'Pending' || request.status === 'Approved'),
-    [requests],
-  );
-
-  const getResourceName = (id: string) => resources.find((resource) => resource.id === id)?.name || 'Unassigned';
-  const getProjectName = (id: string) => projects.find((project) => project.id === id)?.name || 'Project';
-
-  const handleCreate = (text: string) => {
-    setNotes((current) => [
+  const handleCreate = (input: { type: string; payload: Record<string, unknown>[] }, rawText: string) => {
+    setSimulationRows((current) => [
       {
-        id: `${Date.now()}`,
-        text,
-        createdAt: new Date().toLocaleString(),
+        id: `${Date.now()}-${current.length + 1}`,
+        timestamp: new Date().toLocaleString(),
+        simulationType: input.type,
+        recordCount: input.payload.length,
+        rawPayloadText: rawText,
       },
       ...current,
     ]);
-  };
-
-  const requestBadgeClass = (status: BookingRequest['status']) => {
-    if (status === 'Pending') return 'bg-amber-50 text-amber-800 border-amber-200';
-    if (status === 'Approved') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    return 'bg-rose-50 text-rose-700 border-rose-200';
   };
 
   return (
@@ -63,10 +53,10 @@ export const LabTab: React.FC<LabTabProps> = ({ requests, resources, projects })
       <div className="app-card overflow-hidden">
         <div className="px-6 py-4 border-b border-subtle flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold text-primary uppercase tracking-wider">Requests</h3>
+            <h3 className="text-sm font-bold text-primary uppercase tracking-wider">Simulations</h3>
           </div>
           <span className="text-xs font-semibold text-secondary">
-            {visibleRequests.length} item{visibleRequests.length === 1 ? '' : 's'}
+            {simulationRows.length} item{simulationRows.length === 1 ? '' : 's'}
           </span>
         </div>
 
@@ -74,41 +64,33 @@ export const LabTab: React.FC<LabTabProps> = ({ requests, resources, projects })
           <table className="min-w-full text-left">
             <thead className="bg-surface-muted/70 text-[11px] uppercase tracking-wider text-tertiary">
               <tr>
-                <th className="px-6 py-3 font-semibold">Resource</th>
-                <th className="px-6 py-3 font-semibold">Project</th>
-                <th className="px-6 py-3 font-semibold">Dates</th>
-                <th className="px-6 py-3 font-semibold">Commitment</th>
-                <th className="px-6 py-3 font-semibold">Status</th>
-                <th className="px-6 py-3 font-semibold">Notes</th>
+                <th className="px-6 py-3 font-semibold">Timestamp</th>
+                <th className="px-6 py-3 font-semibold">Simulation Type</th>
+                <th className="px-6 py-3 font-semibold">Number of Records</th>
+                <th className="px-6 py-3 font-semibold">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-subtle">
-              {visibleRequests.length === 0 ? (
+              {simulationRows.length === 0 ? (
                 <tr>
-                  <td className="px-6 py-10 text-sm text-tertiary" colSpan={6}>
-                    No pending or approved requests available.
+                  <td className="px-6 py-10 text-sm text-tertiary" colSpan={4}>
+                    No simulation rows yet. Use Create and paste a JSON payload.
                   </td>
                 </tr>
               ) : (
-                visibleRequests.map((request) => (
-                  <tr key={request.id} className="hover:bg-surface-muted/40 transition-colors">
-                    <td className="px-6 py-4 text-sm font-medium text-primary">{getResourceName(request.resourceId)}</td>
-                    <td className="px-6 py-4 text-sm text-secondary">{getProjectName(request.projectId)}</td>
-                    <td className="px-6 py-4 text-sm text-secondary whitespace-nowrap">
-                      {request.startDate} to {request.endDate}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-secondary whitespace-nowrap">
-                      {request.billablePercent}% {request.billableType}
-                    </td>
+                simulationRows.map((row) => (
+                  <tr key={row.id} className="hover:bg-surface-muted/40 transition-colors">
+                    <td className="px-6 py-4 text-sm font-medium text-primary whitespace-nowrap">{row.timestamp}</td>
+                    <td className="px-6 py-4 text-sm text-secondary">{row.simulationType}</td>
+                    <td className="px-6 py-4 text-sm text-secondary">{row.recordCount}</td>
                     <td className="px-6 py-4 text-sm">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-bold uppercase tracking-wide ${requestBadgeClass(request.status)}`}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRow(row)}
+                        className="px-3 py-1.5 rounded-md border border-default text-xs font-semibold text-secondary hover:bg-surface-hover"
                       >
-                        {request.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-tertiary max-w-[320px] truncate">
-                      {request.notes || '—'}
+                        View
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -118,25 +100,34 @@ export const LabTab: React.FC<LabTabProps> = ({ requests, resources, projects })
         </div>
       </div>
 
-      {notes.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-tertiary pl-1">Lab Notes</h3>
-          <div className="space-y-3">
-            {notes.map((note) => (
-              <div key={note.id} className="app-card p-4">
-                <p className="text-sm text-primary whitespace-pre-wrap leading-relaxed">{note.text}</p>
-                <p className="mt-2 text-[11px] text-tertiary">Created {note.createdAt}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <LabCreateModal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onCreate={handleCreate}
       />
+
+      {selectedRow && (
+        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-3xl w-full flex flex-col overflow-hidden max-h-[90vh]">
+            <div className="app-card-header px-5 py-4 flex justify-between items-center">
+              <h3 className="text-base font-semibold text-primary">Payload Details</h3>
+              <button
+                type="button"
+                onClick={() => setSelectedRow(null)}
+                className="p-1 hover:bg-surface-hover rounded-lg text-tertiary"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-auto">
+              <pre className="text-xs text-primary bg-surface-muted/60 border border-subtle rounded-lg p-4 whitespace-pre-wrap break-all">
+                {selectedRow.rawPayloadText}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
