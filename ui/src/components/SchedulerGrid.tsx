@@ -180,7 +180,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
       filteredProjects.forEach((proj) => {
         const projAllocs = allocations.filter((a) => a.projectId === proj.id);
         const allocatedResIds = Array.from(new Set(projAllocs.map((a) => a.resourceId)));
-        
+
         const projectLanes: Lane[] = [];
         if (allocatedResIds.length === 0) {
           projectLanes.push({
@@ -214,7 +214,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
       filteredResources.forEach((res) => {
         // Find all allocations for this resource
         const resAllocs = allocations.filter((a) => a.resourceId === res.id);
-        
+
         // Get unique project IDs this resource is allocated to
         const allocatedProjIds = Array.from(new Set(resAllocs.map((a) => a.projectId)));
 
@@ -235,7 +235,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
               color: 'bg-emerald-500',
               textColor: 'text-white',
             };
-            
+
             const groupAllocs = resAllocs.filter((a) => a.projectId === pId);
             projectLanes.push({
               project,
@@ -262,10 +262,10 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
 
   const renderRow = (row: typeof assignmentRows[0]) => {
     const resourceVacations = (viewMode === 'projects' || viewMode === 'requests') ? [] : (row.resource ? getApprovedVacationsForResource(row.resource.id) : []);
- 
+
     return (
       <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[56px]">
-        
+
         {/* Left Sticky Column */}
         <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[56px]">
           <div className="flex items-center gap-2 overflow-hidden py-3 w-full">
@@ -296,7 +296,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
               </>
             ) : null}
           </div>
- 
+
           {/* Quick action button to trigger scheduling overlay */}
           {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
             <button
@@ -325,9 +325,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
               <div
                 key={`grid-${day.dateStr}`}
                 style={{ width: `${colWidth}px` }}
-                className={`h-full border-r border-subtle shrink-0 ${
-                  day.isWeekend ? 'bg-weekend-cell' : ''
-                }`}
+                className={`h-full border-r border-subtle shrink-0 ${day.isWeekend ? 'bg-weekend-cell' : ''
+                  }`}
               />
             ))}
           </div>
@@ -368,9 +367,9 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
             {row.projectLanes.map((lane, lIdx) => {
               const laneKey = viewMode === 'requests'
                 ? (lane.request?.id || (lane.resource?.id ? `lane-res-${lane.resource.id}` : `lane-req-${lIdx}`))
-                : viewMode === 'projects' 
-                ? (lane.resource?.id || `lane-res-${lIdx}`)
-                : (lane.project?.id || `lane-proj-${lIdx}`);
+                : viewMode === 'projects'
+                  ? (lane.resource?.id || `lane-res-${lIdx}`)
+                  : (lane.project?.id || `lane-proj-${lIdx}`);
 
               return (
                 <div key={laneKey} className="h-11 relative w-full flex items-center">
@@ -545,9 +544,9 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
 
   const matchingResources = useMemo(() => {
     if (!selectedRequestForSkills) return [];
-    
+
     const reqSkill = (selectedRequestForSkills.requiredSkill || '').toLowerCase();
-    
+
     const list = resources.map(res => {
       const resourceSkills = res.skills || [];
       const hasSkill = resourceSkills.some(sk => sk.toLowerCase().includes(reqSkill));
@@ -594,7 +593,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
           </div>
         )}
         <div style={{ width: `calc(190px + ${gridWidth}px)` }} className="flex flex-col">
-          
+
           {/* Header Row 1: Months */}
           <div className="flex bg-grid-header border-b border-subtle text-xs font-bold text-secondary uppercase tracking-wider h-10 items-center sticky top-0 z-30">
             <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40 h-full">
@@ -622,9 +621,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
               <div
                 key={day.dateStr}
                 style={{ width: `${colWidth}px` }}
-                className={`text-center h-full flex flex-col justify-center border-r border-subtle ${
-                  day.isWeekend ? 'bg-weekend-cell text-tertiary' : ''
-                }`}
+                className={`text-center h-full flex flex-col justify-center border-r border-subtle ${day.isWeekend ? 'bg-weekend-cell text-tertiary' : ''
+                  }`}
               >
                 <span>{day.dayLabel}</span>
                 <span className="font-bold text-secondary">{day.dayNum}</span>

@@ -2,6 +2,7 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 
 import healthRouter from './routes/health';
+import labRouter from './routes/lab';
 
 export function createApp(): Application {
   const app = express();
@@ -19,6 +20,7 @@ export function createApp(): Application {
   );
 
   app.use('/health', healthRouter);
+  app.use('/lab', labRouter);
 
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('Error:', err);

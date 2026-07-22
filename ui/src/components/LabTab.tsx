@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { FlaskConical, Plus, X } from 'lucide-react';
 import { LabCreateModal } from './LabCreateModal.tsx';
+import { env } from '../lib/shared/env';
+import { http } from '../lib/shared/http';
 
 interface SimulationRow {
   id: string;
@@ -15,7 +17,9 @@ export const LabTab: React.FC = () => {
   const [simulationRows, setSimulationRows] = useState<SimulationRow[]>([]);
   const [selectedRow, setSelectedRow] = useState<SimulationRow | null>(null);
 
-  const handleCreate = (input: { type: string; payload: Record<string, unknown>[] }, rawText: string) => {
+  const handleCreate = async (input: { type: string; payload: Record<string, unknown>[] }, rawText: string) => {
+    await http.post(`${env.apiUrl}/lab/requests`, input);
+
     setSimulationRows((current) => [
       {
         id: `${Date.now()}-${current.length + 1}`,

@@ -9,7 +9,7 @@ interface SimulationInput {
 interface LabCreateModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onCreate: (input: SimulationInput, rawText: string) => void;
+    onCreate: (input: SimulationInput, rawText: string) => Promise<void>;
 }
 
 export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose, onCreate }) => {
@@ -25,7 +25,7 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
 
     if (!isOpen) return null;
 
-    const handleCreate = () => {
+    const handleCreate = async () => {
         const text = draftNotes.trim();
         if (!text) {
             setError('Paste a JSON object before creating.');
@@ -44,15 +44,20 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                 return;
             }
 
-            onCreate(
+            await onCreate(
                 { type: parsed.type.trim(), payload: parsed.payload as Record<string, unknown>[] },
                 text,
             );
             setDraftNotes('');
             setError('');
             onClose();
-        } catch {
-            setError('Invalid JSON. Please fix the JSON and try again.');
+        } catch (err) {
+            if (err instanceof SyntaxError) {
+                setError('Invalid JSON. Please fix the JSON and try again.');
+                return;
+            }
+
+            setError(err instanceof Error ? err.message : 'Failed to create request payload.');
         }
     };
 
