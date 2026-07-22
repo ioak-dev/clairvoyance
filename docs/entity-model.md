@@ -141,15 +141,23 @@ erDiagram
 
     request {
         uuid id PK
+        text reference_id UK
         uuid project_id FK
         uuid person_id FK_nullable
         date start_date
         date end_date
         smallint billable_percent
         billable_type billable_type
+        booking_type booking_type
+        smallint probability
         approval_status status
         text required_skill
         text notes
+        uuid consulting_unit_id FK_nullable
+        uuid practice_area_id FK_nullable
+        uuid competency_center_id FK_nullable
+        uuid site_id FK_nullable
+        text job_category
         timestamptz created_at
         timestamptz updated_at
     }
@@ -163,6 +171,16 @@ erDiagram
         date end_date
         smallint billable_percent
         billable_type billable_type
+        booking_type booking_type
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    simulation_log {
+        uuid id PK
+        text simulation_type
+        jsonb payload
+        int record_count
         timestamptz created_at
         timestamptz updated_at
     }
@@ -189,6 +207,15 @@ Used by `request` and `schedule`.
 |-------|---------------|
 | `Billable` | `BillableType.Billable` |
 | `Opportunity` | `BillableType.Opportunity` |
+
+### `booking_type`
+
+Used by `request` and `schedule`. Indicates commitment strength from upstream systems.
+
+| Value | Meaning |
+|-------|---------|
+| `hard` | Committed booking |
+| `soft` | Tentative / opportunity booking |
 
 ### `approval_status`
 
@@ -247,6 +274,7 @@ All lookup tables share the same shape: `id` (UUID PK), `name` (TEXT UNIQUE NOT 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | UUID | PK | Surrogate key |
+| `reference_id` | TEXT | UNIQUE, NOT NULL | Upstream project id (Lab upsert key) |
 | `project_id` | TEXT | UNIQUE, NOT NULL | Business identifier (e.g. `PRJ-TMS`) |
 | `name` | TEXT | NOT NULL | Display name |
 | `manager_id` | UUID | FK → `person.id`, nullable | Project manager |
@@ -336,17 +364,27 @@ Pending or approved booking requests for project staffing.
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | UUID | PK | |
+| `reference_id` | TEXT | UNIQUE, NOT NULL | Upstream request id (Lab upsert key) |
 | `project_id` | UUID | FK → `project.id`, NOT NULL | ON DELETE CASCADE |
 | `person_id` | UUID | FK → `person.id`, nullable | Unassigned when null |
 | `start_date` | DATE | NOT NULL | |
 | `end_date` | DATE | NOT NULL | Must be ≥ `start_date` |
 | `billable_percent` | SMALLINT | NOT NULL, 0–100 | Allocation percentage |
 | `billable_type` | `billable_type` | NOT NULL | |
+| `booking_type` | `booking_type` | NOT NULL, default `hard` | hard vs soft commitment |
+| `probability` | SMALLINT | NOT NULL, default 100, 0–100 | Win/commit probability |
 | `status` | `approval_status` | NOT NULL, default `Pending` | |
 | `required_skill` | TEXT | | Skill matching hint for UI |
 | `notes` | TEXT | | Request justification |
+| `consulting_unit_id` | UUID | FK → `consulting_unit.id`, nullable | Desired CU for staffing |
+| `practice_area_id` | UUID | FK → `practice_area.id`, nullable | Desired practice |
+| `competency_center_id` | UUID | FK → `competency_center.id`, nullable | Desired CC |
+| `site_id` | UUID | FK → `site.id`, nullable | Desired site |
+| `job_category` | TEXT | nullable, same enum as person | Desired level |
 | `created_at` | TIMESTAMPTZ | NOT NULL | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL | Auto-updated via trigger |
+
+**RPC:** `person_utilization_search(p_from, p_to, p_availability, p_required_percent, …)` returns Active people with utilization segments and averages for Skill Matcher (PostgREST `POST /rpc/person_utilization_search`). Availability modes scale to `p_required_percent` (request `billable_percent`): complete = `avg_availability >= required`; partial = `0.75 * required <= avg_availability < required`.
 
 ### `schedule` (transactional)
 
@@ -362,8 +400,26 @@ Committed forecast / allocation blocks on the scheduler timeline.
 | `end_date` | DATE | NOT NULL | Must be ≥ `start_date` |
 | `billable_percent` | SMALLINT | NOT NULL, 0–100 | |
 | `billable_type` | `billable_type` | NOT NULL | |
+| `booking_type` | `booking_type` | NOT NULL, default `hard` | hard vs soft commitment |
 | `created_at` | TIMESTAMPTZ | NOT NULL | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL | Auto-updated via trigger |
+
+### `simulation_log` (transactional)
+
+Audit log for Lab upstream-integration simulations.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK | |
+| `simulation_type` | TEXT | NOT NULL | e.g. `Request` |
+| `payload` | JSONB | NOT NULL | Full incoming payload array |
+| `record_count` | INT | NOT NULL, ≥ 0 | Number of records in payload |
+| `created_at` | TIMESTAMPTZ | NOT NULL | |
+| `updated_at` | TIMESTAMPTZ | NOT NULL | Auto-updated via trigger |
+
+**Express:** `POST /api/lab/publish` with body `{ type, payload[] }` routes by `type`:
+- `Request` → `publish_lab_requests`: logs to `simulation_log`, upserts `request` by `reference_id`, clears linked `schedule` rows
+- `Project` → `publish_lab_projects`: logs to `simulation_log`, upserts opportunity `project` rows by `reference_id` (`win_probability` must be &lt; 100)
 
 ### `vacation` (transactional)
 
@@ -397,6 +453,10 @@ Person absence / vacation blocks.
 | `schedule` | `request` | N : 0..1 | `request_id` | SET NULL |
 | `request` | `project` | N : 1 | `project_id` | CASCADE |
 | `request` | `person` | N : 0..1 | `person_id` | SET NULL |
+| `request` | `consulting_unit` | N : 0..1 | `consulting_unit_id` | SET NULL |
+| `request` | `practice_area` | N : 0..1 | `practice_area_id` | SET NULL |
+| `request` | `competency_center` | N : 0..1 | `competency_center_id` | SET NULL |
+| `request` | `site` | N : 0..1 | `site_id` | SET NULL |
 | `vacation` | `person` | N : 1 | `person_id` | CASCADE |
 
 `project_filter`, `person_filter`, and `request_filter` are standalone master tables with no foreign keys.

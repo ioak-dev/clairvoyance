@@ -1,5 +1,6 @@
 CREATE TYPE billable_type AS ENUM ('Billable', 'Opportunity');
 CREATE TYPE approval_status AS ENUM ('Pending', 'Approved', 'Rejected');
+CREATE TYPE booking_type AS ENUM ('hard', 'soft');
 
 -- Master lookup tables (id + name)
 CREATE TABLE market_unit (

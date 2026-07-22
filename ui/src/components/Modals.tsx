@@ -4,9 +4,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Resource, Project, Allocation, BillableType, BookingRequest, Vacation } from '../types';
+import { Resource, Project, Allocation, BillableType, BookingRequest, Vacation, JobCategory } from '../types';
 import { Search, ShieldAlert, Check, Calendar, Plus, X, UserMinus, UserCheck, Trash2 } from 'lucide-react';
 import { getProjectCategory, getProjectCategoryIconClass, getBillableTypeFromProject, getProjectCategoryLabel } from '../lib/projectCategory';
+import { useLookups } from '../hooks/useLookups';
 
 const safeConfirm = (msg: string): boolean => {
   try {
@@ -256,6 +257,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
       endDate,
       billablePercent,
       billableType: getBillableTypeFromProject(project),
+      bookingType: 'hard',
     });
     onClose();
   };
@@ -424,6 +426,12 @@ interface RequestModalProps {
   onSave: (request: Omit<BookingRequest, 'id' | 'status'>) => void;
 }
 
+const JOB_CATEGORY_OPTIONS: JobCategory[] = [
+  'B0- Fresher',
+  'L0', 'L1', 'L2', 'L3', 'L4', 'L5',
+  'D0', 'D1', 'D2', 'D3', 'D4', 'D5',
+];
+
 export const RequestModal: React.FC<RequestModalProps> = ({
   isOpen,
   onClose,
@@ -438,6 +446,12 @@ export const RequestModal: React.FC<RequestModalProps> = ({
   const [billablePercent, setBillablePercent] = useState(100);
   const [billableType, setBillableType] = useState<BillableType>('Billable');
   const [notes, setNotes] = useState('');
+  const [consultingUnitId, setConsultingUnitId] = useState('');
+  const [practiceAreaId, setPracticeAreaId] = useState('');
+  const [competencyCenterId, setCompetencyCenterId] = useState('');
+  const [siteId, setSiteId] = useState('');
+  const [jobCategory, setJobCategory] = useState('');
+  const { data: lookups } = useLookups();
 
   useEffect(() => {
     if (isOpen) {
@@ -448,10 +462,19 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       setBillablePercent(100);
       setBillableType('Billable');
       setNotes('');
+      setConsultingUnitId('');
+      setPracticeAreaId('');
+      setCompetencyCenterId('');
+      setSiteId('');
+      setJobCategory('');
     }
   }, [isOpen, resources, projects]);
 
   if (!isOpen) return null;
+
+  const filteredCompetencyCenters = (lookups?.competencyCenters || []).filter(
+    (entry) => !practiceAreaId || entry.practice_area_id === practiceAreaId,
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -463,14 +486,22 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       endDate,
       billablePercent,
       billableType,
+      referenceId: crypto.randomUUID(),
+      bookingType: 'hard',
+      probability: 100,
       notes,
+      consultingUnitId: consultingUnitId || null,
+      practiceAreaId: practiceAreaId || null,
+      competencyCenterId: competencyCenterId || null,
+      siteId: siteId || null,
+      jobCategory: (jobCategory as JobCategory) || null,
     });
     onClose();
   };
 
   return (
     <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4" id="request-modal-container">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden">
+      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-lg w-full flex flex-col overflow-hidden max-h-[90vh]">
         <div className="app-card-header px-6 py-4 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
             <Plus className="w-5 h-5 text-emerald-500" />
@@ -481,7 +512,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           <div>
             <label className="block text-sm font-semibold text-secondary mb-1">Allocate Resource</label>
             <select
@@ -560,6 +591,77 @@ export const RequestModal: React.FC<RequestModalProps> = ({
                 className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
                 required
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-secondary mb-1">CU</label>
+              <select
+                value={consultingUnitId}
+                onChange={(e) => setConsultingUnitId(e.target.value)}
+                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+              >
+                <option value="">Any</option>
+                {(lookups?.consultingUnits || []).map((entry) => (
+                  <option key={entry.id} value={entry.id}>{entry.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-secondary mb-1">Practice</label>
+              <select
+                value={practiceAreaId}
+                onChange={(e) => {
+                  setPracticeAreaId(e.target.value);
+                  setCompetencyCenterId('');
+                }}
+                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+              >
+                <option value="">Any</option>
+                {(lookups?.practiceAreas || []).map((entry) => (
+                  <option key={entry.id} value={entry.id}>{entry.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-secondary mb-1">CC</label>
+              <select
+                value={competencyCenterId}
+                onChange={(e) => setCompetencyCenterId(e.target.value)}
+                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+              >
+                <option value="">Any</option>
+                {filteredCompetencyCenters.map((entry) => (
+                  <option key={entry.id} value={entry.id}>{entry.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-secondary mb-1">Site</label>
+              <select
+                value={siteId}
+                onChange={(e) => setSiteId(e.target.value)}
+                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+              >
+                <option value="">Any</option>
+                {(lookups?.sites || []).map((entry) => (
+                  <option key={entry.id} value={entry.id}>{entry.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-semibold text-secondary mb-1">Level</label>
+              <select
+                value={jobCategory}
+                onChange={(e) => setJobCategory(e.target.value)}
+                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+              >
+                <option value="">Any</option>
+                {JOB_CATEGORY_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
             </div>
           </div>
 

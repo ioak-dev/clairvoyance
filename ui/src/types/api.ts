@@ -1,6 +1,7 @@
 import type {
   Allocation,
   BillableType,
+  BookingCommitmentType,
   BookingRequest,
   JobCategory,
   LifecycleStatus,
@@ -24,6 +25,7 @@ export interface LookupRow {
 
 export interface ProjectRow {
   id: string;
+  reference_id: string;
   project_id: string;
   name: string;
   manager_id: string | null;
@@ -71,19 +73,59 @@ export interface ScheduleRow {
   end_date: string;
   billable_percent: number;
   billable_type: BillableType;
+  booking_type: BookingCommitmentType;
 }
 
 export interface RequestRow {
   id: string;
+  reference_id: string;
   project_id: string;
   person_id: string | null;
   start_date: string;
   end_date: string;
   billable_percent: number;
   billable_type: BillableType;
+  booking_type: BookingCommitmentType;
+  probability: number;
   status: ApprovalStatus;
   required_skill: string | null;
   notes: string | null;
+  consulting_unit_id: string | null;
+  practice_area_id: string | null;
+  competency_center_id: string | null;
+  site_id: string | null;
+  job_category: string | null;
+}
+
+export interface SimulationLogRow {
+  id: string;
+  simulation_type: string;
+  payload: Record<string, unknown>[];
+  record_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonUtilizationSearchRow {
+  id: string;
+  employee_id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  global_designation: string | null;
+  local_designation: string | null;
+  job_category: string | null;
+  consulting_unit_id: string | null;
+  practice_area_id: string | null;
+  competency_center_id: string | null;
+  site_id: string | null;
+  consulting_unit_name: string | null;
+  practice_area_name: string | null;
+  competency_center_name: string | null;
+  site_name: string | null;
+  utilization: Array<{ from: string; to: string; utilization: number }>;
+  avg_utilization: number;
+  avg_availability: number;
 }
 
 export interface VacationRow {
@@ -111,6 +153,7 @@ export function toProject(row: ProjectRow): Project {
 
   const project: Project = {
     id: row.id,
+    referenceId: row.reference_id ?? row.project_id,
     projectId: row.project_id,
     name: row.name,
     client: row.market_unit?.name || 'Demo Client',
@@ -165,6 +208,7 @@ export function toAllocation(row: ScheduleRow): Allocation {
     endDate: row.end_date,
     billablePercent: row.billable_percent,
     billableType: row.billable_type,
+    bookingType: row.booking_type ?? 'hard',
     requestId: row.request_id || undefined,
   };
 }
@@ -172,15 +216,47 @@ export function toAllocation(row: ScheduleRow): Allocation {
 export function toBookingRequest(row: RequestRow): BookingRequest {
   return {
     id: row.id,
+    referenceId: row.reference_id,
     resourceId: row.person_id || '',
     projectId: row.project_id,
     startDate: row.start_date,
     endDate: row.end_date,
     billablePercent: row.billable_percent,
     billableType: row.billable_type,
+    bookingType: row.booking_type ?? 'hard',
+    probability: row.probability ?? 100,
     status: row.status,
     notes: row.notes || undefined,
     requiredSkill: row.required_skill || undefined,
+    consultingUnitId: row.consulting_unit_id,
+    practiceAreaId: row.practice_area_id,
+    competencyCenterId: row.competency_center_id,
+    siteId: row.site_id,
+    jobCategory: (row.job_category as JobCategory) || null,
+  };
+}
+
+export function toPersonUtilizationResult(row: PersonUtilizationSearchRow) {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    name: `${row.first_name} ${row.last_name}`.trim(),
+    email: row.email,
+    role: row.global_designation || row.local_designation || 'Consultant',
+    jobCategory: (row.job_category as JobCategory) || undefined,
+    consultingUnitId: row.consulting_unit_id,
+    practiceAreaId: row.practice_area_id,
+    competencyCenterId: row.competency_center_id,
+    siteId: row.site_id,
+    group: row.consulting_unit_name || undefined,
+    practiceArea: row.practice_area_name || undefined,
+    competencyCenter: row.competency_center_name || undefined,
+    site: row.site_name || undefined,
+    utilization: row.utilization || [],
+    avgUtilization: Number(row.avg_utilization) || 0,
+    avgAvailability: Number(row.avg_availability) || 0,
   };
 }
 
@@ -283,9 +359,13 @@ export function createProjectPayload(project: Omit<Project, 'id'>) {
   const winProbability = project.winProbability ?? (project.isOpportunity ? 35 : 100);
 
   return {
+    reference_id: project.referenceId || crypto.randomUUID(),
     project_id: project.projectId || `PRJ-${Date.now()}`,
     name: project.name,
     win_probability: winProbability,
+    ...(project.managerId !== undefined ? { manager_id: project.managerId || null } : {}),
+    ...(project.marketUnitId !== undefined ? { market_unit_id: project.marketUnitId || null } : {}),
+    ...(project.consultingUnitId !== undefined ? { consulting_unit_id: project.consultingUnitId || null } : {}),
   };
 }
 
@@ -316,6 +396,7 @@ export function createSchedulePayload(allocation: Omit<Allocation, 'id'> & { req
     end_date: allocation.endDate,
     billable_percent: allocation.billablePercent,
     billable_type: allocation.billableType,
+    booking_type: allocation.bookingType ?? 'hard',
   };
 }
 
@@ -325,15 +406,23 @@ export function updateSchedulePayload(allocation: Allocation) {
 
 export function createRequestPayload(request: Omit<BookingRequest, 'id' | 'status'>, status: ApprovalStatus = 'Pending') {
   return {
+    reference_id: request.referenceId || crypto.randomUUID(),
     project_id: request.projectId,
     person_id: request.resourceId || null,
     start_date: request.startDate,
     end_date: request.endDate,
     billable_percent: request.billablePercent,
     billable_type: request.billableType,
+    booking_type: request.bookingType ?? 'hard',
+    probability: request.probability ?? 100,
     status,
     required_skill: request.requiredSkill || null,
     notes: request.notes || null,
+    consulting_unit_id: request.consultingUnitId || null,
+    practice_area_id: request.practiceAreaId || null,
+    competency_center_id: request.competencyCenterId || null,
+    site_id: request.siteId || null,
+    job_category: request.jobCategory || null,
   };
 }
 
@@ -345,9 +434,50 @@ export function updateRequestPayload(request: Partial<BookingRequest> & { status
     ...(request.endDate !== undefined ? { end_date: request.endDate } : {}),
     ...(request.billablePercent !== undefined ? { billable_percent: request.billablePercent } : {}),
     ...(request.billableType !== undefined ? { billable_type: request.billableType } : {}),
+    ...(request.bookingType !== undefined ? { booking_type: request.bookingType } : {}),
+    ...(request.probability !== undefined ? { probability: request.probability } : {}),
     ...(request.status !== undefined ? { status: request.status } : {}),
     ...(request.requiredSkill !== undefined ? { required_skill: request.requiredSkill || null } : {}),
     ...(request.notes !== undefined ? { notes: request.notes || null } : {}),
+    ...(request.consultingUnitId !== undefined ? { consulting_unit_id: request.consultingUnitId || null } : {}),
+    ...(request.practiceAreaId !== undefined ? { practice_area_id: request.practiceAreaId || null } : {}),
+    ...(request.competencyCenterId !== undefined ? { competency_center_id: request.competencyCenterId || null } : {}),
+    ...(request.siteId !== undefined ? { site_id: request.siteId || null } : {}),
+    ...(request.jobCategory !== undefined ? { job_category: request.jobCategory || null } : {}),
+  };
+}
+
+export function toLabRequestPayloadItem(request: BookingRequest): Record<string, unknown> {
+  return {
+    id: request.referenceId,
+    project_id: request.projectId,
+    person_id: request.resourceId || null,
+    start_date: request.startDate,
+    end_date: request.endDate,
+    billable_percent: request.billablePercent,
+    billable_type: request.billableType,
+    status: request.status,
+    booking_type: request.bookingType,
+    probability: request.probability,
+    required_skill: request.requiredSkill ?? null,
+    notes: request.notes ?? null,
+    consulting_unit_id: request.consultingUnitId ?? null,
+    practice_area_id: request.practiceAreaId ?? null,
+    competency_center_id: request.competencyCenterId ?? null,
+    site_id: request.siteId ?? null,
+    job_category: request.jobCategory ?? null,
+  };
+}
+
+export function toLabProjectPayloadItem(project: Project): Record<string, unknown> {
+  return {
+    id: project.referenceId,
+    project_id: project.projectId ?? null,
+    name: project.name,
+    manager_id: project.managerId ?? null,
+    market_unit_id: project.marketUnitId ?? null,
+    consulting_unit_id: project.consultingUnitId ?? null,
+    win_probability: project.winProbability ?? 35,
   };
 }
 

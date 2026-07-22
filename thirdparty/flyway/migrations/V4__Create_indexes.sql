@@ -22,6 +22,7 @@ CREATE INDEX idx_project_win_probability ON project(win_probability);
 
 CREATE INDEX idx_request_project_id ON request(project_id);
 CREATE INDEX idx_request_person_id ON request(person_id);
+CREATE INDEX idx_request_reference_id ON request(reference_id);
 CREATE INDEX idx_request_status ON request(status);
 CREATE INDEX idx_request_dates ON request(start_date, end_date);
 

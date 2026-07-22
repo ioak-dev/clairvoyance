@@ -30,7 +30,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-01',
     endDate: '2026-06-12',
     billablePercent: 50,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-2',
@@ -39,7 +40,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-13',
     endDate: '2026-06-15',
     billablePercent: 50,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-3',
@@ -48,7 +50,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-18',
     endDate: '2026-07-05',
     billablePercent: 50,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-4',
@@ -57,7 +60,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-07-06',
     endDate: '2026-07-15',
     billablePercent: 50,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
 
   // Anumsha Shah allocations - Track 1 S4HANA
@@ -68,7 +72,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-03',
     endDate: '2026-06-05',
     billablePercent: 40,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-6',
@@ -77,7 +82,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-06',
     endDate: '2026-06-12',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-7',
@@ -86,7 +92,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-13',
     endDate: '2026-06-25',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-7b',
@@ -95,7 +102,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-26',
     endDate: '2026-07-15',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
 
   // Anumsha Shah allocations - Track 2 Solventum
@@ -106,7 +114,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-13',
     endDate: '2026-06-17',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-9',
@@ -115,7 +124,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-18',
     endDate: '2026-07-10',
     billablePercent: 60,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
 
   // Anumsha Shah allocations - Track 3 TMS
@@ -126,7 +136,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-01',
     endDate: '2026-06-12',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-11',
@@ -135,7 +146,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-13',
     endDate: '2026-06-17',
     billablePercent: 50,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
 
   // David Kim allocations
@@ -146,7 +158,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-01',
     endDate: '2026-06-12',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-13',
@@ -155,7 +168,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-13',
     endDate: '2026-06-17',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-14',
@@ -164,7 +178,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-18',
     endDate: '2026-06-25',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-15',
@@ -173,7 +188,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-26',
     endDate: '2026-07-10',
     billablePercent: 10,
-    billableType: 'Opportunity'
+    billableType: 'Opportunity',
+    bookingType: 'soft',
   },
 
   // Marcus Vance / Emily Chen
@@ -184,7 +200,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-18',
     endDate: '2026-07-05',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'alloc-17',
@@ -193,7 +210,8 @@ export const INITIAL_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-01',
     endDate: '2026-06-19',
     billablePercent: 100,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   }
 ];
 
@@ -227,72 +245,90 @@ export const INITIAL_VACATIONS: Vacation[] = [
 export const INITIAL_REQUESTS: BookingRequest[] = [
   {
     id: 'req-1',
+    referenceId: 'NW-REQ-001',
     resourceId: '', // Start unassigned so that the skill matching works beautifully!
     projectId: 'proj-solventum',
     startDate: '2026-06-29',
     endDate: '2026-07-10',
     billablePercent: 80,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'Urgent cover needed for project Solventum backend implementation phase.',
     requiredSkill: 'Backend Developer'
   },
   {
     id: 'req-2',
+    referenceId: 'NW-REQ-002',
     resourceId: '',
     projectId: 'proj-internal',
     startDate: '2026-07-01',
     endDate: '2026-07-08',
     billablePercent: 20,
     billableType: 'Opportunity',
+    bookingType: 'soft',
+    probability: 60,
     status: 'Pending',
     notes: 'Support with onboarding of junior staff.',
     requiredSkill: 'React'
   },
   {
     id: 'req-3',
+    referenceId: 'NW-REQ-003',
     resourceId: '',
     projectId: 'proj-s4hana',
     startDate: '2026-06-15',
     endDate: '2026-06-30',
     billablePercent: 100,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'SAP consultant to support migration phase.',
     requiredSkill: 'SAP Specialist'
   },
   {
     id: 'req-4',
+    referenceId: 'NW-REQ-004',
     resourceId: '',
     projectId: 'proj-tms',
     startDate: '2026-06-08',
     endDate: '2026-06-20',
     billablePercent: 50,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'UI expert to design new dashboards.',
     requiredSkill: 'UI/UX Design'
   },
   {
     id: 'req-5',
+    referenceId: 'NW-REQ-005',
     resourceId: '',
     projectId: 'proj-opp-honda',
     startDate: '2026-06-22',
     endDate: '2026-07-03',
     billablePercent: 100,
     billableType: 'Opportunity',
+    bookingType: 'soft',
+    probability: 75,
     status: 'Pending',
     notes: 'Urgent CRM proposal design support.',
     requiredSkill: 'Figma'
   },
   {
     id: 'req-6',
+    referenceId: 'NW-REQ-006',
     resourceId: '',
     projectId: 'proj-solventum',
     startDate: '2026-06-15',
     endDate: '2026-06-26',
     billablePercent: 40,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'Quality Assurance checking of deployment candidates.',
     requiredSkill: 'QA Engineer'
@@ -302,72 +338,90 @@ export const INITIAL_REQUESTS: BookingRequest[] = [
 export const REQUESTS_TAB_MOCK_DATA: BookingRequest[] = [
   {
     id: 'req-1',
+    referenceId: 'NW-REQ-001',
     resourceId: '',
     projectId: 'proj-solventum',
     startDate: '2026-06-29',
     endDate: '2026-07-10',
     billablePercent: 80,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'Urgent cover needed for project Solventum backend implementation phase.',
     requiredSkill: 'Backend Developer'
   },
   {
     id: 'req-2',
+    referenceId: 'NW-REQ-002',
     resourceId: '',
     projectId: 'proj-internal',
     startDate: '2026-07-01',
     endDate: '2026-07-08',
     billablePercent: 20,
     billableType: 'Opportunity',
+    bookingType: 'soft',
+    probability: 60,
     status: 'Pending',
     notes: 'Support with onboarding of junior staff.',
     requiredSkill: 'React'
   },
   {
     id: 'req-3',
+    referenceId: 'NW-REQ-003',
     resourceId: '',
     projectId: 'proj-s4hana',
     startDate: '2026-06-15',
     endDate: '2026-06-30',
     billablePercent: 100,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'SAP consultant to support migration phase.',
     requiredSkill: 'SAP Specialist'
   },
   {
     id: 'req-4',
+    referenceId: 'NW-REQ-004',
     resourceId: '',
     projectId: 'proj-tms',
     startDate: '2026-06-08',
     endDate: '2026-06-20',
     billablePercent: 50,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'UI expert to design new dashboards.',
     requiredSkill: 'UI/UX Design'
   },
   {
     id: 'req-5',
+    referenceId: 'NW-REQ-005',
     resourceId: '',
     projectId: 'proj-opp-honda',
     startDate: '2026-06-22',
     endDate: '2026-07-03',
     billablePercent: 100,
     billableType: 'Opportunity',
+    bookingType: 'soft',
+    probability: 75,
     status: 'Pending',
     notes: 'Urgent CRM proposal design support.',
     requiredSkill: 'Figma'
   },
   {
     id: 'req-6',
+    referenceId: 'NW-REQ-006',
     resourceId: '',
     projectId: 'proj-solventum',
     startDate: '2026-06-15',
     endDate: '2026-06-26',
     billablePercent: 40,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'Quality Assurance checking of deployment candidates.',
     requiredSkill: 'QA Engineer'
@@ -375,12 +429,15 @@ export const REQUESTS_TAB_MOCK_DATA: BookingRequest[] = [
 
   {
     id: 'req-9',
+    referenceId: 'NW-REQ-009',
     resourceId: '',
     projectId: 'proj-opp-honda',
     startDate: '2026-06-01',
     endDate: '2026-06-19',
     billablePercent: 100,
     billableType: 'Billable',
+    bookingType: 'hard',
+    probability: 100,
     status: 'Pending',
     notes: 'Proposed UI/UX Designer assignment for Honda CRM project mockup.',
     requiredSkill: 'Figma'
@@ -395,7 +452,8 @@ export const REQUESTS_TAB_MOCK_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-18',
     endDate: '2026-07-05',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'req-alloc-2',
@@ -404,7 +462,8 @@ export const REQUESTS_TAB_MOCK_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-01',
     endDate: '2026-07-15',
     billablePercent: 50,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'req-alloc-3',
@@ -413,7 +472,8 @@ export const REQUESTS_TAB_MOCK_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-01',
     endDate: '2026-06-25',
     billablePercent: 70,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   },
   {
     id: 'req-alloc-4',
@@ -422,7 +482,8 @@ export const REQUESTS_TAB_MOCK_ALLOCATIONS: Allocation[] = [
     startDate: '2026-06-01',
     endDate: '2026-06-19',
     billablePercent: 100,
-    billableType: 'Billable'
+    billableType: 'Billable',
+    bookingType: 'hard',
   }
 ];
 

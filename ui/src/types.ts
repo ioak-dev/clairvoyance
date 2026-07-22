@@ -49,6 +49,7 @@ export interface SavedFilter {
 
 export interface Project {
   id: string;
+  referenceId?: string;
   projectId?: string;
   name: string;
   client: string;
@@ -64,6 +65,8 @@ export interface Project {
 
 export type BillableType = 'Billable' | 'Opportunity';
 
+export type BookingCommitmentType = 'hard' | 'soft';
+
 export interface Allocation {
   id: string;
   resourceId: string;
@@ -72,6 +75,7 @@ export interface Allocation {
   endDate: string;
   billablePercent: number;
   billableType: BillableType;
+  bookingType: BookingCommitmentType;
   /** Set when this schedule row was created from a booking request. */
   requestId?: string;
 }
@@ -87,13 +91,51 @@ export interface Vacation {
 
 export interface BookingRequest {
   id: string;
+  referenceId: string;
   resourceId: string;
   projectId: string;
   startDate: string;
   endDate: string;
   billablePercent: number;
   billableType: BillableType;
+  bookingType: BookingCommitmentType;
+  probability: number;
   status: 'Pending' | 'Approved' | 'Rejected';
   notes?: string;
   requiredSkill?: string;
+  consultingUnitId?: string | null;
+  practiceAreaId?: string | null;
+  competencyCenterId?: string | null;
+  siteId?: string | null;
+  jobCategory?: JobCategory | null;
+}
+
+export type AvailabilityMode = 'complete' | 'partial' | 'everyone';
+
+export interface UtilizationSegment {
+  from: string;
+  to: string;
+  utilization: number;
+}
+
+export interface PersonUtilizationResult {
+  id: string;
+  employeeId?: string;
+  firstName: string;
+  lastName: string;
+  name: string;
+  email?: string;
+  role: string;
+  jobCategory?: JobCategory;
+  consultingUnitId?: string | null;
+  practiceAreaId?: string | null;
+  competencyCenterId?: string | null;
+  siteId?: string | null;
+  group?: string;
+  practiceArea?: string;
+  competencyCenter?: string;
+  site?: string;
+  utilization: UtilizationSegment[];
+  avgUtilization: number;
+  avgAvailability: number;
 }

@@ -134,38 +134,73 @@ VALUES
   (seed_uuid('pf-person-employed'), 'Employed Only', 'People with Employed lifecycle status', '{"lifecycle_status": "Employed"}'::jsonb, 2)
 ON CONFLICT (id) DO NOTHING;
 
--- Requests
-INSERT INTO request (id, project_id, person_id, start_date, end_date, billable_percent, billable_type, status, required_skill, notes)
+-- Requests (org fields mirror typical person staffing criteria for Skill Matcher)
+INSERT INTO request (
+    id, reference_id, project_id, person_id, start_date, end_date, billable_percent, billable_type,
+    booking_type, probability, status,
+    required_skill, notes,
+    consulting_unit_id, practice_area_id, competency_center_id, site_id, job_category
+)
 VALUES
-  (seed_uuid('req-1'), seed_uuid('proj-solventum'), NULL, '2026-06-29', '2026-07-10', 80, 'Billable', 'Pending', 'Backend Developer', 'Urgent cover needed for Horizon Analytics backend implementation phase.'),
-  (seed_uuid('req-2'), seed_uuid('proj-internal'), NULL, '2026-07-01', '2026-07-08', 20, 'Opportunity', 'Pending', 'React', 'Support with onboarding of junior staff.'),
-  (seed_uuid('req-3'), seed_uuid('proj-s4hana'), NULL, '2026-06-15', '2026-06-30', 100, 'Billable', 'Pending', 'SAP Specialist', 'SAP consultant to support migration phase.'),
-  (seed_uuid('req-4'), seed_uuid('proj-tms'), NULL, '2026-06-08', '2026-06-20', 50, 'Billable', 'Pending', 'UI/UX Design', 'UI expert to design new dashboards.'),
-  (seed_uuid('req-5'), seed_uuid('proj-opp-honda'), NULL, '2026-06-22', '2026-07-03', 100, 'Opportunity', 'Pending', 'Figma', 'Urgent CRM proposal design support.'),
-  (seed_uuid('req-6'), seed_uuid('proj-solventum'), NULL, '2026-06-15', '2026-06-26', 40, 'Billable', 'Pending', 'QA Engineer', 'Quality Assurance checking of deployment candidates.')
+  (
+    seed_uuid('req-1'), 'NW-REQ-001', seed_uuid('proj-solventum'), NULL, '2026-06-29', '2026-07-10', 80, 'Billable',
+    'hard', 100, 'Pending',
+    'Backend Developer', 'Urgent cover needed for Horizon Analytics backend implementation phase.',
+    seed_uuid('cu-healthcare'), seed_uuid('pa-engineering'), seed_uuid('cc-backend'), seed_uuid('site-bangalore'), 'L2'
+  ),
+  (
+    seed_uuid('req-2'), 'NW-REQ-002', seed_uuid('proj-internal'), NULL, '2026-07-01', '2026-07-08', 20, 'Opportunity',
+    'soft', 60, 'Pending',
+    'React', 'Support with onboarding of junior staff.',
+    seed_uuid('cu-enterprise'), seed_uuid('pa-digital'), seed_uuid('cc-frontend'), seed_uuid('site-bangalore'), 'L1'
+  ),
+  (
+    seed_uuid('req-3'), 'NW-REQ-003', seed_uuid('proj-s4hana'), NULL, '2026-06-15', '2026-06-30', 100, 'Billable',
+    'hard', 100, 'Pending',
+    'SAP Specialist', 'SAP consultant to support migration phase.',
+    seed_uuid('cu-sap'), seed_uuid('pa-sap'), seed_uuid('cc-sap-fico'), seed_uuid('site-london'), 'L3'
+  ),
+  (
+    seed_uuid('req-4'), 'NW-REQ-004', seed_uuid('proj-tms'), NULL, '2026-06-08', '2026-06-20', 50, 'Billable',
+    'hard', 100, 'Pending',
+    'UI/UX Design', 'UI expert to design new dashboards.',
+    seed_uuid('cu-enterprise'), seed_uuid('pa-design'), seed_uuid('cc-uiux'), seed_uuid('site-pune'), 'L1'
+  ),
+  (
+    seed_uuid('req-5'), 'NW-REQ-005', seed_uuid('proj-opp-honda'), NULL, '2026-06-22', '2026-07-03', 100, 'Opportunity',
+    'soft', 75, 'Pending',
+    'Figma', 'Urgent CRM proposal design support.',
+    seed_uuid('cu-crm'), seed_uuid('pa-design'), seed_uuid('cc-uiux'), seed_uuid('site-pune'), 'L1'
+  ),
+  (
+    seed_uuid('req-6'), 'NW-REQ-006', seed_uuid('proj-solventum'), NULL, '2026-06-15', '2026-06-26', 40, 'Billable',
+    'hard', 100, 'Pending',
+    'QA Engineer', 'Quality Assurance checking of deployment candidates.',
+    seed_uuid('cu-healthcare'), seed_uuid('pa-delivery'), seed_uuid('cc-pm'), seed_uuid('site-newyork'), 'L2'
+  )
 ON CONFLICT (id) DO NOTHING;
 
--- Schedules (from INITIAL_ALLOCATIONS)
-INSERT INTO schedule (id, project_id, person_id, request_id, start_date, end_date, billable_percent, billable_type)
+-- Schedules (from INITIAL_ALLOCATIONS; some linked to requests for Lab republish demo)
+INSERT INTO schedule (id, project_id, person_id, request_id, start_date, end_date, billable_percent, billable_type, booking_type)
 VALUES
-  (seed_uuid('alloc-1'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-06-01', '2026-06-12', 50, 'Billable'),
-  (seed_uuid('alloc-2'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-06-13', '2026-06-15', 50, 'Billable'),
-  (seed_uuid('alloc-3'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-06-18', '2026-07-05', 50, 'Billable'),
-  (seed_uuid('alloc-4'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-07-06', '2026-07-15', 50, 'Billable'),
-  (seed_uuid('alloc-5'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), NULL, '2026-06-03', '2026-06-05', 40, 'Billable'),
-  (seed_uuid('alloc-6'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), NULL, '2026-06-06', '2026-06-12', 70, 'Billable'),
-  (seed_uuid('alloc-7'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), NULL, '2026-06-13', '2026-06-25', 70, 'Billable'),
-  (seed_uuid('alloc-7b'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), NULL, '2026-06-26', '2026-07-15', 70, 'Billable'),
-  (seed_uuid('alloc-8'), seed_uuid('proj-solventum'), seed_uuid('res-2'), NULL, '2026-06-13', '2026-06-17', 70, 'Billable'),
-  (seed_uuid('alloc-9'), seed_uuid('proj-solventum'), seed_uuid('res-2'), NULL, '2026-06-18', '2026-07-10', 60, 'Billable'),
-  (seed_uuid('alloc-10'), seed_uuid('proj-tms'), seed_uuid('res-2'), NULL, '2026-06-01', '2026-06-12', 70, 'Billable'),
-  (seed_uuid('alloc-11'), seed_uuid('proj-tms'), seed_uuid('res-2'), NULL, '2026-06-13', '2026-06-17', 50, 'Billable'),
-  (seed_uuid('alloc-12'), seed_uuid('proj-s4hana'), seed_uuid('res-5'), NULL, '2026-06-01', '2026-06-12', 70, 'Billable'),
-  (seed_uuid('alloc-13'), seed_uuid('proj-s4hana'), seed_uuid('res-5'), NULL, '2026-06-13', '2026-06-17', 70, 'Billable'),
-  (seed_uuid('alloc-14'), seed_uuid('proj-s4hana'), seed_uuid('res-5'), NULL, '2026-06-18', '2026-06-25', 70, 'Billable'),
-  (seed_uuid('alloc-15'), seed_uuid('proj-tms'), seed_uuid('res-5'), NULL, '2026-06-26', '2026-07-10', 10, 'Opportunity'),
-  (seed_uuid('alloc-16'), seed_uuid('proj-solventum'), seed_uuid('res-4'), NULL, '2026-06-18', '2026-07-05', 70, 'Billable'),
-  (seed_uuid('alloc-17'), seed_uuid('proj-opp-honda'), seed_uuid('res-3'), NULL, '2026-06-01', '2026-06-19', 100, 'Billable')
+  (seed_uuid('alloc-1'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-06-01', '2026-06-12', 50, 'Billable', 'hard'),
+  (seed_uuid('alloc-2'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-06-13', '2026-06-15', 50, 'Billable', 'hard'),
+  (seed_uuid('alloc-3'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-06-18', '2026-07-05', 50, 'Billable', 'hard'),
+  (seed_uuid('alloc-4'), seed_uuid('proj-tms'), seed_uuid('res-1'), NULL, '2026-07-06', '2026-07-15', 50, 'Billable', 'hard'),
+  (seed_uuid('alloc-5'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), seed_uuid('req-3'), '2026-06-03', '2026-06-05', 40, 'Billable', 'hard'),
+  (seed_uuid('alloc-6'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), seed_uuid('req-3'), '2026-06-06', '2026-06-12', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-7'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), seed_uuid('req-3'), '2026-06-13', '2026-06-25', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-7b'), seed_uuid('proj-s4hana'), seed_uuid('res-2'), seed_uuid('req-3'), '2026-06-26', '2026-07-15', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-8'), seed_uuid('proj-solventum'), seed_uuid('res-2'), seed_uuid('req-1'), '2026-06-13', '2026-06-17', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-9'), seed_uuid('proj-solventum'), seed_uuid('res-2'), seed_uuid('req-1'), '2026-06-18', '2026-07-10', 60, 'Billable', 'hard'),
+  (seed_uuid('alloc-10'), seed_uuid('proj-tms'), seed_uuid('res-2'), NULL, '2026-06-01', '2026-06-12', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-11'), seed_uuid('proj-tms'), seed_uuid('res-2'), NULL, '2026-06-13', '2026-06-17', 50, 'Billable', 'hard'),
+  (seed_uuid('alloc-12'), seed_uuid('proj-s4hana'), seed_uuid('res-5'), seed_uuid('req-3'), '2026-06-01', '2026-06-12', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-13'), seed_uuid('proj-s4hana'), seed_uuid('res-5'), seed_uuid('req-3'), '2026-06-13', '2026-06-17', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-14'), seed_uuid('proj-s4hana'), seed_uuid('res-5'), seed_uuid('req-3'), '2026-06-18', '2026-06-25', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-15'), seed_uuid('proj-tms'), seed_uuid('res-5'), NULL, '2026-06-26', '2026-07-10', 10, 'Opportunity', 'soft'),
+  (seed_uuid('alloc-16'), seed_uuid('proj-solventum'), seed_uuid('res-4'), NULL, '2026-06-18', '2026-07-05', 70, 'Billable', 'hard'),
+  (seed_uuid('alloc-17'), seed_uuid('proj-opp-honda'), seed_uuid('res-3'), NULL, '2026-06-01', '2026-06-19', 100, 'Billable', 'hard')
 ON CONFLICT (id) DO NOTHING;
 
 -- Vacations

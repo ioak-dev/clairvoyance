@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { FlaskConical, Plus, X } from 'lucide-react';
 import { LabCreateModal } from './LabCreateModal.tsx';
-import { env } from '../lib/shared/env';
-import { http } from '../lib/shared/http';
+import { labService, type SimulationLogEntry } from '../lib/services/lab';
 
 interface SimulationRow {
   id: string;
@@ -12,24 +11,39 @@ interface SimulationRow {
   rawPayloadText: string;
 }
 
+function toSimulationRow(entry: SimulationLogEntry): SimulationRow {
+  return {
+    id: entry.id,
+    timestamp: new Date(entry.createdAt).toLocaleString(),
+    simulationType: entry.simulationType,
+    recordCount: entry.recordCount,
+    rawPayloadText: JSON.stringify({ type: entry.simulationType, payload: entry.payload }, null, 2),
+  };
+}
+
 export const LabTab: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [simulationRows, setSimulationRows] = useState<SimulationRow[]>([]);
   const [selectedRow, setSelectedRow] = useState<SimulationRow | null>(null);
+  const [loadError, setLoadError] = useState('');
 
-  const handleCreate = async (input: { type: string; payload: Record<string, unknown>[] }, rawText: string) => {
-    await http.post(`${env.apiUrl}/lab/requests`, input);
+  const refreshSimulations = useCallback(async () => {
+    try {
+      setLoadError('');
+      const entries = await labService.listSimulations();
+      setSimulationRows(entries.map(toSimulationRow));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load simulations.');
+    }
+  }, []);
 
-    setSimulationRows((current) => [
-      {
-        id: `${Date.now()}-${current.length + 1}`,
-        timestamp: new Date().toLocaleString(),
-        simulationType: input.type,
-        recordCount: input.payload.length,
-        rawPayloadText: rawText,
-      },
-      ...current,
-    ]);
+  useEffect(() => {
+    void refreshSimulations();
+  }, [refreshSimulations]);
+
+  const handleCreate = async (input: { type: string; payload: Record<string, unknown>[] }) => {
+    await labService.publish({ type: input.type, payload: input.payload });
+    await refreshSimulations();
   };
 
   return (
@@ -64,6 +78,10 @@ export const LabTab: React.FC = () => {
           </span>
         </div>
 
+        {loadError && (
+          <div className="px-6 py-3 text-sm text-red-600 border-b border-subtle">{loadError}</div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="min-w-full text-left">
             <thead className="bg-surface-muted/70 text-[11px] uppercase tracking-wider text-tertiary">
@@ -78,7 +96,7 @@ export const LabTab: React.FC = () => {
               {simulationRows.length === 0 ? (
                 <tr>
                   <td className="px-6 py-10 text-sm text-tertiary" colSpan={4}>
-                    No simulation rows yet. Use Create and paste a JSON payload.
+                    No simulation rows yet. Use Create and publish a JSON payload.
                   </td>
                 </tr>
               ) : (

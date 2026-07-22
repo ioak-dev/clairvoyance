@@ -383,6 +383,7 @@ export default function App() {
       endDate: proposal.endDate,
       billablePercent: proposal.billablePercent,
       billableType: proposal.billableType,
+      bookingType: proposal.bookingType,
       requestId: proposal.id,
     });
 
@@ -412,6 +413,7 @@ export default function App() {
       endDate: proposal.endDate,
       billablePercent: proposal.billablePercent,
       billableType: proposal.billableType,
+      bookingType: proposal.bookingType,
       requestId,
     });
 

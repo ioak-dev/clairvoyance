@@ -1,82 +1,43 @@
 import { Router, Request, Response } from 'express';
 
-type LabRequestRecord = {
-    projectId: string;
-    personId?: string | null;
-    startDate: string;
-    endDate: string;
-    billablePercent: number;
-    billableType: 'Billable' | 'Opportunity';
-    status?: 'Pending' | 'Approved' | 'Rejected';
-    requiredSkill?: string | null;
-    notes?: string | null;
-};
-
-type LabCreateRequestsBody = {
-    payload: LabRequestRecord[];
-};
-
-type InsertedRequestRow = {
-    id: string;
-    project_id: string;
-    person_id: string | null;
-    start_date: string;
-    end_date: string;
-    billable_percent: number;
-    billable_type: 'Billable' | 'Opportunity';
-};
+import { db } from '../db/client';
 
 const router = Router();
 
-const postgrestUrl = process.env.POSTGREST_URL || 'http://localhost:4001';
-const postgrestJwt = process.env.POSTGREST_JWT || '';
+interface PublishBody {
+  type?: unknown;
+  payload?: unknown;
+}
 
-router.post('/requests', async (req: Request, res: Response) => {
-    const { payload = [] } = req.body as LabCreateRequestsBody;
+router.post('/publish', async (req: Request, res: Response) => {
+  const body = req.body as PublishBody;
 
-    try {
-        const headers = new Headers({
-            'Content-Type': 'application/json',
-            Prefer: 'return=representation',
-        });
+  if (typeof body.type !== 'string' || !body.type.trim()) {
+    res.status(400).json({ error: 'type is required and must be a non-empty string' });
+    return;
+  }
 
-        if (postgrestJwt) {
-            headers.set('Authorization', `Bearer ${postgrestJwt}`);
-        }
+  if (!Array.isArray(body.payload)) {
+    res.status(400).json({ error: 'payload is required and must be an array' });
+    return;
+  }
 
-        const response = await fetch(`${postgrestUrl}/request`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(
-                payload.map((row) => ({
-                    project_id: row.projectId,
-                    person_id: row.personId ?? null,
-                    start_date: row.startDate,
-                    end_date: row.endDate,
-                    billable_percent: row.billablePercent,
-                    billable_type: row.billableType,
-                    status: row.status ?? 'Pending',
-                    required_skill: row.requiredSkill ?? null,
-                    notes: row.notes ?? null,
-                }))
-            ),
-        });
+  try {
+    const simulationType = body.type.trim();
+    const functionName =
+      simulationType.toLowerCase() === 'project' ? 'publish_lab_projects' : 'publish_lab_requests';
 
-        if (!response.ok) {
-            throw new Error(await response.text());
-        }
+    const { rows } = await db.query<Record<string, Record<string, unknown>>>(
+      `SELECT ${functionName}($1, $2::jsonb) AS result`,
+      [simulationType, JSON.stringify(body.payload)],
+    );
 
-        const rows = (await response.json()) as InsertedRequestRow[];
-
-        return res.status(201).json({
-            message: 'Requests created successfully.',
-            insertedCount: rows.length,
-            data: rows,
-        });
-    } catch (err) {
-        console.error('Failed to create requests via lab API:', err);
-        return res.status(500).json({ error: 'Failed to create requests.' });
-    }
+    res.json(rows[0]?.result ?? {});
+  } catch (err) {
+    console.error('Lab publish failed:', err);
+    const message = err instanceof Error ? err.message : 'Lab publish failed';
+    res.status(500).json({ error: message });
+  }
 });
 
 export default router;

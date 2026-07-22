@@ -65,7 +65,6 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
   onUnassignRequest,
 }) => {
   const [selectedRequestForSkills, setSelectedRequestForSkills] = useState<BookingRequest | null>(null);
-  const [popupSearch, setPopupSearch] = useState('');
 
   const { scrollRef, windowStart, windowEnd, handleScroll } = useHorizontalTimelineWindow(
     timelineStartDate,
@@ -157,6 +156,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
             endDate: req.endDate,
             billablePercent: req.billablePercent,
             billableType: req.billableType,
+            bookingType: req.bookingType,
           };
           projectLanes.push({
             project: proj,
@@ -542,42 +542,6 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
     return projects.find((p) => p.id === selectedRequestForSkills.projectId) || null;
   }, [selectedRequestForSkills, projects]);
 
-  const matchingResources = useMemo(() => {
-    if (!selectedRequestForSkills) return [];
-
-    const reqSkill = (selectedRequestForSkills.requiredSkill || '').toLowerCase();
-
-    const list = resources.map(res => {
-      const resourceSkills = res.skills || [];
-      const hasSkill = resourceSkills.some(sk => sk.toLowerCase().includes(reqSkill));
-      return {
-        ...res,
-        hasSkill,
-      };
-    });
-
-    const search = popupSearch.toLowerCase().trim();
-    const filtered = list.filter(res => {
-      if (!search) return true;
-      const matchName = res.name.toLowerCase().includes(search);
-      const matchRole = res.role.toLowerCase().includes(search);
-      const matchSkill = (res.skills || []).some(sk => sk.toLowerCase().includes(search));
-      return matchName || matchRole || matchSkill;
-    });
-
-    return filtered.sort((a, b) => {
-      // Prioritize the currently assigned resource at the very top
-      const isAAssigned = selectedRequestForSkills.resourceId === a.id;
-      const isBAssigned = selectedRequestForSkills.resourceId === b.id;
-      if (isAAssigned && !isBAssigned) return -1;
-      if (!isAAssigned && isBAssigned) return 1;
-
-      if (a.hasSkill && !b.hasSkill) return -1;
-      if (!a.hasSkill && b.hasSkill) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [selectedRequestForSkills, resources, popupSearch]);
-
   return (
     <div className="app-card overflow-hidden flex flex-col h-full min-h-0" id="scheduler-grid-main-board">
       {/* Scrollable grid — horizontal lazy load + vertical row scroll */}
@@ -649,13 +613,9 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
         isOpen={!!selectedRequestForSkills}
         request={selectedRequestForSkills}
         requestProject={requestProject}
-        popupSearch={popupSearch}
-        matchingResources={matchingResources}
         onClose={() => {
           setSelectedRequestForSkills(null);
-          setPopupSearch('');
         }}
-        onSearchChange={setPopupSearch}
         onUnassignRequest={onUnassignRequest}
         onApproveRequestWithResource={onApproveRequestWithResource}
       />
