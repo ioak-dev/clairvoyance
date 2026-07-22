@@ -384,7 +384,7 @@ Pending or approved booking requests for project staffing.
 | `created_at` | TIMESTAMPTZ | NOT NULL | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL | Auto-updated via trigger |
 
-**RPC:** `person_utilization_search(p_from, p_to, p_availability, p_required_percent, …)` returns Active people with utilization segments and averages for Skill Matcher (PostgREST `POST /rpc/person_utilization_search`). Availability modes scale to `p_required_percent` (request `billable_percent`): complete = `avg_availability >= required`; partial = `0.75 * required <= avg_availability < required`.
+**RPC:** `person_utilization_search(p_from, p_to, p_availability, p_required_percent, …)` returns Active people with utilization segments and averages for Skill Matcher (PostgREST `POST /rpc/person_utilization_search`). Availability modes scale to `p_required_percent` (request `billable_percent`): complete = `avg_availability >= required`; partial = `avg_availability >= 0.75 * required` (includes completely available).
 
 ### `schedule` (transactional)
 
