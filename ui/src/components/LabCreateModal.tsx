@@ -11,10 +11,12 @@ interface SimulationInput {
     payload: Record<string, unknown>[];
 }
 
+type CreateMode = 'draft' | 'publish';
+
 interface LabCreateModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onCreate: (input: SimulationInput, rawText: string) => Promise<void>;
+    onCreate: (input: SimulationInput, rawText: string, mode: CreateMode) => Promise<void>;
 }
 
 function isOpportunityProject(project: { winProbability?: number | null; isOpportunity?: boolean }) {
@@ -103,7 +105,30 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
     const handleCreate = async () => {
         const text = draftNotes.trim();
         if (!text) {
-            setError('Paste a JSON object before creating.');
+            setIsSubmitting(true);
+            setError('');
+            const emptyPayload = [{}] as Record<string, unknown>[];
+            const rawText = JSON.stringify(
+                {
+                    type: simulationType,
+                    payload: emptyPayload,
+                },
+                null,
+                2,
+            );
+
+            try {
+                await onCreate(
+                    { type: simulationType, payload: emptyPayload },
+                    rawText,
+                    'draft',
+                );
+                onClose();
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Failed to create draft.');
+            } finally {
+                setIsSubmitting(false);
+            }
             return;
         }
 
@@ -136,6 +161,7 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
             await onCreate(
                 { type: parsed.type.trim(), payload: parsed.payload as Record<string, unknown>[] },
                 text,
+                'publish',
             );
             onClose();
         } catch (err) {
@@ -219,7 +245,7 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                             disabled={isLoadingDefault || isSubmitting}
                             className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
                         >
-                            {isSubmitting ? 'Publishing…' : 'Create'}
+                            {isSubmitting ? 'Publishing…' : draftNotes.trim() ? 'Create' : 'Draft'}
                         </button>
                     </div>
                 </div>

@@ -1,31 +1,120 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlaskConical, Plus, X } from 'lucide-react';
 import { LabCreateModal } from './LabCreateModal.tsx';
+import { LabEditModal, type EditField, type SimulationType } from './LabEditModal.tsx';
+import {
+  buildProjectFields,
+  buildRequestFields,
+  getFilteredCompetencyCenterOptions,
+  type ValidationEditField,
+} from './labEditFieldConfig';
 import { labService, type SimulationLogEntry } from '../lib/services/lab';
+import { useLookups } from '../hooks/useLookups';
+import { usePeople } from '../hooks/usePeople';
+import { useProjects } from '../hooks/useProjects';
+
+function normalizeSimulationType(value: string): SimulationType {
+  return value.trim().toLowerCase() === 'project' ? 'Project' : 'Request';
+}
+
+function toRawPayloadText(simulationType: string, payload: Record<string, unknown>[]) {
+  return JSON.stringify({
+    type: normalizeSimulationType(simulationType),
+    payload,
+  }, null, 2);
+}
+
+function toEditablePayloadObject(row: SimulationRow): Record<string, unknown> {
+  const item = Array.isArray(row.payload) ? row.payload[0] : null;
+  if (!item || typeof item !== 'object') {
+    return {};
+  }
+  return { ...item };
+}
+
+function toFieldValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value);
+}
+
+function parseFieldValue(field: EditField, rawValue: string): unknown {
+  if (field.type === 'number') {
+    if (!rawValue.trim()) {
+      return field.nullable ? null : 0;
+    }
+    const parsed = Number(rawValue);
+    return Number.isNaN(parsed) ? rawValue : parsed;
+  }
+
+  if (!rawValue.trim() && field.nullable) {
+    return null;
+  }
+
+  return rawValue;
+}
 
 interface SimulationRow {
   id: string;
   timestamp: string;
   simulationType: string;
+  payload: Record<string, unknown>[];
   recordCount: number;
   rawPayloadText: string;
+  isDraft?: boolean;
 }
 
 function toSimulationRow(entry: SimulationLogEntry): SimulationRow {
   return {
     id: entry.id,
     timestamp: new Date(entry.createdAt).toLocaleString(),
-    simulationType: entry.simulationType,
+    simulationType: normalizeSimulationType(entry.simulationType),
+    payload: entry.payload,
     recordCount: entry.recordCount,
-    rawPayloadText: JSON.stringify({ type: entry.simulationType, payload: entry.payload }, null, 2),
+    rawPayloadText: toRawPayloadText(entry.simulationType, entry.payload),
   };
 }
 
 export const LabTab: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [simulationRows, setSimulationRows] = useState<SimulationRow[]>([]);
+  const [draftRows, setDraftRows] = useState<SimulationRow[]>([]);
   const [selectedRow, setSelectedRow] = useState<SimulationRow | null>(null);
+  const [editingRow, setEditingRow] = useState<SimulationRow | null>(null);
+  const [editValues, setEditValues] = useState<Record<string, string>>({});
+  const [editError, setEditError] = useState('');
+  const [isPublishingEdit, setIsPublishingEdit] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const { data: lookups } = useLookups();
+  const { data: projects = [] } = useProjects();
+  const { data: people = [] } = usePeople();
+
+  const rows = useMemo(() => {
+    return [...draftRows, ...simulationRows];
+  }, [draftRows, simulationRows]);
+
+  const editingType = useMemo<SimulationType | null>(() => {
+    if (!editingRow) return null;
+    return normalizeSimulationType(editingRow.simulationType);
+  }, [editingRow]);
+
+  const competencyCenterOptions = useMemo(() => {
+    return getFilteredCompetencyCenterOptions(lookups, editValues.practice_area_id || '');
+  }, [editValues.practice_area_id, lookups]);
+
+  const requestFields = useMemo<ValidationEditField[]>(() => {
+    return buildRequestFields({
+      projects,
+      people,
+      lookups,
+      competencyCenterOptions,
+    });
+  }, [competencyCenterOptions, lookups, people, projects]);
+
+  const projectFields = useMemo<ValidationEditField[]>(() => {
+    return buildProjectFields({ people, lookups });
+  }, [lookups, people]);
 
   const refreshSimulations = useCallback(async () => {
     try {
@@ -41,9 +130,110 @@ export const LabTab: React.FC = () => {
     void refreshSimulations();
   }, [refreshSimulations]);
 
-  const handleCreate = async (input: { type: string; payload: Record<string, unknown>[] }) => {
-    await labService.publish({ type: input.type, payload: input.payload });
+  const openEdit = (row: SimulationRow) => {
+    const simulationType = normalizeSimulationType(row.simulationType);
+    const firstPayload = toEditablePayloadObject(row);
+    const nextValues: Record<string, string> = {};
+    Object.entries(firstPayload).forEach(([key, value]) => {
+      nextValues[key] = toFieldValue(value);
+    });
+
+    if (simulationType === 'Request') {
+      if (!nextValues.billable_type) {
+        nextValues.billable_type = 'Opportunity';
+      }
+      nextValues.booking_type = 'soft';
+    }
+
+    setEditValues(nextValues);
+    setEditError('');
+    setEditingRow(row);
+  };
+
+  const handleCreate = async (
+    input: { type: string; payload: Record<string, unknown>[] },
+    rawText: string,
+    mode: 'draft' | 'publish',
+  ) => {
+    const simulationType = normalizeSimulationType(input.type);
+    const payload = Array.isArray(input.payload) && input.payload.length > 0 ? input.payload : [{}];
+
+    if (mode === 'draft') {
+      const draftRow: SimulationRow = {
+        id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        timestamp: new Date().toLocaleString(),
+        simulationType,
+        payload,
+        recordCount: payload.length,
+        rawPayloadText: rawText || toRawPayloadText(simulationType, payload),
+        isDraft: true,
+      };
+      setDraftRows((current) => [draftRow, ...current]);
+      return;
+    }
+
+    await labService.publish({ type: simulationType, payload });
     await refreshSimulations();
+  };
+
+  const handlePublishEdit = async () => {
+    if (!editingRow || !editingType) return;
+
+    const activeFields = editingType === 'Project' ? projectFields : requestFields;
+    const payloadObject: Record<string, unknown> = {};
+
+    for (const field of activeFields) {
+      const rawValue = editValues[field.key] || '';
+      if (field.required && !rawValue.trim()) {
+        setEditError(`${field.label} is required.`);
+        return;
+      }
+
+      if (field.type === 'number' && rawValue.trim()) {
+        const parsed = Number(rawValue);
+        if (Number.isNaN(parsed)) {
+          setEditError(`${field.label} must be a valid number.`);
+          return;
+        }
+      }
+
+      payloadObject[field.key] = parseFieldValue(field, rawValue);
+    }
+
+    if (editingType === 'Request') {
+      payloadObject.booking_type = 'soft';
+    }
+
+    try {
+      setIsPublishingEdit(true);
+      setEditError('');
+      await labService.publish({
+        type: editingType,
+        payload: [payloadObject],
+      });
+
+      if (editingRow.isDraft) {
+        setDraftRows((current) => current.filter((row) => row.id !== editingRow.id));
+      }
+
+      await refreshSimulations();
+      setEditingRow(null);
+      setEditValues({});
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to publish row.');
+    } finally {
+      setIsPublishingEdit(false);
+    }
+  };
+
+  const handleEditFieldChange = (key: string, value: string) => {
+    setEditValues((current) => {
+      const next = { ...current, [key]: value };
+      if (key === 'practice_area_id') {
+        next.competency_center_id = '';
+      }
+      return next;
+    });
   };
 
   return (
@@ -74,7 +264,7 @@ export const LabTab: React.FC = () => {
             <h3 className="text-sm font-bold text-primary uppercase tracking-wider">Simulations</h3>
           </div>
           <span className="text-xs font-semibold text-secondary">
-            {simulationRows.length} item{simulationRows.length === 1 ? '' : 's'}
+            {rows.length} item{rows.length === 1 ? '' : 's'}
           </span>
         </div>
 
@@ -89,30 +279,48 @@ export const LabTab: React.FC = () => {
                 <th className="px-6 py-3 font-semibold">Timestamp</th>
                 <th className="px-6 py-3 font-semibold">Simulation Type</th>
                 <th className="px-6 py-3 font-semibold">Number of Records</th>
-                <th className="px-6 py-3 font-semibold">Action</th>
+                <th className="px-6 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-subtle">
-              {simulationRows.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
                   <td className="px-6 py-10 text-sm text-tertiary" colSpan={4}>
                     No simulation rows yet. Use Create and publish a JSON payload.
                   </td>
                 </tr>
               ) : (
-                simulationRows.map((row) => (
+                rows.map((row) => (
                   <tr key={row.id} className="hover:bg-surface-muted/40 transition-colors">
                     <td className="px-6 py-4 text-sm font-medium text-primary whitespace-nowrap">{row.timestamp}</td>
-                    <td className="px-6 py-4 text-sm text-secondary">{row.simulationType}</td>
+                    <td className="px-6 py-4 text-sm text-secondary">
+                      <div className="inline-flex items-center gap-2">
+                        <span>{row.simulationType}</span>
+                        {row.isDraft && (
+                          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                            Draft
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 text-sm text-secondary">{row.recordCount}</td>
                     <td className="px-6 py-4 text-sm">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedRow(row)}
-                        className="px-3 py-1.5 rounded-md border border-default text-xs font-semibold text-secondary hover:bg-surface-hover"
-                      >
-                        View
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRow(row)}
+                          className="px-3 py-1.5 rounded-md border border-default text-xs font-semibold text-secondary hover:bg-surface-hover"
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEdit(row)}
+                          className="px-3 py-1.5 rounded-md border border-default text-xs font-semibold text-secondary hover:bg-surface-hover"
+                        >
+                          Edit
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -126,6 +334,22 @@ export const LabTab: React.FC = () => {
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onCreate={handleCreate}
+      />
+
+      <LabEditModal
+        isOpen={Boolean(editingRow && editingType)}
+        editingType={editingType}
+        fields={editingType === 'Project' ? projectFields : requestFields}
+        editValues={editValues}
+        editError={editError}
+        isPublishing={isPublishingEdit}
+        onFieldChange={handleEditFieldChange}
+        onClose={() => {
+          setEditingRow(null);
+          setEditValues({});
+          setEditError('');
+        }}
+        onPublish={() => void handlePublishEdit()}
       />
 
       {selectedRow && (
