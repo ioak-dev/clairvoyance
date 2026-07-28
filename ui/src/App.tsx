@@ -8,7 +8,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Resource, Project, AllocationBlock, Vacation, BookingRequest, ScheduleAssignment } from './types';
 
 // Components
-import { SchedulerGrid } from './components/SchedulerGrid';
+import { SchedulerGrid, type SchedulerGridHandle } from './components/SchedulerGrid';
 import { VacationTab } from './components/VacationTab';
 import { ProjectTab } from './components/ProjectTab';
 import { ResourceTab } from './components/ResourceTab';
@@ -40,6 +40,9 @@ import {
   Sun,
   Moon,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
   Settings,
   LogOut,
   CalendarDays,
@@ -227,8 +230,9 @@ export default function App() {
   }, [queryClient]);
 
   // Filter state
-  const [timelineStartDate, setTimelineStartDate] = useState('2026-06-01');
-  const [timelineEndDate, setTimelineEndDate] = useState('2027-12-31');
+  const schedulerGridRef = useRef<SchedulerGridHandle>(null);
+  const timelineDateInputRef = useRef<HTMLInputElement>(null);
+  const timelineCommittedDateRef = useRef(CURRENT_DATE_STRING);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [activeProjectFilterId, setActiveProjectFilterId] = useState<string | null>(null);
   const [activePersonFilterId, setActivePersonFilterId] = useState<string | null>(null);
@@ -808,35 +812,70 @@ export default function App() {
 
           {/* Main content tabs dispatching router routing */}
           {isScheduleArea(activeTab) && (
-            <div className="flex flex-col flex-1 min-h-0 gap-6">
+            <div className="flex flex-col flex-1 min-h-0 gap-2">
 
 
 
-              {/* Grid interactive Filters Toolbar exactly like visual mockup */}
-              <div className="app-card p-2 shrink-0 flex items-center justify-between flex-wrap gap-4">
-
-                <div className="flex items-center gap-1 flex-wrap flex-1 max-w-xl">
-                  {/* Interactive Date Range Selector with From and To date pickers */}
-                  <div className="flex items-center gap-2 bg-surface-muted p-2 border border-default rounded-lg text-xs font-bold text-primary">
-                    <span className="flex items-center gap-1">
-                      🗓️ <span className="text-tertiary">From:</span>
-                    </span>
-                    <input
-                      type="date"
-                      value={timelineStartDate}
-                      onChange={(e) => setTimelineStartDate(e.target.value)}
-                      className="border-0 bg-transparent text-primary font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
-                    />
-                    <span className="text-tertiary mx-1">→</span>
-                    <span className="text-tertiary">To:</span>
-                    <input
-                      type="date"
-                      value={timelineEndDate}
-                      onChange={(e) => setTimelineEndDate(e.target.value)}
-                      className="border-0 bg-transparent text-primary font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
-                      title="Maximum scroll range"
-                    />
-                  </div>
+              {/* Calendar navigation */}
+              <div className="shrink-0 flex items-center">
+                <div className="inline-flex items-center gap-0.5 bg-surface-muted/50 rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      title="Previous week"
+                      aria-label="Previous week"
+                      onClick={() => schedulerGridRef.current?.scrollByWeeks(-1)}
+                      className="p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Today"
+                      aria-label="Jump to today"
+                      onClick={() => {
+                        timelineCommittedDateRef.current = CURRENT_DATE_STRING;
+                        if (timelineDateInputRef.current) {
+                          timelineDateInputRef.current.value = CURRENT_DATE_STRING;
+                        }
+                        schedulerGridRef.current?.focusToday();
+                      }}
+                      className="p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <Circle className="w-2.5 h-2.5 fill-current" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Next week"
+                      aria-label="Next week"
+                      onClick={() => schedulerGridRef.current?.scrollByWeeks(1)}
+                      className="p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <div className="w-px h-5 bg-[var(--app-border)] mx-1" />
+                    <label
+                      title="Jump to date"
+                      aria-label="Jump to date"
+                      className="relative p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors cursor-pointer"
+                    >
+                      <CalendarDays className="w-3.5 h-3.5" />
+                      <input
+                        ref={timelineDateInputRef}
+                        type="date"
+                        defaultValue={CURRENT_DATE_STRING}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          // Native date inputs fire change only when a full day is chosen
+                          // (not while browsing months).
+                          if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) return;
+                          if (next === timelineCommittedDateRef.current) return;
+                          timelineCommittedDateRef.current = next;
+                          schedulerGridRef.current?.focusOnDate(next);
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        aria-label="Choose date"
+                      />
+                    </label>
                 </div>
               </div>
 
@@ -844,14 +883,12 @@ export default function App() {
               {/* Main Timeline Allocation Grid Board */}
               <div className="flex-1 min-h-0">
               <SchedulerGrid
+                ref={schedulerGridRef}
                 resources={resources}
                 projects={projects}
-                assignments={scheduleAssignments}
                 vacations={vacations}
                 requests={requests}
                 filterCriteria={filterCriteria}
-                timelineStartDate={timelineStartDate}
-                timelineEndDate={timelineEndDate}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
                 onEditBlock={(block) => setSelectedEditBlock(block)}
                 onOpenScheduleModalWithRes={(resId, projId) => {

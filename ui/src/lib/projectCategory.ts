@@ -104,23 +104,6 @@ function lightenRgb(color: Rgb, towardWhite: number): string {
   });
 }
 
-/** Matches `bg-stripes` in index.css — 6px bands, 12px period at full density. */
-const STRIPE_BAND_PX = 6;
-const TIME_OFF_STRIPE_PERIOD_PX = 12;
-
-/**
- * Repeat period for diagonal bands — null at 100% (solid).
- * Heavy pattern (12px, same as time-off) at low allocation; sparser as % rises.
- */
-export function getAllocationStripeSpacing(percent: number): number | null {
-  const clamped = Math.max(0, Math.min(100, percent));
-  if (clamped >= 100) return null;
-  const utilization = clamped / 100;
-  const minPeriod = TIME_OFF_STRIPE_PERIOD_PX;
-  const maxPeriod = 48;
-  return minPeriod + utilization * (maxPeriod - minPeriod);
-}
-
 /** Subtle % badge on schedule blocks — faint dark glass on any block color. */
 export const SCHEDULE_BLOCK_BADGE_CLASS =
   'bg-black/20 text-white/90 border border-black/10';
@@ -176,11 +159,12 @@ export function getAllocationBlockChrome(category: ProjectCategory): AllocationB
   };
 }
 
-/** Open / unassigned request — transparent category tint + dotted outline (no stripes). */
+/** Open / unassigned request — light opaque tint of category color (no see-through grid). */
 export function getRequestBlockChrome(category: ProjectCategory = 'Billable'): AllocationBlockChrome {
   const { fill, border } = getProjectCategoryBlockRgb(category);
   return {
-    fillColor: `rgba(${fill.r}, ${fill.g}, ${fill.b}, 0.2)`,
+    // Opaque equivalent of rgba(fill, 0.2) over the app surface
+    fillColor: `color-mix(in srgb, ${rgb(fill)} 20%, var(--app-surface))`,
     borderColor: rgb(border),
     stripeColor: 'transparent',
     textClass: 'text-primary',
@@ -197,37 +181,26 @@ export function getRequestBlockBackground(chrome: AllocationBlockChrome): BlockB
 }
 
 /**
- * Solid category fill + single diagonal stripe band when utilization < 100%.
- * Heavy pattern at low % (12px period); solid at 100%.
- */
-/**
- * Solid category fill + single diagonal stripe band when days < 5.
- * Heavy pattern at low days; solid at 5 days/week.
+ * Solid category fill for schedule blocks.
+ * Utilization is shown via the day bars above the block, not stripe patterns.
  */
 export function getAllocationBlockBackgroundFromDays(
-  daysPerWeek: number,
+  _daysPerWeek: number,
   chrome: AllocationBlockChrome,
 ): BlockBackgroundStyle {
-  const percentEquivalent = (Math.max(0, Math.min(5, daysPerWeek)) / 5) * 100;
-  return getAllocationBlockBackground(percentEquivalent, chrome);
-}
-
-export function getAllocationBlockBackground(
-  percent: number,
-  chrome: AllocationBlockChrome,
-): BlockBackgroundStyle {
-  const period = getAllocationStripeSpacing(percent);
-  if (period === null) {
-    return {
-      backgroundColor: chrome.fillColor,
-      borderColor: chrome.borderColor,
-    };
-  }
-  const band = STRIPE_BAND_PX;
   return {
     backgroundColor: chrome.fillColor,
     borderColor: chrome.borderColor,
-    backgroundImage: `repeating-linear-gradient(45deg, ${chrome.stripeColor} 0px, ${chrome.stripeColor} ${band}px, transparent ${band}px, transparent ${period}px)`,
+  };
+}
+
+export function getAllocationBlockBackground(
+  _percent: number,
+  chrome: AllocationBlockChrome,
+): BlockBackgroundStyle {
+  return {
+    backgroundColor: chrome.fillColor,
+    borderColor: chrome.borderColor,
   };
 }
 

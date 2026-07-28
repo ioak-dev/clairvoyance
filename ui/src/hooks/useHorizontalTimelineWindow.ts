@@ -4,7 +4,6 @@ import { buildDayColumnLayout, getWeekMonday } from '../lib/weekUtils';
 
 const INITIAL_VISIBLE_DAYS = 42; // ~6 weeks
 const LOAD_CHUNK_DAYS = 28; // ~4 weeks
-const SCROLL_EDGE_THRESHOLD_PX = 80;
 const MAX_WINDOW_DAYS = 366;
 const WEEKDAY_COL_WIDTH = 52;
 const WEEKEND_COL_WIDTH = 28;
@@ -14,20 +13,22 @@ interface TimelineWindow {
   end: string;
 }
 
-function windowWidthPx(start: string, end: string): number {
-  return buildDayColumnLayout(start, end, WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH).totalWidth;
-}
-
 function weekWidthPx(): number {
   return 5 * WEEKDAY_COL_WIDTH + 2 * WEEKEND_COL_WIDTH;
 }
 
+function windowWidthPx(start: string, end: string): number {
+  if (start > end) return 0;
+  return buildDayColumnLayout(start, end, WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH).totalWidth;
+}
+
 function centeredWindow(focusDate: string, spanDays = INITIAL_VISIBLE_DAYS): TimelineWindow {
-  const half = Math.floor(spanDays / 2);
+  const weeksSpan = Math.max(1, Math.ceil(spanDays / 7));
+  const halfWeeks = Math.floor(weeksSpan / 2);
   const monday = getWeekMonday(focusDate);
   return {
-    start: addDays(monday, -Math.floor(half / 7) * 7),
-    end: addDays(monday, spanDays - 1),
+    start: addDays(monday, -halfWeeks * 7),
+    end: addDays(monday, (weeksSpan - halfWeeks) * 7 - 1),
   };
 }
 
@@ -38,11 +39,9 @@ function clampWindow(start: string, end: string): TimelineWindow {
   if (daysBetween(windowStart, windowEnd) > MAX_WINDOW_DAYS) {
     windowEnd = addDays(windowStart, MAX_WINDOW_DAYS);
   }
-
   if (windowStart > windowEnd) {
     windowEnd = windowStart;
   }
-
   return { start: windowStart, end: windowEnd };
 }
 
@@ -59,9 +58,10 @@ function scrollLeftForDate(
     WEEKDAY_COL_WIDTH,
     WEEKEND_COL_WIDTH,
   );
-  const col = columns.find((c) => c.dateStr === dateStr)
-    ?? columns.find((c) => c.dateStr >= dateStr)
-    ?? columns[columns.length - 1];
+  const col =
+    columns.find((c) => c.dateStr === dateStr) ??
+    columns.find((c) => c.dateStr >= dateStr) ??
+    columns[columns.length - 1];
 
   if (!col) return 0;
 
@@ -74,72 +74,98 @@ function scrollLeftForDate(
 
 export function useHorizontalTimelineWindow(initialFocusDate = CURRENT_DATE_STRING) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const pendingScrollLeftRef = useRef<number | null>(null);
-  const pendingPrependAdjustRef = useRef(0);
+  const pendingPrependPxRef = useRef(0);
+  const pendingCenterDateRef = useRef<string | null>(null);
   const scrollThrottleRef = useRef(0);
-  const [focusDate, setFocusDate] = useState(initialFocusDate);
-  const [windowRange, setWindowRange] = useState<TimelineWindow>(() =>
-    clampWindow(...Object.values(centeredWindow(initialFocusDate)) as [string, string]),
-  );
+  const windowRangeRef = useRef<TimelineWindow>(clampWindow(
+    centeredWindow(initialFocusDate).start,
+    centeredWindow(initialFocusDate).end,
+  ));
 
-  // Apply pending scroll after DOM updates (prepend width adjust or focus scroll).
+  const [focusDate, setFocusDate] = useState(initialFocusDate);
+  const [windowRange, setWindowRange] = useState<TimelineWindow>(windowRangeRef.current);
+
+  const updateWindow = useCallback((next: TimelineWindow) => {
+    const clamped = clampWindow(next.start, next.end);
+    windowRangeRef.current = clamped;
+    setWindowRange(clamped);
+    return clamped;
+  }, []);
+
+  // After window changes: fix scroll for prepended columns and/or center on a date.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    if (pendingPrependAdjustRef.current !== 0) {
-      el.scrollLeft += pendingPrependAdjustRef.current;
-      pendingPrependAdjustRef.current = 0;
+    if (pendingPrependPxRef.current !== 0) {
+      el.scrollLeft += pendingPrependPxRef.current;
+      pendingPrependPxRef.current = 0;
     }
 
-    if (pendingScrollLeftRef.current !== null) {
-      el.scrollLeft = pendingScrollLeftRef.current;
-      pendingScrollLeftRef.current = null;
+    if (pendingCenterDateRef.current) {
+      const date = pendingCenterDateRef.current;
+      pendingCenterDateRef.current = null;
+      el.scrollLeft = scrollLeftForDate(
+        el,
+        date,
+        windowRange.start,
+        windowRange.end,
+        true,
+      );
     }
-  }, [windowRange.start, windowRange.end, focusDate]);
+  }, [windowRange.start, windowRange.end]);
 
-  const ensureDateInWindow = useCallback((dateStr: string, center: boolean) => {
-    setWindowRange((current) => {
-      const inWindow = dateStr >= current.start && dateStr <= current.end;
-      let next = current;
+  const extendStartIfNeeded = useCallback(() => {
+    const current = windowRangeRef.current;
+    const nextStart = addDays(current.start, -LOAD_CHUNK_DAYS);
+    if (daysBetween(nextStart, current.end) > MAX_WINDOW_DAYS) return false;
+    pendingPrependPxRef.current = windowWidthPx(nextStart, addDays(current.start, -1));
+    updateWindow({ start: nextStart, end: current.end });
+    return true;
+  }, [updateWindow]);
 
-      if (!inWindow) {
-        next = clampWindow(...Object.values(centeredWindow(dateStr)) as [string, string]);
-      } else {
-        // Near first/last week → extend before scrolling.
-        const firstWeekEnd = addDays(getWeekMonday(current.start), 6);
-        const lastWeekStart = getWeekMonday(current.end);
-
-        if (dateStr <= firstWeekEnd) {
-          const nextStart = addDays(current.start, -LOAD_CHUNK_DAYS);
-          if (daysBetween(nextStart, current.end) <= MAX_WINDOW_DAYS) {
-            pendingPrependAdjustRef.current = windowWidthPx(nextStart, addDays(current.start, -1));
-            next = clampWindow(nextStart, current.end);
-          }
-        } else if (dateStr >= lastWeekStart) {
-          const nextEnd = addDays(current.end, LOAD_CHUNK_DAYS);
-          if (daysBetween(current.start, nextEnd) <= MAX_WINDOW_DAYS) {
-            next = clampWindow(current.start, nextEnd);
-          }
-        }
-      }
-
-      // Defer scroll until after layout with the (possibly new) window.
-      requestAnimationFrame(() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        el.scrollLeft = scrollLeftForDate(el, dateStr, next.start, next.end, center);
-      });
-
-      return next;
-    });
-  }, []);
+  const extendEndIfNeeded = useCallback(() => {
+    const current = windowRangeRef.current;
+    const nextEnd = addDays(current.end, LOAD_CHUNK_DAYS);
+    if (daysBetween(current.start, nextEnd) > MAX_WINDOW_DAYS) return false;
+    updateWindow({ start: current.start, end: nextEnd });
+    return true;
+  }, [updateWindow]);
 
   const focusOnDate = useCallback((dateStr: string) => {
     if (!dateStr) return;
     setFocusDate(dateStr);
-    ensureDateInWindow(dateStr, true);
-  }, [ensureDateInWindow]);
+
+    const current = windowRangeRef.current;
+    const inWindow = dateStr >= current.start && dateStr <= current.end;
+
+    if (!inWindow) {
+      const next = centeredWindow(dateStr);
+      pendingCenterDateRef.current = dateStr;
+      updateWindow(next);
+      return;
+    }
+
+    // At first/last loaded week → load another chunk, then center.
+    const firstWeekEnd = addDays(getWeekMonday(current.start), 6);
+    const lastWeekStart = getWeekMonday(current.end);
+
+    if (dateStr <= firstWeekEnd) {
+      extendStartIfNeeded();
+      pendingCenterDateRef.current = dateStr;
+      return;
+    }
+    if (dateStr >= lastWeekStart) {
+      extendEndIfNeeded();
+      pendingCenterDateRef.current = dateStr;
+      return;
+    }
+
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollLeft = scrollLeftForDate(el, dateStr, current.start, current.end, true);
+    }
+  }, [extendEndIfNeeded, extendStartIfNeeded, updateWindow]);
 
   const focusToday = useCallback(() => {
     focusOnDate(CURRENT_DATE_STRING);
@@ -150,71 +176,36 @@ export function useHorizontalTimelineWindow(initialFocusDate = CURRENT_DATE_STRI
     if (!el || weeks === 0) return;
 
     const deltaPx = weeks * weekWidthPx();
-    const nextScroll = el.scrollLeft + deltaPx;
     const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+    const atStart = el.scrollLeft <= weekWidthPx();
+    const atEnd = el.scrollLeft >= maxScroll - weekWidthPx();
 
-    // Extending at edges when trying to move past loaded content.
-    if (weeks < 0 && el.scrollLeft <= SCROLL_EDGE_THRESHOLD_PX) {
-      setWindowRange((current) => {
-        const nextStart = addDays(current.start, -LOAD_CHUNK_DAYS);
-        if (daysBetween(nextStart, current.end) > MAX_WINDOW_DAYS) return current;
-        pendingPrependAdjustRef.current = windowWidthPx(nextStart, addDays(current.start, -1));
-        pendingScrollLeftRef.current = Math.max(0, el.scrollLeft + deltaPx + pendingPrependAdjustRef.current);
-        // pendingScrollLeft already includes prepend adjust; clear double-apply
-        const prepend = pendingPrependAdjustRef.current;
-        pendingScrollLeftRef.current = Math.max(0, el.scrollLeft + deltaPx + prepend);
-        pendingPrependAdjustRef.current = prepend;
-        pendingScrollLeftRef.current = null; // use prepend adjust + scroll in rAF
+    if (weeks < 0 && atStart) {
+      if (extendStartIfNeeded()) {
+        // After prepend adjust, apply the week scroll.
         requestAnimationFrame(() => {
           const node = scrollRef.current;
           if (!node) return;
           node.scrollLeft = Math.max(0, node.scrollLeft + deltaPx);
         });
-        return clampWindow(nextStart, current.end);
-      });
+      }
       return;
     }
 
-    if (weeks > 0 && el.scrollLeft >= maxScroll - SCROLL_EDGE_THRESHOLD_PX) {
-      setWindowRange((current) => {
-        const nextEnd = addDays(current.end, LOAD_CHUNK_DAYS);
-        if (daysBetween(current.start, nextEnd) > MAX_WINDOW_DAYS) return current;
+    if (weeks > 0 && atEnd) {
+      if (extendEndIfNeeded()) {
         requestAnimationFrame(() => {
           const node = scrollRef.current;
           if (!node) return;
-          node.scrollLeft = Math.min(
-            node.scrollLeft + deltaPx,
-            Math.max(0, node.scrollWidth - node.clientWidth),
-          );
+          const max = Math.max(0, node.scrollWidth - node.clientWidth);
+          node.scrollLeft = Math.min(node.scrollLeft + deltaPx, max);
         });
-        return clampWindow(current.start, nextEnd);
-      });
+      }
       return;
     }
 
-    el.scrollLeft = Math.max(0, Math.min(nextScroll, maxScroll));
-  }, []);
-
-  const extendEnd = useCallback(() => {
-    setWindowRange((current) => {
-      const nextEnd = addDays(current.end, LOAD_CHUNK_DAYS);
-      if (daysBetween(current.start, nextEnd) > MAX_WINDOW_DAYS) {
-        return clampWindow(current.start, addDays(current.start, MAX_WINDOW_DAYS));
-      }
-      return clampWindow(current.start, nextEnd);
-    });
-  }, []);
-
-  const extendStart = useCallback(() => {
-    setWindowRange((current) => {
-      const nextStart = addDays(current.start, -LOAD_CHUNK_DAYS);
-      if (daysBetween(nextStart, current.end) > MAX_WINDOW_DAYS) {
-        return current;
-      }
-      pendingPrependAdjustRef.current = windowWidthPx(nextStart, addDays(current.start, -1));
-      return clampWindow(nextStart, current.end);
-    });
-  }, []);
+    el.scrollLeft = Math.max(0, Math.min(el.scrollLeft + deltaPx, maxScroll));
+  }, [extendEndIfNeeded, extendStartIfNeeded]);
 
   const handleScroll = useCallback(() => {
     const now = Date.now();
@@ -224,33 +215,27 @@ export function useHorizontalTimelineWindow(initialFocusDate = CURRENT_DATE_STRI
     const el = scrollRef.current;
     if (!el) return;
 
-    const nearRight =
-      el.scrollLeft + el.clientWidth >= el.scrollWidth - weekWidthPx();
-    const nearLeft = el.scrollLeft <= weekWidthPx();
-
-    if (nearRight) {
-      extendEnd();
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+    if (el.scrollLeft + el.clientWidth >= el.scrollWidth - weekWidthPx()) {
+      extendEndIfNeeded();
     }
-    if (nearLeft && el.scrollLeft >= 0) {
-      // Only extend when already scrolled (or pinned at start while navigating).
-      if (el.scrollWidth > el.clientWidth || el.scrollLeft <= SCROLL_EDGE_THRESHOLD_PX) {
-        extendStart();
-      }
+    if (el.scrollLeft <= weekWidthPx() && maxScroll > 0) {
+      extendStartIfNeeded();
     }
-  }, [extendEnd, extendStart]);
+  }, [extendEndIfNeeded, extendStartIfNeeded]);
 
-  // Initial center on focus date once mounted.
+  // Center on initial focus after first paint.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollLeft = scrollLeftForDate(
       el,
       initialFocusDate,
-      windowRange.start,
-      windowRange.end,
+      windowRangeRef.current.start,
+      windowRangeRef.current.end,
       true,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only initial focus
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only
   }, []);
 
   return {
@@ -262,6 +247,5 @@ export function useHorizontalTimelineWindow(initialFocusDate = CURRENT_DATE_STRI
     scrollByWeeks,
     focusOnDate,
     focusToday,
-    weekWidthPx: weekWidthPx(),
   };
 }

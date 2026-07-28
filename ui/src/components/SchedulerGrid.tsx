@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
 import { Calendar, Loader2, Plus, User, UserCheck } from 'lucide-react';
 import {
@@ -17,7 +17,7 @@ import {
   type AllocationBlockChrome,
 } from '../lib/projectCategory';
 import { filterPeople, filterProjects, filterRequests } from '../lib/filterEngine';
-import { addDays } from '../lib/dateUtils';
+import { addDays, CURRENT_DATE_STRING } from '../lib/dateUtils';
 import {
   buildDayColumnLayout,
   deriveAllocationBlocks,
@@ -34,14 +34,18 @@ const WEEKDAY_COL_WIDTH = 52;
 const WEEKEND_COL_WIDTH = 28;
 const FETCH_BUFFER_DAYS = 14;
 
+export type SchedulerGridHandle = {
+  scrollByWeeks: (weeks: number) => void;
+  focusOnDate: (date: string) => void;
+  focusToday: () => void;
+};
+
 interface SchedulerGridProps {
   resources: Resource[];
   projects: Project[];
   vacations: Vacation[];
   requests?: BookingRequest[];
   filterCriteria?: Record<string, unknown> | null;
-  timelineStartDate: string;
-  timelineEndDate: string;
   viewMode?: 'resources' | 'projects' | 'requests';
   onEditBlock: (block: AllocationBlock) => void;
   onOpenScheduleModalWithRes: (resId: string, projId?: string) => void;
@@ -100,7 +104,7 @@ function UtilizationDayBar({
   return (
     <div
       className="absolute pointer-events-none flex gap-px"
-      style={{ left: bounds.left, width: bounds.width, top: 0, height: 4 }}
+      style={{ left: bounds.left + 4, width: Math.max(bounds.width - 8, 8), top: 0, height: 4 }}
     >
       {Array.from({ length: 5 }).map((_, i) => (
         <div
@@ -113,26 +117,35 @@ function UtilizationDayBar({
   );
 }
 
-export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
+export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>(function SchedulerGrid({
   resources,
   projects,
   vacations,
   requests = [],
   filterCriteria = null,
-  timelineStartDate,
-  timelineEndDate,
   viewMode = 'resources',
   onEditBlock,
   onOpenScheduleModalWithRes,
   onApproveRequestWithResource,
   onUnassignRequest,
-}) => {
+}, ref) {
   const [selectedRequestForSkills, setSelectedRequestForSkills] = useState<BookingRequest | null>(null);
 
-  const { scrollRef, windowStart, windowEnd, handleScroll } = useHorizontalTimelineWindow(
-    timelineStartDate,
-    timelineEndDate,
-  );
+  const {
+    scrollRef,
+    windowStart,
+    windowEnd,
+    handleScroll,
+    scrollByWeeks,
+    focusOnDate,
+    focusToday,
+  } = useHorizontalTimelineWindow(CURRENT_DATE_STRING);
+
+  useImperativeHandle(ref, () => ({
+    scrollByWeeks,
+    focusOnDate,
+    focusToday,
+  }), [scrollByWeeks, focusOnDate, focusToday]);
 
   const fetchStart = addDays(windowStart, -FETCH_BUFFER_DAYS);
   const fetchEnd = addDays(windowEnd, FETCH_BUFFER_DAYS);
@@ -142,7 +155,7 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
   );
 
   const onTimelineScroll = useCallback(() => {
-    handleScroll(WEEKDAY_COL_WIDTH);
+    handleScroll();
   }, [handleScroll]);
 
   const { columns: dayColumns, totalWidth: gridWidth } = useMemo(
@@ -326,8 +339,8 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
         />
         <div
           style={{
-            left: `${bounds.left + 1}px`,
-            width: `${bounds.width - 2}px`,
+            left: `${bounds.left + 4}px`,
+            width: `${Math.max(bounds.width - 8, 8)}px`,
             height: '44px',
             top: '6px',
             ...blockSurfaceStyle,
@@ -497,21 +510,30 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
                 {viewMode === 'projects' || viewMode === 'requests' ? 'Resource Allocation' : 'Project Allocation'}
               </span>
             </div>
-            {dayColumns.map((col) => (
+            {dayColumns.map((col) => {
+              const isToday = col.dateStr === CURRENT_DATE_STRING;
+              return (
               <div
                 key={`hdr-${col.dateStr}`}
                 style={{ width: `${col.width}px` }}
                 className={`text-center flex flex-col justify-center border-r border-default shrink-0 ${
-                  col.isWeekend ? 'bg-weekend-cell text-tertiary' : 'text-secondary'
+                  isToday
+                    ? 'bg-amber-400/25 text-secondary'
+                    : col.isWeekend
+                      ? 'bg-weekend-cell text-tertiary'
+                      : 'text-secondary'
                 }`}
-                title={col.dateStr}
+                title={isToday ? `${col.dateStr} (Today)` : col.dateStr}
               >
                 <span className="text-[10px] font-bold leading-none">{col.dayLabel}</span>
-                <span className={`text-[11px] font-semibold leading-none mt-0.5 ${col.isWeekend ? 'text-tertiary' : 'text-primary'}`}>
+                <span className={`text-[11px] font-semibold leading-none mt-0.5 ${
+                  col.isWeekend && !isToday ? 'text-tertiary' : 'text-primary'
+                }`}>
                   {col.dayNum}
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="divide-y divide-[var(--app-border)]">
@@ -536,4 +558,4 @@ export const SchedulerGrid: React.FC<SchedulerGridProps> = ({
       />
     </div>
   );
-};
+});
