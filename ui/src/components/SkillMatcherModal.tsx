@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { Award, Check, List, RotateCcw, Search, User, X } from 'lucide-react';
 import type {
   AvailabilityMode,
@@ -66,6 +66,32 @@ function formatShortDate(value: string) {
   return shortDateFormatter.format(new Date(`${value}T00:00:00Z`));
 }
 
+function mixChannel(start: number, end: number, ratio: number) {
+  return Math.round(start + (end - start) * ratio);
+}
+
+function utilizationToColor(utilization: number) {
+  const green = { r: 34, g: 197, b: 94 };
+  const yellow = { r: 234, g: 179, b: 8 };
+  const red = { r: 239, g: 68, b: 68 };
+
+  if (utilization <= 20) {
+    return `rgb(${green.r}, ${green.g}, ${green.b})`;
+  }
+
+  if (utilization >= 100) {
+    return `rgb(${red.r}, ${red.g}, ${red.b})`;
+  }
+
+  if (utilization <= 60) {
+    const ratio = (utilization - 20) / 40;
+    return `rgb(${mixChannel(green.r, yellow.r, ratio)}, ${mixChannel(green.g, yellow.g, ratio)}, ${mixChannel(green.b, yellow.b, ratio)})`;
+  }
+
+  const ratio = (utilization - 60) / 40;
+  return `rgb(${mixChannel(yellow.r, red.r, ratio)}, ${mixChannel(yellow.g, red.g, ratio)}, ${mixChannel(yellow.b, red.b, ratio)})`;
+}
+
 function buildSmoothPath(points: Array<{ x: number; y: number }>) {
   if (points.length === 0) return '';
   if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
@@ -93,6 +119,7 @@ const ResourceUtilizationOverlay: React.FC<UtilizationChartProps> = ({
   requestEnd,
 }) => {
   const [hoveredSegmentIndex, setHoveredSegmentIndex] = useState<number | null>(null);
+  const gradientId = useId();
 
   const chart = useMemo(() => {
     const width = 320;
@@ -173,7 +200,23 @@ const ResourceUtilizationOverlay: React.FC<UtilizationChartProps> = ({
     ]);
     const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${height} L ${points[0].x.toFixed(2)} ${height} Z`;
 
-    return { width, height, linePath, areaPath, segments };
+    const gradientStops = segments.map((segment) => ({
+      offset: `${((segment.x + segment.width / 2) / width) * 100}%`,
+      color: utilizationToColor(segment.utilization),
+    }));
+
+    if (gradientStops.length > 0) {
+      gradientStops.unshift({
+        offset: '0%',
+        color: utilizationToColor(segments[0].utilization),
+      });
+      gradientStops.push({
+        offset: '100%',
+        color: utilizationToColor(segments[segments.length - 1].utilization),
+      });
+    }
+
+    return { width, height, linePath, areaPath, segments, gradientStops };
   }, [requestEnd, requestStart, utilization]);
 
   if (!chart) {
@@ -190,7 +233,19 @@ const ResourceUtilizationOverlay: React.FC<UtilizationChartProps> = ({
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <path d={chart.areaPath} fill="currentColor" fillOpacity="0.12" />
+        <defs>
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
+            {chart.gradientStops.map((stop, index) => (
+              <stop
+                key={`${stop.offset}-${index}`}
+                offset={stop.offset}
+                stopColor={stop.color}
+                stopOpacity="0.16"
+              />
+            ))}
+          </linearGradient>
+        </defs>
+        <path d={chart.areaPath} fill={`url(#${gradientId})`} />
         {chart.segments.map((segment, index) => (
           <rect
             key={`${segment.from}-${segment.to}-${index}`}
