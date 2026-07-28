@@ -316,18 +316,18 @@ export const LabTab: React.FC = () => {
         }
 
         await queryClient.invalidateQueries({ queryKey: requestQueryKeys.all });
-      } else {
-        await labService.publish({
-          type: editingType,
-          payload: [payloadObject],
-        });
-
-        if (editingRow.isDraft) {
-          setDraftRows((current) => current.filter((row) => row.id !== editingRow.id));
-        }
-
-        await refreshSimulations();
       }
+
+      await labService.publish({
+        type: editingType,
+        payload: [payloadObject],
+      });
+
+      if (editingRow.isDraft) {
+        setDraftRows((current) => current.filter((row) => row.id !== editingRow.id));
+      }
+
+      await refreshSimulations();
 
       setEditingRow(null);
       setSelectedPrefillRequestId('');
