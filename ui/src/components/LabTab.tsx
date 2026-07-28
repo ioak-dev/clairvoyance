@@ -129,7 +129,7 @@ export const LabTab: React.FC = () => {
   const requestPrefillOptions = useMemo(() => {
     return requests.map((request) => ({
       value: request.id,
-      label: `${request.referenceId} (${request.startDate} to ${request.endDate})`,
+      label: `${request.requiredSkill} (${request.startDate} to ${request.endDate})`,
     }));
   }, [requests]);
 
