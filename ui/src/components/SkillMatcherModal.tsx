@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Award, Check, RotateCcw, Search, User, X } from 'lucide-react';
+import { Award, Check, List, RotateCcw, Search, User, X } from 'lucide-react';
 import type {
   AvailabilityMode,
   BookingRequest,
@@ -41,6 +41,250 @@ const JOB_CATEGORY_OPTIONS: JobCategory[] = [
   'D0', 'D1', 'D2', 'D3', 'D4', 'D5',
 ];
 
+type UtilizationChartProps = {
+  utilization: PersonUtilizationResult['utilization'];
+  requestStart: string;
+  requestEnd: string;
+};
+
+type UtilizationDetailsResource = Pick<PersonUtilizationResult, 'name' | 'role' | 'avgUtilization' | 'utilization'>;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function toUtcDay(value: string) {
+  return new Date(`${value}T00:00:00Z`).getTime();
+}
+
+const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+});
+
+function formatShortDate(value: string) {
+  return shortDateFormatter.format(new Date(`${value}T00:00:00Z`));
+}
+
+function buildSmoothPath(points: Array<{ x: number; y: number }>) {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+
+  const path = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const midX = (current.x + next.x) / 2;
+    const midY = (current.y + next.y) / 2;
+    path.push(`Q ${current.x.toFixed(2)} ${current.y.toFixed(2)} ${midX.toFixed(2)} ${midY.toFixed(2)}`);
+  }
+
+  const penultimate = points[points.length - 2];
+  const last = points[points.length - 1];
+  path.push(`Q ${penultimate.x.toFixed(2)} ${penultimate.y.toFixed(2)} ${last.x.toFixed(2)} ${last.y.toFixed(2)}`);
+
+  return path.join(' ');
+}
+
+const ResourceUtilizationOverlay: React.FC<UtilizationChartProps> = ({
+  utilization,
+  requestStart,
+  requestEnd,
+}) => {
+  const [hoveredSegmentIndex, setHoveredSegmentIndex] = useState<number | null>(null);
+
+  const chart = useMemo(() => {
+    const width = 320;
+    const height = 100;
+    const start = toUtcDay(requestStart);
+    const endExclusive = toUtcDay(requestEnd) + 24 * 60 * 60 * 1000;
+    const totalSpan = Math.max(endExclusive - start, 24 * 60 * 60 * 1000);
+
+    if (!utilization.length) {
+      return null;
+    }
+
+    const maxUtilization = Math.max(
+      100,
+      ...utilization.map((segment) => Number(segment.utilization) || 0),
+    );
+
+    const points: Array<{ x: number; y: number }> = [];
+    const segments: Array<{
+      x: number;
+      width: number;
+      y: number;
+      utilization: number;
+      from: string;
+      to: string;
+    }> = [];
+
+    for (const segment of utilization) {
+      const rawStart = toUtcDay(segment.from);
+      const rawEndExclusive = toUtcDay(segment.to) + 24 * 60 * 60 * 1000;
+
+      if (rawEndExclusive <= start || rawStart >= endExclusive) {
+        continue;
+      }
+
+      const segmentStart = clamp(rawStart, start, endExclusive);
+      const segmentEnd = clamp(rawEndExclusive, start, endExclusive);
+      const normalizedValue = clamp(Number(segment.utilization) || 0, 0, maxUtilization);
+      const x1 = ((segmentStart - start) / totalSpan) * width;
+      const x2 = ((Math.max(segmentEnd, segmentStart) - start) / totalSpan) * width;
+      const y = height - (normalizedValue / maxUtilization) * height;
+
+      if (!points.length || points[points.length - 1].x !== x1) {
+        points.push({ x: x1, y });
+      }
+      points.push({ x: x2, y });
+
+      segments.push({
+        x: x1,
+        width: Math.max(x2 - x1, 2),
+        y,
+        utilization: normalizedValue,
+        from: segment.from,
+        to: segment.to,
+      });
+    }
+
+    if (!points.length) {
+      return null;
+    }
+
+    const smoothPoints = segments.map((segment) => ({
+      x: segment.x + segment.width / 2,
+      y: segment.y,
+    }));
+
+    if (!smoothPoints.length) {
+      return null;
+    }
+
+    const linePath = buildSmoothPath([
+      { x: segments[0].x, y: segments[0].y },
+      ...smoothPoints,
+      {
+        x: segments[segments.length - 1].x + segments[segments.length - 1].width,
+        y: segments[segments.length - 1].y,
+      },
+    ]);
+    const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${height} L ${points[0].x.toFixed(2)} ${height} Z`;
+
+    return { width, height, linePath, areaPath, segments };
+  }, [requestEnd, requestStart, utilization]);
+
+  if (!chart) {
+    return null;
+  }
+
+  const hoveredSegment = hoveredSegmentIndex === null ? null : chart.segments[hoveredSegmentIndex] ?? null;
+
+  return (
+    <div className="absolute inset-0 overflow-hidden rounded-xl">
+      <svg
+        viewBox={`0 0 ${chart.width} ${chart.height}`}
+        className="h-full w-full text-blue-500"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path d={chart.areaPath} fill="currentColor" fillOpacity="0.12" />
+        {chart.segments.map((segment, index) => (
+          <rect
+            key={`${segment.from}-${segment.to}-${index}`}
+            x={segment.x}
+            y="0"
+            width={segment.width}
+            height={chart.height}
+            fill="transparent"
+            onMouseEnter={() => setHoveredSegmentIndex(index)}
+            onMouseLeave={() => setHoveredSegmentIndex((current) => (current === index ? null : current))}
+          />
+        ))}
+      </svg>
+      {hoveredSegment && (
+        <div
+          className="pointer-events-none absolute top-2 z-20 rounded-md border border-default bg-surface px-2 py-1 text-[10px] font-medium text-primary shadow-xl"
+          style={{
+            left: `calc(${((hoveredSegment.x + hoveredSegment.width / 2) / chart.width) * 100}% - 28px)`,
+          }}
+        >
+          <div>{Math.round(hoveredSegment.utilization)}% util</div>
+          <div className="text-tertiary">
+            {formatShortDate(hoveredSegment.from)} - {formatShortDate(hoveredSegment.to)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ResourceUtilizationDetailsModal: React.FC<{
+  resource: UtilizationDetailsResource | null;
+  onClose: () => void;
+}> = ({ resource, onClose }) => {
+  if (!resource) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center modal-overlay backdrop-blur-sm p-4">
+      <div className="bg-surface border border-subtle rounded-xl shadow-app-md w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh]">
+        <div className="app-card-header px-6 py-4 border-b border-subtle">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <List className="w-5 h-5 text-blue-600 shrink-0" />
+                <h3 className="text-lg font-semibold text-primary">Utilization Details</h3>
+              </div>
+              <p className="mt-1 text-sm text-secondary truncate">{resource.name} · {resource.role}</p>
+              <p className="mt-1 text-xs text-tertiary">
+                Average utilization for the request period: {Math.round(resource.avgUtilization)}%
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-tertiary hover:text-primary hover:bg-surface-hover transition-colors shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5 overflow-y-auto">
+          {resource.utilization.length === 0 ? (
+            <div className="rounded-lg border border-subtle bg-surface-muted/30 px-4 py-8 text-sm text-tertiary text-center">
+              No utilization segments available for this resource.
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-subtle">
+              <div className="grid grid-cols-[1.1fr_1.1fr_0.8fr] gap-4 bg-surface-muted/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-secondary">
+                <span>From</span>
+                <span>To</span>
+                <span className="text-right">Utilization</span>
+              </div>
+              <div>
+                {resource.utilization.map((segment, index) => (
+                  <div
+                    key={`${segment.from}-${segment.to}-${index}`}
+                    className="grid grid-cols-[1.1fr_1.1fr_0.8fr] gap-4 px-4 py-3 text-sm text-primary"
+                  >
+                    <span>{formatShortDate(segment.from)}</span>
+                    <span>{formatShortDate(segment.to)}</span>
+                    <span className="text-right font-semibold">{Math.round(segment.utilization)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function filtersFromRequest(request: BookingRequest | null): FilterState {
   if (!request) return defaultFilters;
   return {
@@ -67,6 +311,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [detailsResource, setDetailsResource] = useState<UtilizationDetailsResource | null>(null);
   const { data: lookups } = useLookups();
 
   const runSearch = useCallback(
@@ -119,6 +364,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
       setError(null);
       setHasSearched(false);
       setIsLoading(false);
+      setDetailsResource(null);
       return;
     }
 
@@ -279,6 +525,20 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
 
               <button
                 type="button"
+                title="Clear all filters"
+                aria-label="Clear all filters"
+                onClick={() => {
+                  setSelectedFilters(defaultFilters);
+                  setAvailability('everyone');
+                  setNameQuery('');
+                }}
+                className="shrink-0 inline-flex items-center justify-center rounded-lg border border-default px-3 py-2.5 text-xs font-semibold text-secondary transition-colors hover:bg-surface-hover"
+              >
+                Clear all
+              </button>
+
+              <button
+                type="button"
                 title="Reset filters"
                 aria-label="Reset filters"
                 onClick={() => {
@@ -337,82 +597,108 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                 filteredResults.map((res) => (
                   <div
                     key={res.id}
-                    className="p-4 rounded-xl border transition-all flex items-start gap-3 bg-surface border-subtle hover:border-default hover:shadow-app-sm"
+                    className="relative overflow-hidden p-4 rounded-xl border transition-all flex items-start gap-3 bg-surface border-subtle hover:border-default hover:shadow-app-sm"
                   >
+                    <ResourceUtilizationOverlay
+                      utilization={res.utilization}
+                      requestStart={request.startDate}
+                      requestEnd={request.endDate}
+                    />
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-surface/85 via-surface/45 to-surface/10" />
                     <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">
                       {(res.name || '').split(' ').map((n) => n[0] || '').join('')}
                     </div>
 
-                    <div className="flex-1 min-w-0 text-left">
+                    <div className="relative z-10 flex-1 min-w-0 text-left">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-sm font-semibold text-primary truncate">{res.name}</h4>
                         <span className="text-xs text-tertiary">·</span>
                         <span className="text-xs text-secondary truncate">{res.role}</span>
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface-muted text-secondary border border-subtle">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface/60 text-secondary border border-subtle backdrop-blur-[1px]">
                           {Math.round(res.avgUtilization)}% utilized
                         </span>
                       </div>
 
+                      <div className="mt-2 text-[11px] text-tertiary">
+                        Request-period utilization profile
+                      </div>
+
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-tertiary">
                         {res.group && (
-                          <span className="rounded-md bg-surface-muted px-2 py-0.5 border border-subtle">
+                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
                             Consulting unit · {res.group}
                           </span>
                         )}
                         {res.practiceArea && (
-                          <span className="rounded-md bg-surface-muted px-2 py-0.5 border border-subtle">
+                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
                             Practice · {res.practiceArea}
                           </span>
                         )}
                         {res.competencyCenter && (
-                          <span className="rounded-md bg-surface-muted px-2 py-0.5 border border-subtle">
+                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
                             Competency center · {res.competencyCenter}
                           </span>
                         )}
                         {res.site && (
-                          <span className="rounded-md bg-surface-muted px-2 py-0.5 border border-subtle">
+                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
                             Site · {res.site}
                           </span>
                         )}
                         {res.jobCategory && (
-                          <span className="rounded-md bg-surface-muted px-2 py-0.5 border border-subtle">
+                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
                             Level · {res.jobCategory}
                           </span>
                         )}
                       </div>
                     </div>
 
-                    {request.resourceId === res.id ? (
+                    <div className="relative z-10 flex items-center gap-2 shrink-0">
                       <button
-                        onClick={async () => {
-                          if (onUnassignRequest) {
-                            await onUnassignRequest(request.id);
-                          }
-                          onClose();
-                        }}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer tint-red shrink-0"
+                        type="button"
+                        title="View utilization details"
+                        aria-label={`View utilization details for ${res.name}`}
+                        onClick={() => setDetailsResource(res)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-default bg-surface text-secondary transition-all hover:bg-surface-hover"
                       >
-                        Unassign <X className="w-3.5 h-3.5" />
+                        <List className="w-3.5 h-3.5" />
                       </button>
-                    ) : (
-                      <button
-                        onClick={async () => {
-                          if (onApproveRequestWithResource) {
-                            await onApproveRequestWithResource(request.id, res.id);
-                          }
-                          onClose();
-                        }}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer bg-blue-600 text-white hover:bg-blue-700 shrink-0"
-                      >
-                        Assign <Check className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+
+                      {request.resourceId === res.id ? (
+                        <button
+                          onClick={async () => {
+                            if (onUnassignRequest) {
+                              await onUnassignRequest(request.id);
+                            }
+                            onClose();
+                          }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer tint-red shrink-0"
+                        >
+                          Unassign <X className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            if (onApproveRequestWithResource) {
+                              await onApproveRequestWithResource(request.id, res.id);
+                            }
+                            onClose();
+                          }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer bg-blue-600 text-white hover:bg-blue-700 shrink-0"
+                        >
+                          Assign <Check className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))
               )}
             </div>
           </div>
         </div>
+        <ResourceUtilizationDetailsModal
+          resource={detailsResource}
+          onClose={() => setDetailsResource(null)}
+        />
       </div>
     </div>
   );
