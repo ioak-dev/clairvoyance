@@ -90,6 +90,7 @@ export const LabTab: React.FC = () => {
   const [selectedRow, setSelectedRow] = useState<SimulationRow | null>(null);
   const [editingRow, setEditingRow] = useState<SimulationRow | null>(null);
   const [selectedPrefillRequestId, setSelectedPrefillRequestId] = useState('');
+  const [prefilledRequestReferenceId, setPrefilledRequestReferenceId] = useState('');
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState('');
   const [isPublishingEdit, setIsPublishingEdit] = useState(false);
@@ -163,6 +164,7 @@ export const LabTab: React.FC = () => {
 
     setEditValues(nextValues);
     setSelectedPrefillRequestId('');
+    setPrefilledRequestReferenceId('');
     setEditError('');
     setEditingRow(row);
   };
@@ -191,6 +193,29 @@ export const LabTab: React.FC = () => {
     };
   };
 
+  const toRequestCreateInput = (
+    payload: Record<string, unknown>,
+  ): Omit<BookingRequest, 'id' | 'status'> => {
+    return {
+      referenceId: toFieldValue(payload.id),
+      resourceId: toFieldValue(payload.person_id),
+      projectId: toFieldValue(payload.project_id),
+      startDate: toFieldValue(payload.start_date),
+      endDate: toFieldValue(payload.end_date),
+      billablePercent: Number(payload.billable_percent ?? 0),
+      billableType: toFieldValue(payload.billable_type) as BookingRequest['billableType'],
+      bookingType: toFieldValue(payload.booking_type) as BookingRequest['bookingType'],
+      probability: Number(payload.probability ?? 100),
+      notes: toFieldValue(payload.notes) || undefined,
+      requiredSkill: toFieldValue(payload.required_skill) || undefined,
+      consultingUnitId: toFieldValue(payload.consulting_unit_id) || null,
+      practiceAreaId: toFieldValue(payload.practice_area_id) || null,
+      competencyCenterId: toFieldValue(payload.competency_center_id) || null,
+      siteId: toFieldValue(payload.site_id) || null,
+      jobCategory: (toFieldValue(payload.job_category) || null) as JobCategory | null,
+    };
+  };
+
   const handlePrefillRequestChange = (requestId: string) => {
     setSelectedPrefillRequestId(requestId);
 
@@ -210,6 +235,7 @@ export const LabTab: React.FC = () => {
     });
     nextValues.booking_type = 'soft';
 
+    setPrefilledRequestReferenceId(selectedRequest.referenceId);
     setEditValues(nextValues);
     setEditError('');
   };
@@ -273,10 +299,19 @@ export const LabTab: React.FC = () => {
       setEditError('');
 
       if (editingType === 'Request' && selectedPrefillRequestId) {
-        await requestsService.update(
-          selectedPrefillRequestId,
-          toRequestPatch(payloadObject),
-        );
+        const nextReferenceId = toFieldValue(payloadObject.id).trim();
+        const originalReferenceId = prefilledRequestReferenceId.trim();
+        const shouldCreateNewRequest = nextReferenceId !== originalReferenceId;
+
+        if (shouldCreateNewRequest) {
+          await requestsService.create(toRequestCreateInput(payloadObject));
+        } else {
+          await requestsService.update(
+            selectedPrefillRequestId,
+            toRequestPatch(payloadObject),
+          );
+        }
+
         await queryClient.invalidateQueries({ queryKey: requestQueryKeys.all });
       } else {
         await labService.publish({
@@ -293,6 +328,7 @@ export const LabTab: React.FC = () => {
 
       setEditingRow(null);
       setSelectedPrefillRequestId('');
+      setPrefilledRequestReferenceId('');
       setEditValues({});
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Failed to save row.');
@@ -425,6 +461,7 @@ export const LabTab: React.FC = () => {
         onClose={() => {
           setEditingRow(null);
           setSelectedPrefillRequestId('');
+          setPrefilledRequestReferenceId('');
           setEditValues({});
           setEditError('');
         }}
