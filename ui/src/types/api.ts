@@ -428,6 +428,7 @@ export function createRequestPayload(request: Omit<BookingRequest, 'id' | 'statu
 
 export function updateRequestPayload(request: Partial<BookingRequest> & { status?: ApprovalStatus }) {
   return {
+    ...(request.referenceId !== undefined ? { reference_id: request.referenceId } : {}),
     ...(request.resourceId !== undefined ? { person_id: request.resourceId || null } : {}),
     ...(request.projectId !== undefined ? { project_id: request.projectId } : {}),
     ...(request.startDate !== undefined ? { start_date: request.startDate } : {}),

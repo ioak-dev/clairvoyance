@@ -23,9 +23,12 @@ interface LabEditModalProps {
     isOpen: boolean;
     editingType: SimulationType | null;
     fields: EditField[];
+    requestPrefillOptions?: SelectOption[];
+    selectedPrefillRequestId?: string;
     editValues: Record<string, string>;
     editError: string;
     isPublishing: boolean;
+    onSelectPrefillRequest?: (requestId: string) => void;
     onFieldChange: (key: string, value: string) => void;
     onClose: () => void;
     onPublish: () => void;
@@ -107,9 +110,12 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
     isOpen,
     editingType,
     fields,
+    requestPrefillOptions = [],
+    selectedPrefillRequestId = '',
     editValues,
     editError,
     isPublishing,
+    onSelectPrefillRequest,
     onFieldChange,
     onClose,
     onPublish,
@@ -125,7 +131,9 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
                     <div>
                         <h3 className="text-base font-semibold text-primary">Edit {editingType} Payload</h3>
                         <p className="text-xs text-tertiary mt-1">
-                            This form edits only one payload object. Publish sends payload as [{ }] with your current field values.
+                            {editingType === 'Request'
+                                ? 'Use Prefill Request to load an existing request, then Save to overwrite it.'
+                                : 'This form edits one payload object and publishes it with your current field values.'}
                         </p>
                     </div>
                     <button
@@ -138,6 +146,25 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
                 </div>
 
                 <div className="p-5 overflow-y-auto">
+                    {editingType === 'Request' && onSelectPrefillRequest && (
+                        <div className="mb-4">
+                            <label className="block text-xs font-medium text-secondary mb-1.5">Prefill Request</label>
+                            <select
+                                value={selectedPrefillRequestId}
+                                onChange={(e) => onSelectPrefillRequest(e.target.value)}
+                                disabled={isPublishing || requestPrefillOptions.length === 0}
+                                className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                            >
+                                <option value="">Select existing request</option>
+                                {requestPrefillOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {fields.map((field) => (
                             <div key={field.key} className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
@@ -165,7 +192,7 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
                         disabled={isPublishing}
                         className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
                     >
-                        {isPublishing ? 'Publishing…' : 'Publish'}
+                        {isPublishing ? 'Saving…' : 'Save'}
                     </button>
                 </div>
             </div>
