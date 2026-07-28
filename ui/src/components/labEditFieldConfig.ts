@@ -37,28 +37,13 @@ export function buildRequestFields(params: {
     label: project.name,
   }));
 
-  const personOptions = people.map((person) => ({
-    value: person.id,
-    label: person.name,
-  }));
-
   return [
     { key: 'id', label: 'Request Reference ID', type: 'text', required: true, canGenerateUuid: true },
     { key: 'project_id', label: 'Project', type: 'select', options: projectOptions, required: true },
-    { key: 'person_id', label: 'Person', type: 'select', options: personOptions, nullable: true },
+    { key: 'person_id', label: 'Person', type: 'select', options: [], nullable: true, readOnly: true },
     { key: 'start_date', label: 'Start Date', type: 'date', required: true },
     { key: 'end_date', label: 'End Date', type: 'date', required: true },
-    { key: 'billable_percent', label: 'Billable Percent', type: 'number', required: true },
-    {
-      key: 'billable_type',
-      label: 'Billable Type',
-      type: 'select',
-      options: [
-        { value: 'Billable', label: 'Billable' },
-        { value: 'Opportunity', label: 'Opportunity' },
-      ],
-      required: true,
-    },
+    { key: 'billable_percent', label: 'Utilization(%)', type: 'number', required: true },
     {
       key: 'status',
       label: 'Status',

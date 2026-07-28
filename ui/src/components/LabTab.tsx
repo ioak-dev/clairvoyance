@@ -129,7 +129,7 @@ export const LabTab: React.FC = () => {
   const requestPrefillOptions = useMemo(() => {
     return requests.map((request) => ({
       value: request.id,
-      label: `${request.requiredSkill} (${request.startDate} to ${request.endDate})`,
+      label: `${request.referenceId} (${request.startDate} to ${request.endDate})`,
     }));
   }, [requests]);
 
@@ -156,10 +156,9 @@ export const LabTab: React.FC = () => {
     });
 
     if (simulationType === 'Request') {
-      if (!nextValues.billable_type) {
-        nextValues.billable_type = 'Opportunity';
-      }
+      nextValues.billable_type = 'Opportunity';
       nextValues.booking_type = 'soft';
+      nextValues.person_id = '';
     }
 
     setEditValues(nextValues);
@@ -179,7 +178,7 @@ export const LabTab: React.FC = () => {
       startDate: toFieldValue(payload.start_date),
       endDate: toFieldValue(payload.end_date),
       billablePercent: Number(payload.billable_percent ?? 0),
-      billableType: toFieldValue(payload.billable_type) as BookingRequest['billableType'],
+      billableType: 'Opportunity',
       bookingType: toFieldValue(payload.booking_type) as BookingRequest['bookingType'],
       probability: Number(payload.probability ?? 100),
       status: toFieldValue(payload.status) as ApprovalStatus,
@@ -203,7 +202,7 @@ export const LabTab: React.FC = () => {
       startDate: toFieldValue(payload.start_date),
       endDate: toFieldValue(payload.end_date),
       billablePercent: Number(payload.billable_percent ?? 0),
-      billableType: toFieldValue(payload.billable_type) as BookingRequest['billableType'],
+      billableType: 'Opportunity',
       bookingType: toFieldValue(payload.booking_type) as BookingRequest['bookingType'],
       probability: Number(payload.probability ?? 100),
       notes: toFieldValue(payload.notes) || undefined,
@@ -220,6 +219,7 @@ export const LabTab: React.FC = () => {
     setSelectedPrefillRequestId(requestId);
 
     if (!requestId) {
+      setPrefilledRequestReferenceId('');
       return;
     }
 
@@ -233,7 +233,9 @@ export const LabTab: React.FC = () => {
     Object.entries(payloadItem).forEach(([key, value]) => {
       nextValues[key] = toFieldValue(value);
     });
+    nextValues.billable_type = 'Opportunity';
     nextValues.booking_type = 'soft';
+    nextValues.person_id = '';
 
     setPrefilledRequestReferenceId(selectedRequest.referenceId);
     setEditValues(nextValues);
@@ -291,6 +293,7 @@ export const LabTab: React.FC = () => {
     }
 
     if (editingType === 'Request') {
+      payloadObject.billable_type = 'Opportunity';
       payloadObject.booking_type = 'soft';
     }
 
