@@ -459,6 +459,9 @@ export const LabTab: React.FC = () => {
         editValues={editValues}
         editError={editError}
         isPublishing={isPublishingEdit}
+        isRepublishAsNewRequest={Boolean(
+          editingRow && !editingRow.isDraft && editingType === 'Request',
+        )}
         onSelectPrefillRequest={handlePrefillRequestChange}
         onFieldChange={handleEditFieldChange}
         onClose={() => {

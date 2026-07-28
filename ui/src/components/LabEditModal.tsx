@@ -28,6 +28,7 @@ interface LabEditModalProps {
     editValues: Record<string, string>;
     editError: string;
     isPublishing: boolean;
+    isRepublishAsNewRequest?: boolean;
     onSelectPrefillRequest?: (requestId: string) => void;
     onFieldChange: (key: string, value: string) => void;
     onClose: () => void;
@@ -115,6 +116,7 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
     editValues,
     editError,
     isPublishing,
+    isRepublishAsNewRequest = false,
     onSelectPrefillRequest,
     onFieldChange,
     onClose,
@@ -132,7 +134,9 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
                         <h3 className="text-base font-semibold text-primary">Edit {editingType} Payload</h3>
                         <p className="text-xs text-tertiary mt-1">
                             {editingType === 'Request'
-                                ? 'Use Prefill Request to load an existing request, then Save to overwrite it.'
+                                ? isRepublishAsNewRequest
+                                    ? 'This published request will be republished as a new request with your updated field values.'
+                                    : 'Use Prefill Request to load an existing request, then Publish to overwrite it.'
                                 : 'This form edits one payload object and publishes it with your current field values.'}
                         </p>
                     </div>
@@ -192,7 +196,13 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
                         disabled={isPublishing}
                         className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
                     >
-                        {isPublishing ? 'Saving…' : 'Save'}
+                        {isPublishing
+                            ? isRepublishAsNewRequest
+                                ? 'Republishing as new request…'
+                                : 'Publishing…'
+                            : isRepublishAsNewRequest
+                              ? 'Republish as new request'
+                              : 'Publish'}
                     </button>
                 </div>
             </div>

@@ -245,7 +245,7 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                             disabled={isLoadingDefault || isSubmitting}
                             className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
                         >
-                            {isSubmitting ? 'Publishing…' : draftNotes.trim() ? 'Create' : 'Draft'}
+                            {isSubmitting ? 'Publishing…' : draftNotes.trim() ? 'Publish' : 'Draft'}
                         </button>
                     </div>
                 </div>
