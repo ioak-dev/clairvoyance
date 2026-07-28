@@ -12,7 +12,7 @@ import {
   Percent,
   Users,
 } from 'lucide-react';
-import type { Allocation, BookingRequest, Project, Resource, Vacation } from '../types';
+import type { BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
 import { buildDashboardSnapshot } from '../lib/dashboardMetrics';
 import {
   CURRENT_DATE_STRING,
@@ -31,7 +31,7 @@ import { WeeklyTrendChart } from './dashboard/WeeklyTrendChart';
 export interface DashboardTabProps {
   resources: Resource[];
   projects: Project[];
-  allocations: Allocation[];
+  assignments: ScheduleAssignment[];
   requests: BookingRequest[];
   vacations: Vacation[];
   referenceDate?: string;
@@ -40,7 +40,7 @@ export interface DashboardTabProps {
 export const DashboardTab: React.FC<DashboardTabProps> = ({
   resources,
   projects,
-  allocations,
+  assignments,
   requests,
   vacations,
   referenceDate = CURRENT_DATE_STRING,
@@ -59,13 +59,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
       buildDashboardSnapshot(
         resources,
         projects,
-        allocations,
+        assignments,
         requests,
         vacations,
         period,
         referenceDate,
       ),
-    [resources, projects, allocations, requests, vacations, period, referenceDate],
+    [resources, projects, assignments, requests, vacations, period, referenceDate],
   );
 
   return (

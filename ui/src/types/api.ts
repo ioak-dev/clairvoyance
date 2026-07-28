@@ -1,5 +1,4 @@
 import type {
-  Allocation,
   BillableType,
   BookingCommitmentType,
   BookingRequest,
@@ -9,8 +8,11 @@ import type {
   Project,
   Resource,
   SavedFilter,
+  ScheduleAssignment,
   Vacation,
+  WeekAllocation,
 } from '../types';
+import { weekKeysToDateRange } from '../lib/weekUtils';
 import {
   getProjectCategory,
   getProjectCategoryIconClass,
@@ -64,16 +66,32 @@ export interface PersonRow {
   competency_center?: LookupRow | null;
 }
 
+export interface ScheduleWeekRow {
+  id: string;
+  schedule_id: string;
+  person_id: string;
+  project_id: string;
+  iso_year: number;
+  iso_week: number;
+  days_per_week: number;
+}
+
 export interface ScheduleRow {
   id: string;
   project_id: string;
   person_id: string;
   request_id: string | null;
-  start_date: string;
-  end_date: string;
-  billable_percent: number;
   billable_type: BillableType;
   booking_type: BookingCommitmentType;
+  schedule_week?: ScheduleWeekRow[];
+}
+
+export interface RequestWeekRow {
+  id: string;
+  request_id: string;
+  iso_year: number;
+  iso_week: number;
+  days_per_week: number;
 }
 
 export interface RequestRow {
@@ -81,9 +99,6 @@ export interface RequestRow {
   reference_id: string;
   project_id: string;
   person_id: string | null;
-  start_date: string;
-  end_date: string;
-  billable_percent: number;
   billable_type: BillableType;
   booking_type: BookingCommitmentType;
   probability: number;
@@ -95,6 +110,7 @@ export interface RequestRow {
   competency_center_id: string | null;
   site_id: string | null;
   job_category: string | null;
+  request_week?: RequestWeekRow[];
 }
 
 export interface SimulationLogRow {
@@ -123,7 +139,7 @@ export interface PersonUtilizationSearchRow {
   practice_area_name: string | null;
   competency_center_name: string | null;
   site_name: string | null;
-  utilization: Array<{ from: string; to: string; utilization: number }>;
+  utilization: Array<{ iso_year: number; iso_week: number; utilization: number }>;
   avg_utilization: number;
   avg_availability: number;
 }
@@ -145,6 +161,22 @@ export interface FilterRow {
   is_active: boolean;
   sort_order: number;
   item_count?: number;
+}
+
+function mapScheduleWeeks(rows: ScheduleWeekRow[] | undefined): WeekAllocation[] {
+  return (rows ?? []).map((w) => ({
+    isoYear: w.iso_year,
+    isoWeek: w.iso_week,
+    daysPerWeek: w.days_per_week,
+  }));
+}
+
+function mapRequestWeeks(rows: RequestWeekRow[] | undefined): WeekAllocation[] {
+  return (rows ?? []).map((w) => ({
+    isoYear: w.iso_year,
+    isoWeek: w.iso_week,
+    daysPerWeek: w.days_per_week,
+  }));
 }
 
 export function toProject(row: ProjectRow): Project {
@@ -199,17 +231,15 @@ export function toResource(row: PersonRow): Resource {
   };
 }
 
-export function toAllocation(row: ScheduleRow): Allocation {
+export function toScheduleAssignment(row: ScheduleRow): ScheduleAssignment {
   return {
     id: row.id,
     resourceId: row.person_id,
     projectId: row.project_id,
-    startDate: row.start_date,
-    endDate: row.end_date,
-    billablePercent: row.billable_percent,
+    requestId: row.request_id || undefined,
     billableType: row.billable_type,
     bookingType: row.booking_type ?? 'hard',
-    requestId: row.request_id || undefined,
+    weeks: mapScheduleWeeks(row.schedule_week),
   };
 }
 
@@ -219,9 +249,6 @@ export function toBookingRequest(row: RequestRow): BookingRequest {
     referenceId: row.reference_id,
     resourceId: row.person_id || '',
     projectId: row.project_id,
-    startDate: row.start_date,
-    endDate: row.end_date,
-    billablePercent: row.billable_percent,
     billableType: row.billable_type,
     bookingType: row.booking_type ?? 'hard',
     probability: row.probability ?? 100,
@@ -233,6 +260,7 @@ export function toBookingRequest(row: RequestRow): BookingRequest {
     competencyCenterId: row.competency_center_id,
     siteId: row.site_id,
     jobCategory: (row.job_category as JobCategory) || null,
+    weeks: mapRequestWeeks(row.request_week),
   };
 }
 
@@ -254,7 +282,11 @@ export function toPersonUtilizationResult(row: PersonUtilizationSearchRow) {
     practiceArea: row.practice_area_name || undefined,
     competencyCenter: row.competency_center_name || undefined,
     site: row.site_name || undefined,
-    utilization: row.utilization || [],
+    utilization: (row.utilization || []).map((segment) => ({
+      isoYear: Number(segment.iso_year),
+      isoWeek: Number(segment.iso_week),
+      utilization: Number(segment.utilization) || 0,
+    })),
     avgUtilization: Number(row.avg_utilization) || 0,
     avgAvailability: Number(row.avg_availability) || 0,
   };
@@ -387,31 +419,38 @@ export function updateProjectPayload(project: Partial<Project>) {
   };
 }
 
-export function createSchedulePayload(allocation: Omit<Allocation, 'id'> & { requestId?: string | null }) {
+export function createScheduleHeaderPayload(assignment: {
+  projectId: string;
+  resourceId: string;
+  billableType: BillableType;
+  bookingType: BookingCommitmentType;
+  requestId?: string | null;
+}) {
   return {
-    project_id: allocation.projectId,
-    person_id: allocation.resourceId,
-    request_id: allocation.requestId || null,
-    start_date: allocation.startDate,
-    end_date: allocation.endDate,
-    billable_percent: allocation.billablePercent,
-    billable_type: allocation.billableType,
-    booking_type: allocation.bookingType ?? 'hard',
+    project_id: assignment.projectId,
+    person_id: assignment.resourceId,
+    request_id: assignment.requestId || null,
+    billable_type: assignment.billableType,
+    booking_type: assignment.bookingType ?? 'hard',
   };
 }
 
-export function updateSchedulePayload(allocation: Allocation) {
-  return createSchedulePayload(allocation);
+export function weekAllocationToPayload(week: WeekAllocation) {
+  return {
+    iso_year: week.isoYear,
+    iso_week: week.isoWeek,
+    days_per_week: week.daysPerWeek,
+  };
 }
 
-export function createRequestPayload(request: Omit<BookingRequest, 'id' | 'status'>, status: ApprovalStatus = 'Pending') {
+export function createRequestHeaderPayload(
+  request: Omit<BookingRequest, 'id' | 'status' | 'weeks'>,
+  status: ApprovalStatus = 'Pending',
+) {
   return {
     reference_id: request.referenceId || crypto.randomUUID(),
     project_id: request.projectId,
     person_id: request.resourceId || null,
-    start_date: request.startDate,
-    end_date: request.endDate,
-    billable_percent: request.billablePercent,
     billable_type: request.billableType,
     booking_type: request.bookingType ?? 'hard',
     probability: request.probability ?? 100,
@@ -431,9 +470,6 @@ export function updateRequestPayload(request: Partial<BookingRequest> & { status
     ...(request.referenceId !== undefined ? { reference_id: request.referenceId } : {}),
     ...(request.resourceId !== undefined ? { person_id: request.resourceId || null } : {}),
     ...(request.projectId !== undefined ? { project_id: request.projectId } : {}),
-    ...(request.startDate !== undefined ? { start_date: request.startDate } : {}),
-    ...(request.endDate !== undefined ? { end_date: request.endDate } : {}),
-    ...(request.billablePercent !== undefined ? { billable_percent: request.billablePercent } : {}),
     ...(request.billableType !== undefined ? { billable_type: request.billableType } : {}),
     ...(request.bookingType !== undefined ? { booking_type: request.bookingType } : {}),
     ...(request.probability !== undefined ? { probability: request.probability } : {}),
@@ -453,9 +489,6 @@ export function toLabRequestPayloadItem(request: BookingRequest): Record<string,
     id: request.referenceId,
     project_id: request.projectId,
     person_id: request.resourceId || null,
-    start_date: request.startDate,
-    end_date: request.endDate,
-    billable_percent: request.billablePercent,
     billable_type: request.billableType,
     status: request.status,
     booking_type: request.bookingType,
@@ -467,6 +500,11 @@ export function toLabRequestPayloadItem(request: BookingRequest): Record<string,
     competency_center_id: request.competencyCenterId ?? null,
     site_id: request.siteId ?? null,
     job_category: request.jobCategory ?? null,
+    weeks: request.weeks.map((w) => ({
+      iso_year: w.isoYear,
+      iso_week: w.isoWeek,
+      days_per_week: w.daysPerWeek,
+    })),
   };
 }
 
@@ -500,4 +538,17 @@ export function updateVacationPayload(vacation: Partial<Vacation>) {
     ...(vacation.status !== undefined ? { status: vacation.status } : {}),
     ...(vacation.reason !== undefined ? { reason: vacation.reason || null } : {}),
   };
+}
+
+/** Convenience: derived date bounds from week rows for display. */
+export function requestDateBounds(request: BookingRequest): { startDate: string; endDate: string } | null {
+  const range = weekKeysToDateRange(request.weeks);
+  if (!range) return null;
+  return { startDate: range.start, endDate: range.end };
+}
+
+export function scheduleDateBounds(assignment: ScheduleAssignment): { startDate: string; endDate: string } | null {
+  const range = weekKeysToDateRange(assignment.weeks);
+  if (!range) return null;
+  return { startDate: range.start, endDate: range.end };
 }

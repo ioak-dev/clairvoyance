@@ -4,13 +4,13 @@
  */
 
 import React from 'react';
-import { Resource, Project, Allocation } from '../types';
+import { Resource, Project, ScheduleAssignment } from '../types';
 import { FileSpreadsheet } from 'lucide-react';
 
 interface ReportsTabProps {
   resources?: Resource[];
   projects?: Project[];
-  allocations?: Allocation[];
+  assignments?: ScheduleAssignment[];
 }
 
 export const ReportsTab: React.FC<ReportsTabProps> = () => {

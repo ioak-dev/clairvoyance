@@ -41,9 +41,12 @@ export function buildRequestFields(params: {
     { key: 'id', label: 'Request Reference ID', type: 'text', required: true, canGenerateUuid: true },
     { key: 'project_id', label: 'Project', type: 'select', options: projectOptions, required: true },
     { key: 'person_id', label: 'Person', type: 'select', options: [], nullable: true, readOnly: true },
-    { key: 'start_date', label: 'Start Date', type: 'date', required: true },
-    { key: 'end_date', label: 'End Date', type: 'date', required: true },
-    { key: 'billable_percent', label: 'Utilization(%)', type: 'number', required: true },
+    {
+      key: 'weeks',
+      label: 'Weeks (JSON: [{iso_year, iso_week, days_per_week}])',
+      type: 'textarea',
+      required: true,
+    },
     {
       key: 'status',
       label: 'Status',

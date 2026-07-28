@@ -1,5 +1,4 @@
--- Period utilization segments + averages for one person (calendar-day weighted).
--- Segments split at every clipped schedule start/end boundary; equal neighbors are not merged.
+-- Days-based utilization per ISO week for one person.
 
 CREATE OR REPLACE FUNCTION person_period_utilization(
     p_person_id UUID,
@@ -14,46 +13,39 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 AS $$
-    WITH clipped AS (
+    WITH weeks_in_range AS (
+        SELECT cw.iso_year, cw.iso_week, cw.week_start, cw.week_end
+        FROM calendar_week cw
+        WHERE cw.week_start <= p_to
+          AND cw.week_end >= p_from
+        ORDER BY cw.iso_year, cw.iso_week
+    ),
+    weekly_totals AS (
         SELECT
-            GREATEST(s.start_date, p_from) AS seg_start,
-            LEAST(s.end_date, p_to) AS seg_end,
-            s.billable_percent
-        FROM schedule s
-        WHERE s.person_id = p_person_id
-          AND s.start_date <= p_to
-          AND s.end_date >= p_from
-    ),
-    bounds AS (
-        SELECT p_from AS d
-        UNION
-        SELECT p_to + 1
-        UNION
-        SELECT seg_start FROM clipped
-        UNION
-        SELECT seg_end + 1 FROM clipped
-    ),
-    ordered AS (
-        SELECT d, LEAD(d) OVER (ORDER BY d) AS d_next
-        FROM bounds
+            w.iso_year,
+            w.iso_week,
+            w.week_start,
+            w.week_end,
+            COALESCE((
+                SELECT SUM(sw.days_per_week)::integer
+                FROM schedule_week sw
+                WHERE sw.person_id = p_person_id
+                  AND sw.iso_year = w.iso_year
+                  AND sw.iso_week = w.iso_week
+            ), 0) AS allocated_days
+        FROM weeks_in_range w
     ),
     segments AS (
         SELECT
-            o.d AS from_date,
-            (o.d_next - 1) AS to_date,
-            COALESCE((
-                SELECT SUM(c.billable_percent)::integer
-                FROM clipped c
-                WHERE c.seg_start <= o.d
-                  AND c.seg_end >= o.d
-            ), 0) AS util,
-            (o.d_next - o.d) AS days
-        FROM ordered o
-        WHERE o.d_next IS NOT NULL
-          AND o.d <= p_to
+            wt.iso_year,
+            wt.iso_week,
+            GREATEST(wt.week_start, p_from) AS from_date,
+            LEAST(wt.week_end, p_to) AS to_date,
+            wt.allocated_days AS util
+        FROM weekly_totals wt
     ),
-    period_days AS (
-        SELECT GREATEST(p_to - p_from + 1, 1) AS n
+    week_count AS (
+        SELECT GREATEST(COUNT(*)::numeric, 1) AS n FROM segments
     )
     SELECT
         (
@@ -67,20 +59,15 @@ AS $$
             )
             FROM segments s
         ),
-        (
-            SELECT ROUND(SUM(s.util * s.days)::numeric / (SELECT n FROM period_days), 2)
-            FROM segments s
-        ),
-        (
-            SELECT ROUND(SUM(GREATEST(0, 100 - s.util) * s.days)::numeric / (SELECT n FROM period_days), 2)
-            FROM segments s
-        );
+        (SELECT ROUND(AVG(s.util)::numeric, 2) FROM segments s),
+        (SELECT ROUND(AVG(GREATEST(0, 5 - s.util))::numeric, 2) FROM segments s);
 $$;
 
 CREATE OR REPLACE FUNCTION person_utilization_search(
     p_from DATE,
     p_to DATE,
     p_availability TEXT DEFAULT 'everyone',
+    p_required_days SMALLINT DEFAULT 5,
     p_consulting_unit_id UUID DEFAULT NULL,
     p_practice_area_id UUID DEFAULT NULL,
     p_competency_center_id UUID DEFAULT NULL,
@@ -112,20 +99,14 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 AS $$
-    WITH candidates AS (
+    WITH params AS (
+        SELECT GREATEST(0, LEAST(5, COALESCE(p_required_days, 5)))::numeric AS required_days
+    ),
+    candidates AS (
         SELECT
-            p.id,
-            p.employee_id,
-            p.first_name,
-            p.last_name,
-            p.email,
-            p.global_designation,
-            p.local_designation,
-            p.job_category,
-            p.consulting_unit_id,
-            p.practice_area_id,
-            p.competency_center_id,
-            p.site_id,
+            p.id, p.employee_id, p.first_name, p.last_name, p.email,
+            p.global_designation, p.local_designation, p.job_category,
+            p.consulting_unit_id, p.practice_area_id, p.competency_center_id, p.site_id,
             cu.name AS consulting_unit_name,
             pa.name AS practice_area_name,
             cc.name AS competency_center_name,
@@ -142,54 +123,35 @@ AS $$
           AND (p_site_id IS NULL OR p.site_id = p_site_id)
           AND (p_job_category IS NULL OR p.job_category = p_job_category)
           AND (
-              p_name IS NULL
-              OR btrim(p_name) = ''
+              p_name IS NULL OR btrim(p_name) = ''
               OR (p.first_name || ' ' || p.last_name) ILIKE ('%' || btrim(p_name) || '%')
               OR p.first_name ILIKE ('%' || btrim(p_name) || '%')
               OR p.last_name ILIKE ('%' || btrim(p_name) || '%')
           )
     ),
     with_util AS (
-        SELECT
-            c.*,
-            u.utilization,
-            u.avg_utilization,
-            u.avg_availability
+        SELECT c.*, u.utilization, u.avg_utilization, u.avg_availability
         FROM candidates c
         CROSS JOIN LATERAL person_period_utilization(c.id, p_from, p_to) u
     )
     SELECT
-        w.id,
-        w.employee_id,
-        w.first_name,
-        w.last_name,
-        w.email,
-        w.global_designation,
-        w.local_designation,
-        w.job_category,
-        w.consulting_unit_id,
-        w.practice_area_id,
-        w.competency_center_id,
-        w.site_id,
-        w.consulting_unit_name,
-        w.practice_area_name,
-        w.competency_center_name,
-        w.site_name,
-        w.utilization,
-        w.avg_utilization,
-        w.avg_availability
+        w.id, w.employee_id, w.first_name, w.last_name, w.email,
+        w.global_designation, w.local_designation, w.job_category,
+        w.consulting_unit_id, w.practice_area_id, w.competency_center_id, w.site_id,
+        w.consulting_unit_name, w.practice_area_name, w.competency_center_name, w.site_name,
+        w.utilization, w.avg_utilization, w.avg_availability
     FROM with_util w
-    WHERE
-        CASE lower(COALESCE(p_availability, 'everyone'))
-            WHEN 'complete' THEN w.avg_utilization = 0
-            WHEN 'partial' THEN w.avg_utilization > 0 AND w.avg_utilization < 75
-            ELSE TRUE
-        END
+    CROSS JOIN params par
+    WHERE CASE lower(COALESCE(p_availability, 'everyone'))
+        WHEN 'complete' THEN w.avg_availability >= par.required_days
+        WHEN 'partial' THEN w.avg_availability >= (par.required_days * 0.75)
+        ELSE TRUE
+    END
     ORDER BY w.last_name ASC, w.first_name ASC;
 $$;
 
 GRANT EXECUTE ON FUNCTION person_period_utilization(UUID, DATE, DATE)
     TO anon, authenticated, service_role;
 
-GRANT EXECUTE ON FUNCTION person_utilization_search(DATE, DATE, TEXT, UUID, UUID, UUID, UUID, TEXT, TEXT)
+GRANT EXECUTE ON FUNCTION person_utilization_search(DATE, DATE, TEXT, SMALLINT, UUID, UUID, UUID, UUID, TEXT, TEXT)
     TO anon, authenticated, service_role;

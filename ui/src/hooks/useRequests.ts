@@ -19,7 +19,13 @@ export function useRequests() {
 export function useCreateRequest() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (request: Omit<BookingRequest, 'id' | 'status'>) => requestsService.create(request),
+    mutationFn: ({
+      request,
+      weeks,
+    }: {
+      request: Omit<BookingRequest, 'id' | 'status' | 'weeks'>;
+      weeks: import('../types').WeekAllocation[];
+    }) => requestsService.create(request, weeks),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: requestQueryKeys.all });
       queryClient.invalidateQueries({ queryKey: filterQueryKeys.request });

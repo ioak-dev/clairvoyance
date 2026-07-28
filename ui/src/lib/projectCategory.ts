@@ -200,6 +200,18 @@ export function getRequestBlockBackground(chrome: AllocationBlockChrome): BlockB
  * Solid category fill + single diagonal stripe band when utilization < 100%.
  * Heavy pattern at low % (12px period); solid at 100%.
  */
+/**
+ * Solid category fill + single diagonal stripe band when days < 5.
+ * Heavy pattern at low days; solid at 5 days/week.
+ */
+export function getAllocationBlockBackgroundFromDays(
+  daysPerWeek: number,
+  chrome: AllocationBlockChrome,
+): BlockBackgroundStyle {
+  const percentEquivalent = (Math.max(0, Math.min(5, daysPerWeek)) / 5) * 100;
+  return getAllocationBlockBackground(percentEquivalent, chrome);
+}
+
 export function getAllocationBlockBackground(
   percent: number,
   chrome: AllocationBlockChrome,

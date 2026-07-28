@@ -16,8 +16,9 @@ import { useProjects } from '../hooks/useProjects';
 import { requestQueryKeys, useRequests } from '../hooks/useRequests';
 import { requestsService } from '../lib/services/requests';
 import type { ApprovalStatus } from '../types/api';
-import { toLabRequestPayloadItem } from '../types/api';
-import type { BookingRequest, JobCategory } from '../types';
+import { requestDateBounds, toLabRequestPayloadItem } from '../types/api';
+import type { BookingRequest, JobCategory, WeekAllocation } from '../types';
+import { avgDaysPerWeek } from '../lib/weekUtils';
 
 function normalizeSimulationType(value: string): SimulationType {
   return value.trim().toLowerCase() === 'project' ? 'Project' : 'Request';
@@ -36,6 +37,35 @@ function toEditablePayloadObject(row: SimulationRow): Record<string, unknown> {
     return {};
   }
   return { ...item };
+}
+
+function parseWeeksFromPayload(value: unknown): WeekAllocation[] {
+  let raw = value;
+  if (typeof raw === 'string') {
+    raw = JSON.parse(raw.trim());
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error('Weeks must be a JSON array.');
+  }
+  return raw.map((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error('Each week entry must be an object.');
+    }
+    const row = entry as Record<string, unknown>;
+    return {
+      isoYear: Number(row.iso_year),
+      isoWeek: Number(row.iso_week),
+      daysPerWeek: Number(row.days_per_week),
+    };
+  });
+}
+
+function weeksToEditValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return JSON.stringify(value, null, 2);
+  }
+  return '[]';
 }
 
 function toFieldValue(value: unknown): string {
@@ -127,10 +157,15 @@ export const LabTab: React.FC = () => {
   }, [lookups, people]);
 
   const requestPrefillOptions = useMemo(() => {
-    return requests.map((request) => ({
-      value: request.id,
-      label: `${request.requiredSkill} (${request.startDate} to ${request.endDate})`,
-    }));
+    return requests.map((request) => {
+      const bounds = requestDateBounds(request);
+      const days = avgDaysPerWeek(request.weeks);
+      const rangeLabel = bounds ? `${bounds.startDate} to ${bounds.endDate}` : 'no weeks';
+      return {
+        value: request.id,
+        label: `${request.requiredSkill || 'Request'} (${rangeLabel}, ${days}d/wk)`,
+      };
+    });
   }, [requests]);
 
   const refreshSimulations = useCallback(async () => {
@@ -152,7 +187,11 @@ export const LabTab: React.FC = () => {
     const firstPayload = toEditablePayloadObject(row);
     const nextValues: Record<string, string> = {};
     Object.entries(firstPayload).forEach(([key, value]) => {
-      nextValues[key] = toFieldValue(value);
+      if (key === 'weeks') {
+        nextValues.weeks = weeksToEditValue(value);
+      } else {
+        nextValues[key] = toFieldValue(value);
+      }
     });
 
     if (simulationType === 'Request') {
@@ -170,14 +209,12 @@ export const LabTab: React.FC = () => {
 
   const toRequestPatch = (
     payload: Record<string, unknown>,
+    weeks: WeekAllocation[],
   ): Partial<BookingRequest> & { status?: ApprovalStatus } => {
     return {
       referenceId: toFieldValue(payload.id),
       projectId: toFieldValue(payload.project_id),
       resourceId: toFieldValue(payload.person_id),
-      startDate: toFieldValue(payload.start_date),
-      endDate: toFieldValue(payload.end_date),
-      billablePercent: Number(payload.billable_percent ?? 0),
       billableType: 'Opportunity',
       bookingType: toFieldValue(payload.booking_type) as BookingRequest['bookingType'],
       probability: Number(payload.probability ?? 100),
@@ -189,19 +226,18 @@ export const LabTab: React.FC = () => {
       competencyCenterId: toFieldValue(payload.competency_center_id) || null,
       siteId: toFieldValue(payload.site_id) || null,
       jobCategory: (toFieldValue(payload.job_category) || null) as JobCategory | null,
+      weeks,
     };
   };
 
   const toRequestCreateInput = (
     payload: Record<string, unknown>,
+    weeks: WeekAllocation[],
   ): Omit<BookingRequest, 'id' | 'status'> => {
     return {
       referenceId: toFieldValue(payload.id),
       resourceId: toFieldValue(payload.person_id),
       projectId: toFieldValue(payload.project_id),
-      startDate: toFieldValue(payload.start_date),
-      endDate: toFieldValue(payload.end_date),
-      billablePercent: Number(payload.billable_percent ?? 0),
       billableType: 'Opportunity',
       bookingType: toFieldValue(payload.booking_type) as BookingRequest['bookingType'],
       probability: Number(payload.probability ?? 100),
@@ -212,6 +248,7 @@ export const LabTab: React.FC = () => {
       competencyCenterId: toFieldValue(payload.competency_center_id) || null,
       siteId: toFieldValue(payload.site_id) || null,
       jobCategory: (toFieldValue(payload.job_category) || null) as JobCategory | null,
+      weeks,
     };
   };
 
@@ -231,7 +268,11 @@ export const LabTab: React.FC = () => {
     const payloadItem = toLabRequestPayloadItem(selectedRequest);
     const nextValues: Record<string, string> = {};
     Object.entries(payloadItem).forEach(([key, value]) => {
-      nextValues[key] = toFieldValue(value);
+      if (key === 'weeks') {
+        nextValues.weeks = weeksToEditValue(value);
+      } else {
+        nextValues[key] = toFieldValue(value);
+      }
     });
     nextValues.billable_type = 'Opportunity';
     nextValues.booking_type = 'soft';
@@ -295,6 +336,12 @@ export const LabTab: React.FC = () => {
     if (editingType === 'Request') {
       payloadObject.billable_type = 'Opportunity';
       payloadObject.booking_type = 'soft';
+      try {
+        payloadObject.weeks = parseWeeksFromPayload(payloadObject.weeks ?? editValues.weeks);
+      } catch (err) {
+        setEditError(err instanceof Error ? err.message : 'Invalid weeks JSON.');
+        return;
+      }
     }
 
     try {
@@ -302,16 +349,19 @@ export const LabTab: React.FC = () => {
       setEditError('');
 
       if (editingType === 'Request' && selectedPrefillRequestId) {
+        const weeks = payloadObject.weeks as WeekAllocation[];
         const nextReferenceId = toFieldValue(payloadObject.id).trim();
         const originalReferenceId = prefilledRequestReferenceId.trim();
         const shouldCreateNewRequest = nextReferenceId !== originalReferenceId;
 
         if (shouldCreateNewRequest) {
-          await requestsService.create(toRequestCreateInput(payloadObject));
+          const input = toRequestCreateInput(payloadObject, weeks);
+          const { weeks: weekRows, ...header } = input;
+          await requestsService.create(header, weekRows);
         } else {
           await requestsService.update(
             selectedPrefillRequestId,
-            toRequestPatch(payloadObject),
+            toRequestPatch(payloadObject, weeks),
           );
         }
 

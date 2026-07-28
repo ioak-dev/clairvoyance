@@ -4,9 +4,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Resource, Project, Allocation, BillableType, BookingRequest, Vacation, JobCategory } from '../types';
+import type { AllocationBlock, BillableType, BookingCommitmentType, BookingRequest, Project, Resource, ScheduleAssignment, Vacation, JobCategory } from '../types';
 import { Search, ShieldAlert, Check, Calendar, Plus, X, UserMinus, UserCheck, Trash2 } from 'lucide-react';
 import { getProjectCategory, getProjectCategoryIconClass, getBillableTypeFromProject, getProjectCategoryLabel } from '../lib/projectCategory';
+import { dateRangeToWeeks, isoWeekToDateRange } from '../lib/weekUtils';
 import { useLookups } from '../hooks/useLookups';
 
 const safeConfirm = (msg: string): boolean => {
@@ -23,7 +24,7 @@ interface CapacityFinderModalProps {
   onClose: () => void;
   resources: Resource[];
   projects: Project[];
-  allocations: Allocation[];
+  assignments: ScheduleAssignment[];
   onBookResource: (resourceId: string, startDate: string, endDate: string) => void;
 }
 
@@ -32,37 +33,35 @@ export const CapacityFinderModal: React.FC<CapacityFinderModalProps> = ({
   onClose,
   resources,
   projects,
-  allocations,
+  assignments,
   onBookResource,
 }) => {
   const [startDate, setStartDate] = useState('2026-06-01');
   const [endDate, setEndDate] = useState('2026-06-30');
-  const [minAvailability, setMinAvailability] = useState(20);
+  const [minAvailableDays, setMinAvailableDays] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
 
   if (!isOpen) return null;
 
   // Calculate available capacity per resource in the selected date range
+  const weekKeysInRange = dateRangeToWeeks(startDate, endDate);
+
   const resourceAvailabilities = resources.map((res) => {
-    // Collect allocations overlapping the range
-    const overlapping = allocations.filter((alloc) => {
-      if (alloc.resourceId !== res.id) return false;
-      return alloc.startDate <= endDate && alloc.endDate >= startDate;
+    let maxAssignedDays = 0;
+    weekKeysInRange.forEach((wk) => {
+      let weekTotal = 0;
+      assignments.filter((a) => a.resourceId === res.id).forEach((a) => {
+        const match = a.weeks.find((w) => w.isoYear === wk.isoYear && w.isoWeek === wk.isoWeek);
+        if (match) weekTotal += match.daysPerWeek;
+      });
+      maxAssignedDays = Math.max(maxAssignedDays, weekTotal);
     });
 
-    // Simple aggregate calculation: sum up of allocation percentage
-    // For a highly elegant model, let's calculate the weighted availability
-    let totalAssigned = 0;
-    overlapping.forEach((alloc) => {
-      totalAssigned += alloc.billablePercent;
-    });
-
-    const availability = Math.max(0, 100 - totalAssigned);
+    const availableDays = 5 - maxAssignedDays;
     return {
       resource: res,
-      assignedPercent: totalAssigned,
-      availablePercent: availability,
-      overlappingAllocations: overlapping,
+      assignedDays: maxAssignedDays,
+      availableDays,
     };
   });
 
@@ -70,10 +69,8 @@ export const CapacityFinderModal: React.FC<CapacityFinderModalProps> = ({
     const q = searchQuery.toLowerCase();
     const nameStr = item.resource.name || '';
     const roleStr = item.resource.role || '';
-    const matchesSearch = nameStr.toLowerCase().includes(q) ||
-                          roleStr.toLowerCase().includes(q);
-    const matchesCapacity = item.availablePercent >= minAvailability;
-    return matchesSearch && matchesCapacity;
+    const matchesSearch = nameStr.toLowerCase().includes(q) || roleStr.toLowerCase().includes(q);
+    return matchesSearch && item.availableDays >= minAvailableDays;
   });
 
   return (
@@ -111,18 +108,18 @@ export const CapacityFinderModal: React.FC<CapacityFinderModalProps> = ({
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-secondary uppercase tracking-wider mb-1">Min Availability %</label>
+              <label className="block text-xs font-semibold text-secondary uppercase tracking-wider mb-1">Min free days/wk</label>
               <div className="flex items-center gap-2 mt-1">
                 <input
                   type="range"
                   min="0"
-                  max="100"
-                  step="10"
-                  value={minAvailability}
-                  onChange={(e) => setMinAvailability(Number(e.target.value))}
+                  max="5"
+                  step="1"
+                  value={minAvailableDays}
+                  onChange={(e) => setMinAvailableDays(Number(e.target.value))}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                 />
-                <span className="text-sm font-semibold text-primary w-10 text-right">{minAvailability}%</span>
+                <span className="text-sm font-semibold text-primary w-10 text-right">{minAvailableDays}d</span>
               </div>
             </div>
           </div>
@@ -165,8 +162,8 @@ export const CapacityFinderModal: React.FC<CapacityFinderModalProps> = ({
 
                     <div className="flex items-center gap-4">
                       <div className="text-right">
-                        <div className="text-sm font-bold text-emerald-600">{item.availablePercent}% Available</div>
-                        <div className="text-xs text-tertiary">({item.assignedPercent}% Booked)</div>
+                        <div className="text-sm font-bold text-emerald-600">{item.availableDays}d free/wk</div>
+                        <div className="text-xs text-tertiary">({item.assignedDays}d booked peak)</div>
                       </div>
                       <button
                         onClick={() => {
@@ -195,7 +192,15 @@ interface ScheduleModalProps {
   onClose: () => void;
   resources: Resource[];
   projects: Project[];
-  onSave: (allocation: Omit<Allocation, 'id'>) => void;
+  onSave: (params: {
+    resourceId: string;
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    daysPerWeek: number;
+    billableType: BillableType;
+    bookingType: BookingCommitmentType;
+  }) => void;
   initialResourceId?: string;
   initialProjectId?: string;
   initialStartDate?: string;
@@ -221,7 +226,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
   const [projectId, setProjectId] = useState(initialProjectId);
   const [startDate, setStartDate] = useState(initialStartDate);
   const [endDate, setEndDate] = useState(initialEndDate);
-  const [billablePercent, setBillablePercent] = useState(100);
+  const [daysPerWeek, setDaysPerWeek] = useState(5);
 
   useEffect(() => {
     if (isOpen) {
@@ -229,7 +234,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
       setProjectId(initialProjectId);
       setStartDate(initialStartDate);
       setEndDate(initialEndDate);
-      setBillablePercent(100);
+      setDaysPerWeek(5);
     }
   }, [isOpen, initialResourceId, initialProjectId, initialStartDate, initialEndDate]);
 
@@ -255,7 +260,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
       projectId: resolvedProjectId,
       startDate,
       endDate,
-      billablePercent,
+      daysPerWeek,
       billableType: getBillableTypeFromProject(project),
       bookingType: 'hard',
     });
@@ -381,18 +386,18 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Allocation %</label>
+            <label className="block text-sm font-semibold text-secondary mb-1">Days per week (0–5)</label>
             <div className="flex items-center gap-3">
               <input
                 type="range"
-                min="10"
-                max="100"
-                step="5"
-                value={billablePercent}
-                onChange={(e) => setBillablePercent(Number(e.target.value))}
+                min="0"
+                max="5"
+                step="1"
+                value={daysPerWeek}
+                onChange={(e) => setDaysPerWeek(Number(e.target.value))}
                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
               />
-              <span className="text-sm font-bold text-primary w-12 text-right">{billablePercent}%</span>
+              <span className="text-sm font-bold text-primary w-12 text-right">{daysPerWeek}d</span>
             </div>
           </div>
 
@@ -443,7 +448,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
   const [projectId, setProjectId] = useState('');
   const [startDate, setStartDate] = useState('2026-06-15');
   const [endDate, setEndDate] = useState('2026-06-30');
-  const [billablePercent, setBillablePercent] = useState(100);
+  const [daysPerWeek, setDaysPerWeek] = useState(5);
   const [billableType, setBillableType] = useState<BillableType>('Billable');
   const [notes, setNotes] = useState('');
   const [consultingUnitId, setConsultingUnitId] = useState('');
@@ -459,7 +464,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       setProjectId(projects[0]?.id || '');
       setStartDate('2026-06-15');
       setEndDate('2026-06-30');
-      setBillablePercent(100);
+      setDaysPerWeek(5);
       setBillableType('Billable');
       setNotes('');
       setConsultingUnitId('');
@@ -479,12 +484,10 @@ export const RequestModal: React.FC<RequestModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!resourceId || !projectId || !startDate || !endDate) return;
+    const weeks = dateRangeToWeeks(startDate, endDate).map((w) => ({ ...w, daysPerWeek }));
     onSave({
       resourceId,
       projectId,
-      startDate,
-      endDate,
-      billablePercent,
       billableType,
       referenceId: crypto.randomUUID(),
       bookingType: 'hard',
@@ -495,6 +498,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       competencyCenterId: competencyCenterId || null,
       siteId: siteId || null,
       jobCategory: (jobCategory as JobCategory) || null,
+      weeks,
     });
     onClose();
   };
@@ -581,13 +585,14 @@ export const RequestModal: React.FC<RequestModalProps> = ({
               </select>
             </div>
             <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Assign Rate %</label>
+              <label className="block text-sm font-semibold text-secondary mb-1">Days per week</label>
               <input
                 type="number"
-                min="10"
-                max="100"
-                value={billablePercent}
-                onChange={(e) => setBillablePercent(Number(e.target.value))}
+                min="0"
+                max="5"
+                step="0.5"
+                value={daysPerWeek}
+                onChange={(e) => setDaysPerWeek(Number(e.target.value))}
                 className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
                 required
               />
@@ -701,50 +706,46 @@ export const RequestModal: React.FC<RequestModalProps> = ({
 interface EditAllocationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  allocation: Allocation | null;
+  block: AllocationBlock | null;
   projects: Project[];
   resources: Resource[];
-  onUpdate: (allocation: Allocation) => void;
-  onDelete: (id: string) => void;
+  onUpdate: (block: AllocationBlock, applyStartDate: string, applyEndDate: string, daysPerWeek: number) => void;
+  onDelete: (block: AllocationBlock, applyStartDate: string, applyEndDate: string) => void;
 }
 
 export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   isOpen,
   onClose,
-  allocation,
+  block,
   projects,
   resources,
   onUpdate,
   onDelete,
 }) => {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [billablePercent, setBillablePercent] = useState(100);
+  const [applyStartDate, setApplyStartDate] = useState('');
+  const [applyEndDate, setApplyEndDate] = useState('');
+  const [useFullBlock, setUseFullBlock] = useState(true);
+  const [daysPerWeek, setDaysPerWeek] = useState(5);
 
   useEffect(() => {
-    if (isOpen && allocation) {
-      setStartDate(allocation.startDate);
-      setEndDate(allocation.endDate);
-      setBillablePercent(allocation.billablePercent);
+    if (isOpen && block) {
+      setApplyStartDate(block.startDate);
+      setApplyEndDate(block.endDate);
+      setUseFullBlock(true);
+      setDaysPerWeek(block.daysPerWeek);
     }
-  }, [isOpen, allocation]);
+  }, [isOpen, block]);
 
-  if (!isOpen || !allocation) return null;
+  if (!isOpen || !block) return null;
 
-  const resource = resources.find((r) => r.id === allocation.resourceId);
-  const project = projects.find((p) => p.id === allocation.projectId);
-  const billingLabel = project ? getProjectCategoryLabel(getProjectCategory(project)) : allocation.billableType;
+  const resource = resources.find((r) => r.id === block.resourceId);
+  const project = projects.find((p) => p.id === block.projectId);
+  const billingLabel = project ? getProjectCategoryLabel(getProjectCategory(project)) : block.billableType;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!startDate || !endDate || !project) return;
-    onUpdate({
-      ...allocation,
-      startDate,
-      endDate,
-      billablePercent,
-      billableType: getBillableTypeFromProject(project),
-    });
+    if (!applyStartDate || !applyEndDate) return;
+    onUpdate(block, applyStartDate, applyEndDate, daysPerWeek);
     onClose();
   };
 
@@ -766,36 +767,54 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
             <div>
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Resource</p>
               <p className="text-sm font-bold text-primary">{resource?.name || 'Unknown'}</p>
-              {resource?.role && <p className="text-xs text-secondary">{resource.role}</p>}
             </div>
             <div className="border-t border-subtle pt-2">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Project</p>
               <p className="text-sm font-bold text-primary">{project?.name || 'Unknown'}</p>
-              {project?.client && <p className="text-xs text-secondary">{project.client}</p>}
             </div>
             <div className="border-t border-subtle pt-2">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Billing</p>
-              <p className="text-sm font-semibold text-primary">{billingLabel}</p>
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Block span</p>
+              <p className="text-sm text-primary">{block.startDate} – {block.endDate}</p>
+              <p className="text-xs text-secondary">{block.weeks.length} week(s) @ {block.daysPerWeek}d/wk · {billingLabel}</p>
             </div>
           </div>
 
+          <label className="flex items-center gap-2 text-sm text-secondary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useFullBlock}
+              onChange={(e) => {
+                setUseFullBlock(e.target.checked);
+                if (e.target.checked) {
+                  setApplyStartDate(block.startDate);
+                  setApplyEndDate(block.endDate);
+                }
+              }}
+            />
+            Use full block span
+          </label>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Start Date</label>
+              <label className="block text-sm font-semibold text-secondary mb-1">Apply from</label>
               <input
                 type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                value={applyStartDate}
+                onChange={(e) => { setApplyStartDate(e.target.value); setUseFullBlock(false); }}
+                min={block.startDate}
+                max={block.endDate}
                 className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
                 required
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">End Date</label>
+              <label className="block text-sm font-semibold text-secondary mb-1">Apply to</label>
               <input
                 type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                value={applyEndDate}
+                onChange={(e) => { setApplyEndDate(e.target.value); setUseFullBlock(false); }}
+                min={block.startDate}
+                max={block.endDate}
                 className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
                 required
               />
@@ -803,18 +822,18 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Allocation %</label>
+            <label className="block text-sm font-semibold text-secondary mb-1">Days per week (0–5)</label>
             <div className="flex items-center gap-3">
               <input
                 type="range"
-                min="10"
-                max="100"
-                step="5"
-                value={billablePercent}
-                onChange={(e) => setBillablePercent(Number(e.target.value))}
+                min="0"
+                max="5"
+                step="1"
+                value={daysPerWeek}
+                onChange={(e) => setDaysPerWeek(Number(e.target.value))}
                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
               />
-              <span className="text-sm font-bold text-primary w-12 text-right">{billablePercent}%</span>
+              <span className="text-sm font-bold text-primary w-12 text-right">{daysPerWeek}d</span>
             </div>
           </div>
 
@@ -822,28 +841,21 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                if (safeConfirm('Are you sure you want to delete this allocation?')) {
-                  onDelete(allocation.id);
+                if (safeConfirm('Delete weeks in the selected apply range?')) {
+                  onDelete(block, applyStartDate, applyEndDate);
                   onClose();
                 }
               }}
               className="px-3 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium flex items-center gap-1 cursor-pointer"
             >
-              <Trash2 className="w-4 h-4" /> Delete
+              <Trash2 className="w-4 h-4" /> Delete range
             </button>
 
             <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 border border-default text-secondary hover:bg-gray-50 rounded-lg text-sm font-medium cursor-pointer"
-              >
+              <button type="button" onClick={onClose} className="px-4 py-2 border border-default text-secondary hover:bg-gray-50 rounded-lg text-sm font-medium cursor-pointer">
                 Cancel
               </button>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer"
-              >
+              <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer">
                 Save Changes
               </button>
             </div>

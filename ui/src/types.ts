@@ -64,20 +64,40 @@ export interface Project {
 }
 
 export type BillableType = 'Billable' | 'Opportunity';
-
 export type BookingCommitmentType = 'hard' | 'soft';
 
-export interface Allocation {
+export interface WeekKey {
+  isoYear: number;
+  isoWeek: number;
+}
+
+export interface WeekAllocation extends WeekKey {
+  daysPerWeek: number;
+}
+
+/** Schedule assignment header + week rows. */
+export interface ScheduleAssignment {
   id: string;
   resourceId: string;
   projectId: string;
-  startDate: string;
-  endDate: string;
-  billablePercent: number;
+  requestId?: string;
   billableType: BillableType;
   bookingType: BookingCommitmentType;
-  /** Set when this schedule row was created from a booking request. */
+  weeks: WeekAllocation[];
+}
+
+/** Derived contiguous block for timeline display. */
+export interface AllocationBlock {
+  scheduleId: string;
+  resourceId: string;
+  projectId: string;
   requestId?: string;
+  billableType: BillableType;
+  bookingType: BookingCommitmentType;
+  startDate: string;
+  endDate: string;
+  weeks: WeekAllocation[];
+  daysPerWeek: number;
 }
 
 export interface Vacation {
@@ -89,14 +109,12 @@ export interface Vacation {
   reason?: string;
 }
 
+/** Request header + week rows. */
 export interface BookingRequest {
   id: string;
   referenceId: string;
   resourceId: string;
   projectId: string;
-  startDate: string;
-  endDate: string;
-  billablePercent: number;
   billableType: BillableType;
   bookingType: BookingCommitmentType;
   probability: number;
@@ -108,13 +126,15 @@ export interface BookingRequest {
   competencyCenterId?: string | null;
   siteId?: string | null;
   jobCategory?: JobCategory | null;
+  weeks: WeekAllocation[];
 }
 
 export type AvailabilityMode = 'complete' | 'partial' | 'everyone';
 
 export interface UtilizationSegment {
-  from: string;
-  to: string;
+  isoYear: number;
+  isoWeek: number;
+  /** Allocated days in this ISO week (raw from RPC; 5 = fully booked). */
   utilization: number;
 }
 
@@ -136,6 +156,8 @@ export interface PersonUtilizationResult {
   competencyCenter?: string;
   site?: string;
   utilization: UtilizationSegment[];
+  /** Average allocated days/week over the period (5 = fully booked). */
   avgUtilization: number;
+  /** Average available days/week over the period (5 = fully free). */
   avgAvailability: number;
 }

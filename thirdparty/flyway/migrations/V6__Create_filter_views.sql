@@ -1,5 +1,3 @@
--- Match helpers: criteria JSON keys are optional; empty {} matches all rows.
-
 CREATE OR REPLACE FUNCTION project_matches_filter_criteria(
     p_project project,
     p_criteria JSONB
@@ -63,8 +61,7 @@ AS $$
             AND (
                 NOT p_criteria ? 'project_consulting_unit_id'
                 OR EXISTS (
-                    SELECT 1
-                    FROM project p
+                    SELECT 1 FROM project p
                     WHERE p.id = p_request.project_id
                       AND p.consulting_unit_id::text = p_criteria->>'project_consulting_unit_id'
                 )
@@ -73,56 +70,25 @@ AS $$
 $$;
 
 CREATE OR REPLACE VIEW project_filter_with_count AS
-SELECT
-    pf.id,
-    pf.name,
-    pf.description,
-    pf.criteria,
-    pf.is_active,
-    pf.sort_order,
-    pf.created_at,
-    pf.updated_at,
-    (
-        SELECT COUNT(*)::integer
-        FROM project p
-        WHERE project_matches_filter_criteria(p, pf.criteria)
-    ) AS item_count
+SELECT pf.*, (
+    SELECT COUNT(*)::integer FROM project p
+    WHERE project_matches_filter_criteria(p, pf.criteria)
+) AS item_count
 FROM project_filter pf;
 
 CREATE OR REPLACE VIEW person_filter_with_count AS
-SELECT
-    pf.id,
-    pf.name,
-    pf.description,
-    pf.criteria,
-    pf.is_active,
-    pf.sort_order,
-    pf.created_at,
-    pf.updated_at,
-    (
-        SELECT COUNT(*)::integer
-        FROM person per
-        WHERE person_matches_filter_criteria(per, pf.criteria)
-    ) AS item_count
+SELECT pf.*, (
+    SELECT COUNT(*)::integer FROM person per
+    WHERE person_matches_filter_criteria(per, pf.criteria)
+) AS item_count
 FROM person_filter pf;
 
 CREATE OR REPLACE VIEW request_filter_with_count AS
-SELECT
-    rf.id,
-    rf.name,
-    rf.description,
-    rf.criteria,
-    rf.is_active,
-    rf.sort_order,
-    rf.created_at,
-    rf.updated_at,
-    (
-        SELECT COUNT(*)::integer
-        FROM request r
-        WHERE request_matches_filter_criteria(r, rf.criteria)
-    ) AS item_count
+SELECT rf.*, (
+    SELECT COUNT(*)::integer FROM request r
+    WHERE request_matches_filter_criteria(r, rf.criteria)
+) AS item_count
 FROM request_filter rf;
 
-GRANT SELECT ON project_filter_with_count TO anon, authenticated, service_role;
-GRANT SELECT ON person_filter_with_count TO anon, authenticated, service_role;
-GRANT SELECT ON request_filter_with_count TO anon, authenticated, service_role;
+GRANT SELECT ON project_filter_with_count, person_filter_with_count, request_filter_with_count
+    TO anon, authenticated, service_role;
