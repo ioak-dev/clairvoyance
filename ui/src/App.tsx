@@ -268,6 +268,13 @@ export default function App() {
     else setActiveRequestFilterId(id);
   }, [filterViewContext]);
 
+  // Auto-select first available filter when entering a tab with no active filter
+  useEffect(() => {
+    if (!activeFilterId && sidebarFilters.length > 0) {
+      handleSelectFilter(sidebarFilters[0]);
+    }
+  }, [filterViewContext, sidebarFilters, activeFilterId, handleSelectFilter]);
+
   const handleCreateFilter = useCallback(async (values: FilterFormValues) => {
     const payload = {
       name: values.name,

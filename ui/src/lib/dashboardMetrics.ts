@@ -42,7 +42,7 @@ export type ProjectHoursRow = {
 export type OpenRequestRow = {
   id: string;
   projectName: string;
-  skill: string;
+  requestName: string;
   hours: number;
   unassigned: boolean;
 };
@@ -175,7 +175,8 @@ export function buildDashboardSnapshot(
       if (hours <= 0) return;
 
       totalPlannedHours += hours;
-      if (assignment.billableType === 'Billable') billableHours += hours;
+      const billableType = project?.billableType || assignment.billableType;
+      if (billableType === 'Billable') billableHours += hours;
 
       const category = project ? getProjectCategory(project) : 'Billable';
       categoryMap.set(category, (categoryMap.get(category) ?? 0) + hours);
@@ -230,7 +231,7 @@ export function buildDashboardSnapshot(
       return {
         id: req.id,
         projectName: project?.name ?? 'Unknown',
-        skill: req.requiredSkill || 'General',
+        requestName: req.requestName || 'General request',
         hours: Math.round(hours),
         unassigned: !req.resourceId,
       };

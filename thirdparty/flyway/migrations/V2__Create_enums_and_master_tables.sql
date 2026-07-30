@@ -1,4 +1,4 @@
-CREATE TYPE billable_type AS ENUM ('Billable', 'Opportunity');
+CREATE TYPE billable_type AS ENUM ('Billable', 'Non-billable', 'Opportunity');
 CREATE TYPE approval_status AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TYPE booking_type AS ENUM ('hard', 'soft');
 
@@ -39,6 +39,15 @@ CREATE TABLE site (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE job_level (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    level_code TEXT NOT NULL UNIQUE,
+    level_name TEXT NOT NULL,
+    band TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE person (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     employee_id TEXT NOT NULL UNIQUE,
@@ -53,10 +62,10 @@ CREATE TABLE person (
     competency_center_id UUID REFERENCES competency_center(id) ON DELETE SET NULL,
     lifecycle_status TEXT NOT NULL DEFAULT 'Employed',
     site_id UUID REFERENCES site(id) ON DELETE SET NULL,
+    job_level_id UUID REFERENCES job_level(id) ON DELETE SET NULL,
     manager_id UUID REFERENCES person(id) ON DELETE SET NULL,
     termination_date DATE,
     employment_type TEXT,
-    job_category TEXT,
     fte NUMERIC(4, 2),
     weekly_hours NUMERIC(5, 2),
     global_designation TEXT,
@@ -67,13 +76,6 @@ CREATE TABLE person (
     CONSTRAINT person_lifecycle_status_check CHECK (
         lifecycle_status IN (
             'Hired', 'Employed', 'Terminated', 'Garden Leave', 'Leave', 'Parental Leave'
-        )
-    ),
-    CONSTRAINT person_job_category_check CHECK (
-        job_category IS NULL OR job_category IN (
-            'B0- Fresher',
-            'L0', 'L1', 'L2', 'L3', 'L4', 'L5',
-            'D0', 'D1', 'D2', 'D3', 'D4', 'D5'
         )
     ),
     CONSTRAINT person_fte_check CHECK (fte IS NULL OR fte >= 0)
@@ -148,6 +150,10 @@ CREATE TRIGGER site_set_updated_at
     BEFORE UPDATE ON site
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER job_level_set_updated_at
+    BEFORE UPDATE ON job_level
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 CREATE TRIGGER person_set_updated_at
     BEFORE UPDATE ON person
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -169,12 +175,12 @@ CREATE TRIGGER request_filter_set_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 GRANT SELECT ON
-    market_unit, consulting_unit, practice_area, competency_center, site,
+    market_unit, consulting_unit, practice_area, competency_center, site, job_level,
     person, project, project_filter, person_filter, request_filter
 TO anon;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-    market_unit, consulting_unit, practice_area, competency_center, site,
+    market_unit, consulting_unit, practice_area, competency_center, site, job_level,
     person, project, project_filter, person_filter, request_filter
 TO authenticated, service_role;
 

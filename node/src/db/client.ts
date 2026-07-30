@@ -53,9 +53,15 @@ class DatabaseClient {
   async shutdown(): Promise<void> {
     await this.pool.end();
   }
+
+  getPool(): Pool {
+    return this.pool;
+  }
 }
 
 export const db = new DatabaseClient();
+
+export const pool = db.getPool(); // Expose pool for direct access
 
 process.on('SIGINT', async () => {
   console.log('Shutting down database connections...');

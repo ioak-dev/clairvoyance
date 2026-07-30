@@ -7,22 +7,15 @@ CREATE TABLE request (
     booking_type booking_type NOT NULL DEFAULT 'hard',
     probability SMALLINT NOT NULL DEFAULT 100 CHECK (probability BETWEEN 0 AND 100),
     status approval_status NOT NULL DEFAULT 'Pending',
-    required_skill TEXT,
+    request_name TEXT,
     notes TEXT,
     consulting_unit_id UUID REFERENCES consulting_unit(id) ON DELETE SET NULL,
     practice_area_id UUID REFERENCES practice_area(id) ON DELETE SET NULL,
     competency_center_id UUID REFERENCES competency_center(id) ON DELETE SET NULL,
     site_id UUID REFERENCES site(id) ON DELETE SET NULL,
-    job_category TEXT,
+    job_level_id UUID REFERENCES job_level(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT request_job_category_check CHECK (
-        job_category IS NULL OR job_category IN (
-            'B0- Fresher',
-            'L0', 'L1', 'L2', 'L3', 'L4', 'L5',
-            'D0', 'D1', 'D2', 'D3', 'D4', 'D5'
-        )
-    )
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE request_week (

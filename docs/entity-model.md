@@ -156,7 +156,11 @@ Pending or approved booking requests. **No date or percent columns.**
 | `status` | `approval_status` | default `Pending` |
 | `required_skill` | TEXT | Skill Matcher hint |
 | `notes` | TEXT | |
-| `consulting_unit_id` … `job_category` | | Staffing preference fields |
+| `consulting_unit_id` | UUID | FK → `consulting_unit.id`, nullable |
+| `practice_area_id` | UUID | FK → `practice_area.id`, nullable |
+| `competency_center_id` | UUID | FK → `competency_center.id`, nullable |
+| `site_id` | UUID | FK → `site.id`, nullable |
+| `job_level_id` | UUID | FK → `job_level.id`, nullable |
 
 ### `request_week`
 
@@ -241,6 +245,36 @@ Date-range model unchanged.
 | `start_date` | DATE | |
 | `end_date` | DATE | ≥ `start_date` |
 | `status` | `approval_status` | |
+
+## `person` (master)
+
+People / resource catalog.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | PK |
+| `employee_id` | TEXT | UNIQUE |
+| `first_name` | TEXT | |
+| `last_name` | TEXT | |
+| `email` | TEXT | UNIQUE |
+| `start_date` | DATE | Optional |
+| `gender` | TEXT | Optional |
+| `status` | TEXT | Default `'Active'`; CHECK `'Active' \| 'Inactive'` |
+| `consulting_unit_id` | UUID | FK → `consulting_unit.id`, nullable |
+| `practice_area_id` | UUID | FK → `practice_area.id`, nullable |
+| `competency_center_id` | UUID | FK → `competency_center.id`, nullable |
+| `lifecycle_status` | TEXT | Default `'Employed'`; CHECK `'Hired' \| 'Employed' \| 'Terminated' \| 'Garden Leave' \| 'Leave' \| 'Parental Leave'` |
+| `site_id` | UUID | FK → `site.id`, nullable |
+| `employment_type` | TEXT | Optional |
+| `job_level_id` | UUID | FK → `job_level.id`, nullable |
+| `manager_id` | UUID | FK → `person.id`, nullable (self-referential) |
+| `termination_date` | DATE | Optional |
+| `fte` | NUMERIC(4,2) | Full-time equivalent; ≥ 0 |
+| `weekly_hours` | NUMERIC(5,2) | Optional |
+| `global_designation` | TEXT | Optional |
+| `local_designation` | TEXT | Optional |
+| `created_at` | TIMESTAMPTZ | DEFAULT NOW() |
+| `updated_at` | TIMESTAMPTZ | DEFAULT NOW() |
 
 ## Lifecycle
 

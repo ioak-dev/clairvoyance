@@ -72,7 +72,7 @@ CREATE OR REPLACE FUNCTION person_utilization_search(
     p_practice_area_id UUID DEFAULT NULL,
     p_competency_center_id UUID DEFAULT NULL,
     p_site_id UUID DEFAULT NULL,
-    p_job_category TEXT DEFAULT NULL,
+    p_job_level_id UUID DEFAULT NULL,
     p_name TEXT DEFAULT NULL
 )
 RETURNS TABLE (
@@ -83,7 +83,7 @@ RETURNS TABLE (
     email TEXT,
     global_designation TEXT,
     local_designation TEXT,
-    job_category TEXT,
+    job_level_id UUID,
     consulting_unit_id UUID,
     practice_area_id UUID,
     competency_center_id UUID,
@@ -105,7 +105,7 @@ AS $$
     candidates AS (
         SELECT
             p.id, p.employee_id, p.first_name, p.last_name, p.email,
-            p.global_designation, p.local_designation, p.job_category,
+            p.global_designation, p.local_designation, p.job_level_id,
             p.consulting_unit_id, p.practice_area_id, p.competency_center_id, p.site_id,
             cu.name AS consulting_unit_name,
             pa.name AS practice_area_name,
@@ -121,7 +121,7 @@ AS $$
           AND (p_practice_area_id IS NULL OR p.practice_area_id = p_practice_area_id)
           AND (p_competency_center_id IS NULL OR p.competency_center_id = p_competency_center_id)
           AND (p_site_id IS NULL OR p.site_id = p_site_id)
-          AND (p_job_category IS NULL OR p.job_category = p_job_category)
+          AND (p_job_level_id IS NULL OR p.job_level_id = p_job_level_id)
           AND (
               p_name IS NULL OR btrim(p_name) = ''
               OR (p.first_name || ' ' || p.last_name) ILIKE ('%' || btrim(p_name) || '%')
@@ -136,7 +136,7 @@ AS $$
     )
     SELECT
         w.id, w.employee_id, w.first_name, w.last_name, w.email,
-        w.global_designation, w.local_designation, w.job_category,
+        w.global_designation, w.local_designation, w.job_level_id,
         w.consulting_unit_id, w.practice_area_id, w.competency_center_id, w.site_id,
         w.consulting_unit_name, w.practice_area_name, w.competency_center_name, w.site_name,
         w.utilization, w.avg_utilization, w.avg_availability
@@ -153,5 +153,5 @@ $$;
 GRANT EXECUTE ON FUNCTION person_period_utilization(UUID, DATE, DATE)
     TO anon, authenticated, service_role;
 
-GRANT EXECUTE ON FUNCTION person_utilization_search(DATE, DATE, TEXT, SMALLINT, UUID, UUID, UUID, UUID, TEXT, TEXT)
+GRANT EXECUTE ON FUNCTION person_utilization_search(DATE, DATE, TEXT, SMALLINT, UUID, UUID, UUID, UUID, UUID, TEXT)
     TO anon, authenticated, service_role;

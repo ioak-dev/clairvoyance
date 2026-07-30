@@ -14,7 +14,7 @@ const personSelect = '*,practice_area(name),consulting_unit(name),site(name),com
 export const peopleService = {
   async list(): Promise<Resource[]> {
     const people = await http.get<PersonRow[]>(
-      `${peopleUrl}?select=${encodeURIComponent(personSelect)}&order=first_name.asc,last_name.asc`,
+      `${peopleUrl}?select=${encodeURIComponent(personSelect)}&order=first_name.asc,last_name.asc&limit=1000000`,
     );
     return people.map(toResource);
   },

@@ -123,8 +123,15 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                         <span className="text-[10px] font-bold text-tertiary uppercase">Days per Week</span>
                         <p className="text-sm font-bold text-primary mt-1 flex items-center gap-1.5">
                           <span>{avgDays}d/wk avg</span>
-                          <span className={`px-1.5 py-0.2 rounded text-[10px] ${req.billableType === 'Billable' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
-                            {req.billableType}
+                          <span className={`px-1.5 py-0.2 rounded text-[10px] ${
+                            (() => {
+                              const type = getProject(req.projectId)?.billableType || req.billableType;
+                              if (type === 'Billable') return 'bg-emerald-100 text-emerald-800';
+                              if (type === 'Non-billable') return 'bg-amber-100 text-amber-800';
+                              return 'bg-purple-100 text-purple-800';
+                            })()
+                          }`}>
+                            {getProject(req.projectId)?.billableType || req.billableType}
                           </span>
                         </p>
                       </div>

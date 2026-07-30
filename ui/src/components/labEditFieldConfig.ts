@@ -1,16 +1,10 @@
-import type { Project, Resource, JobCategory } from '../types';
+import type { Project, Resource } from '../types';
 import type { Lookups } from '../lib/services/lookups';
 import type { EditField } from './LabEditModal.tsx';
 
 export interface ValidationEditField extends EditField {
   required?: boolean;
 }
-
-const JOB_CATEGORY_OPTIONS: JobCategory[] = [
-  'B0- Fresher',
-  'L0', 'L1', 'L2', 'L3', 'L4', 'L5',
-  'D0', 'D1', 'D2', 'D3', 'D4', 'D5',
-];
 
 export function getFilteredCompetencyCenterOptions(
   lookups: Lookups | undefined,
@@ -32,14 +26,17 @@ export function buildRequestFields(params: {
 }): ValidationEditField[] {
   const { projects, people, lookups, competencyCenterOptions } = params;
 
-  const projectOptions = projects.map((project) => ({
-    value: project.id,
-    label: project.name,
-  }));
+  // Filter for opportunities only (billable_type = 'Opportunity')
+  const opportunityOptions = projects
+    .filter((project) => project.billableType === 'Opportunity')
+    .map((project) => ({
+      value: project.id,
+      label: project.name,
+    }));
 
   return [
     { key: 'id', label: 'Request Reference ID', type: 'text', required: true, canGenerateUuid: true },
-    { key: 'project_id', label: 'Project', type: 'select', options: projectOptions, required: true },
+    { key: 'project_id', label: 'Opportunity', type: 'searchable-select', options: opportunityOptions, required: true },
     { key: 'person_id', label: 'Person', type: 'select', options: [], nullable: true, readOnly: true },
     {
       key: 'weeks',
@@ -59,7 +56,7 @@ export function buildRequestFields(params: {
       required: true,
     },
     { key: 'probability', label: 'Probability', type: 'number', required: true },
-    { key: 'required_skill', label: 'Required Skill', type: 'text', nullable: true },
+    { key: 'request_name', label: 'Request Name', type: 'text', nullable: true },
     { key: 'notes', label: 'Notes', type: 'textarea', nullable: true },
     {
       key: 'consulting_unit_id',
@@ -90,10 +87,10 @@ export function buildRequestFields(params: {
       nullable: true,
     },
     {
-      key: 'job_category',
-      label: 'Job Category',
+      key: 'job_level_id',
+      label: 'Job Level',
       type: 'select',
-      options: JOB_CATEGORY_OPTIONS.map((value) => ({ value, label: value })),
+      options: (lookups?.jobLevels || []).map((entry) => ({ value: entry.id, label: entry.name })),
       nullable: true,
     },
   ];

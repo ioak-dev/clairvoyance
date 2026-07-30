@@ -13,7 +13,7 @@ export interface PersonUtilizationSearchParams {
   practiceAreaId?: string | null;
   competencyCenterId?: string | null;
   siteId?: string | null;
-  jobCategory?: string | null;
+  jobLevelId?: string | null;
   name?: string | null;
 }
 
@@ -30,7 +30,7 @@ export const personUtilizationService = {
         p_practice_area_id: params.practiceAreaId || null,
         p_competency_center_id: params.competencyCenterId || null,
         p_site_id: params.siteId || null,
-        p_job_category: params.jobCategory || null,
+        p_job_level_id: params.jobLevelId || null,
         p_name: params.name || null,
       },
     );

@@ -13,7 +13,7 @@ const projectSelect = '*,market_unit(name),consulting_unit(name)';
 
 export const projectsService = {
   async list(): Promise<Project[]> {
-    const rows = await http.get<ProjectRow[]>(`${baseUrl}?select=${encodeURIComponent(projectSelect)}&order=name.asc`);
+    const rows = await http.get<ProjectRow[]>(`${baseUrl}?select=${encodeURIComponent(projectSelect)}&order=name.asc&limit=1000000`);
     return rows.map(toProject);
   },
 

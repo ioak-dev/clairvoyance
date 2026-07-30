@@ -1,3 +1,20 @@
+-- V15__Rename_required_skill_to_request_name.sql
+-- Rename request.required_skill to request.request_name and refresh lab publish function.
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'request'
+          AND column_name = 'required_skill'
+    ) THEN
+        ALTER TABLE request RENAME COLUMN required_skill TO request_name;
+    END IF;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION publish_lab_requests(
     p_type TEXT,
     p_payload JSONB
@@ -46,7 +63,7 @@ BEGIN
             reference_id, project_id, person_id,
             billable_type, booking_type, probability, status,
             request_name, notes,
-            consulting_unit_id, practice_area_id, competency_center_id, site_id, job_category
+            consulting_unit_id, practice_area_id, competency_center_id, site_id, job_level_id
         ) VALUES (
             v_ref_id,
             (v_elem->>'project_id')::UUID,
@@ -61,7 +78,7 @@ BEGIN
             NULLIF(v_elem->>'practice_area_id', '')::UUID,
             NULLIF(v_elem->>'competency_center_id', '')::UUID,
             NULLIF(v_elem->>'site_id', '')::UUID,
-            NULLIF(v_elem->>'job_category', '')
+            NULLIF(v_elem->>'job_level_id', '')::UUID
         )
         ON CONFLICT (reference_id) DO UPDATE SET
             project_id = EXCLUDED.project_id,
@@ -76,7 +93,7 @@ BEGIN
             practice_area_id = EXCLUDED.practice_area_id,
             competency_center_id = EXCLUDED.competency_center_id,
             site_id = EXCLUDED.site_id,
-            job_category = EXCLUDED.job_category,
+            job_level_id = EXCLUDED.job_level_id,
             updated_at = NOW()
         RETURNING id INTO v_request_id;
 
@@ -108,74 +125,4 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION publish_lab_projects(
-    p_type TEXT,
-    p_payload JSONB
-) RETURNS jsonb
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_log_id UUID;
-    v_elem JSONB;
-    v_ref_id TEXT;
-    v_win_probability NUMERIC(5, 2);
-    v_upserted_count INT := 0;
-BEGIN
-    IF p_type IS NULL OR trim(p_type) = '' THEN
-        RAISE EXCEPTION 'type is required';
-    END IF;
-
-    IF p_payload IS NULL OR jsonb_typeof(p_payload) <> 'array' THEN
-        RAISE EXCEPTION 'payload must be a JSON array';
-    END IF;
-
-    INSERT INTO simulation_log (simulation_type, payload, record_count)
-    VALUES (p_type, p_payload, jsonb_array_length(p_payload))
-    RETURNING id INTO v_log_id;
-
-    FOR v_elem IN SELECT value FROM jsonb_array_elements(p_payload)
-    LOOP
-        v_ref_id := v_elem->>'id';
-        IF v_ref_id IS NULL OR trim(v_ref_id) = '' THEN
-            RAISE EXCEPTION 'each payload item must have a non-empty id (reference_id)';
-        END IF;
-
-        v_win_probability := COALESCE((v_elem->>'win_probability')::NUMERIC(5, 2), 100);
-        IF v_win_probability >= 100 THEN
-            RAISE EXCEPTION 'Lab project publish only supports opportunities (win_probability must be below 100)';
-        END IF;
-
-        INSERT INTO project (
-            reference_id, project_id, name,
-            manager_id, market_unit_id, consulting_unit_id, win_probability
-        ) VALUES (
-            v_ref_id,
-            COALESCE(NULLIF(trim(v_elem->>'project_id'), ''), v_ref_id),
-            v_elem->>'name',
-            NULLIF(v_elem->>'manager_id', '')::UUID,
-            NULLIF(v_elem->>'market_unit_id', '')::UUID,
-            NULLIF(v_elem->>'consulting_unit_id', '')::UUID,
-            v_win_probability
-        )
-        ON CONFLICT (reference_id) DO UPDATE SET
-            project_id = EXCLUDED.project_id,
-            name = EXCLUDED.name,
-            manager_id = EXCLUDED.manager_id,
-            market_unit_id = EXCLUDED.market_unit_id,
-            consulting_unit_id = EXCLUDED.consulting_unit_id,
-            win_probability = EXCLUDED.win_probability,
-            updated_at = NOW();
-
-        v_upserted_count := v_upserted_count + 1;
-    END LOOP;
-
-    RETURN jsonb_build_object(
-        'simulation_log_id', v_log_id,
-        'upserted_count', v_upserted_count,
-        'cleared_schedule_count', 0
-    );
-END;
-$$;
-
 GRANT EXECUTE ON FUNCTION publish_lab_requests(TEXT, JSONB) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION publish_lab_projects(TEXT, JSONB) TO anon, authenticated, service_role;

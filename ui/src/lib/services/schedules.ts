@@ -28,7 +28,7 @@ function assignmentOverlapsRange(assignment: ScheduleAssignment, startDate: stri
 
 export const schedulesService = {
   async list(): Promise<ScheduleAssignment[]> {
-    const rows = await http.get<ScheduleRow[]>(`${baseUrl}?select=${encodeURIComponent(headerSelect)}`);
+    const rows = await http.get<ScheduleRow[]>(`${baseUrl}?select=${encodeURIComponent(headerSelect)}&limit=1000000`);
     return rows.map(toScheduleAssignment);
   },
 

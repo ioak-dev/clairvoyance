@@ -7,6 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { Resource } from '../types';
 import { ResourceFormModal } from './Modals';
 import { Search, Briefcase, Plus, Pencil, Trash2 } from 'lucide-react';
+import { useLookups } from '../hooks/useLookups';
 
 interface ResourceTabProps {
   resources: Resource[];
@@ -21,6 +22,7 @@ export const ResourceTab: React.FC<ResourceTabProps> = ({
   onUpdateResource,
   onDeleteResource,
 }) => {
+  const { data: lookups } = useLookups();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPracticeArea, setSelectedPracticeArea] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
@@ -45,6 +47,10 @@ export const ResourceTab: React.FC<ResourceTabProps> = ({
       return true;
     });
   }, [resources, searchQuery, selectedPracticeArea, selectedStatus]);
+
+  const jobLevelNameById = useMemo(() => {
+    return new Map((lookups?.jobLevels || []).map((entry) => [entry.id, entry.name]));
+  }, [lookups]);
 
   const handleDelete = async (res: Resource) => {
     if (!window.confirm(`Delete resource "${res.name}"? This will remove related schedules and vacations.`)) return;
@@ -156,7 +162,7 @@ export const ResourceTab: React.FC<ResourceTabProps> = ({
                     </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center text-xs font-semibold text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-950/40 px-2.5 py-1 rounded-md border border-blue-100 dark:border-blue-900/50">
-                        {res.jobCategory || '—'}
+                        {res.jobLevelId ? (jobLevelNameById.get(res.jobLevelId) || res.jobLevelId) : '—'}
                       </span>
                     </td>
                     <td className="px-6 py-4">

@@ -17,7 +17,7 @@ import { requestQueryKeys, useRequests } from '../hooks/useRequests';
 import { requestsService } from '../lib/services/requests';
 import type { ApprovalStatus } from '../types/api';
 import { requestDateBounds, toLabRequestPayloadItem } from '../types/api';
-import type { BookingRequest, JobCategory, WeekAllocation } from '../types';
+import type { BookingRequest, WeekAllocation } from '../types';
 import { avgDaysPerWeek } from '../lib/weekUtils';
 
 function normalizeSimulationType(value: string): SimulationType {
@@ -98,7 +98,6 @@ interface SimulationRow {
   payload: Record<string, unknown>[];
   recordCount: number;
   rawPayloadText: string;
-  isDraft?: boolean;
 }
 
 function toSimulationRow(entry: SimulationLogEntry): SimulationRow {
@@ -116,7 +115,6 @@ export const LabTab: React.FC = () => {
   const queryClient = useQueryClient();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [simulationRows, setSimulationRows] = useState<SimulationRow[]>([]);
-  const [draftRows, setDraftRows] = useState<SimulationRow[]>([]);
   const [selectedRow, setSelectedRow] = useState<SimulationRow | null>(null);
   const [editingRow, setEditingRow] = useState<SimulationRow | null>(null);
   const [selectedPrefillRequestId, setSelectedPrefillRequestId] = useState('');
@@ -131,8 +129,8 @@ export const LabTab: React.FC = () => {
   const { data: requests = [] } = useRequests();
 
   const rows = useMemo(() => {
-    return [...draftRows, ...simulationRows];
-  }, [draftRows, simulationRows]);
+    return simulationRows;
+  }, [simulationRows]);
 
   const editingType = useMemo<SimulationType | null>(() => {
     if (!editingRow) return null;
@@ -163,7 +161,7 @@ export const LabTab: React.FC = () => {
       const rangeLabel = bounds ? `${bounds.startDate} to ${bounds.endDate}` : 'no weeks';
       return {
         value: request.id,
-        label: `${request.requiredSkill || 'Request'} (${rangeLabel}, ${days}d/wk)`,
+        label: `${request.requestName || 'Request'} (${rangeLabel}, ${days}d/wk)`,
       };
     });
   }, [requests]);
@@ -195,7 +193,6 @@ export const LabTab: React.FC = () => {
     });
 
     if (simulationType === 'Request') {
-      nextValues.billable_type = 'Opportunity';
       nextValues.booking_type = 'soft';
       nextValues.person_id = '';
     }
@@ -215,17 +212,16 @@ export const LabTab: React.FC = () => {
       referenceId: toFieldValue(payload.id),
       projectId: toFieldValue(payload.project_id),
       resourceId: toFieldValue(payload.person_id),
-      billableType: 'Opportunity',
       bookingType: toFieldValue(payload.booking_type) as BookingRequest['bookingType'],
       probability: Number(payload.probability ?? 100),
       status: toFieldValue(payload.status) as ApprovalStatus,
-      requiredSkill: toFieldValue(payload.required_skill) || undefined,
+      requestName: toFieldValue(payload.request_name) || undefined,
       notes: toFieldValue(payload.notes) || undefined,
       consultingUnitId: toFieldValue(payload.consulting_unit_id) || null,
       practiceAreaId: toFieldValue(payload.practice_area_id) || null,
       competencyCenterId: toFieldValue(payload.competency_center_id) || null,
       siteId: toFieldValue(payload.site_id) || null,
-      jobCategory: (toFieldValue(payload.job_category) || null) as JobCategory | null,
+      jobLevelId: toFieldValue(payload.job_level_id) || null,
       weeks,
     };
   };
@@ -242,12 +238,12 @@ export const LabTab: React.FC = () => {
       bookingType: toFieldValue(payload.booking_type) as BookingRequest['bookingType'],
       probability: Number(payload.probability ?? 100),
       notes: toFieldValue(payload.notes) || undefined,
-      requiredSkill: toFieldValue(payload.required_skill) || undefined,
+      requestName: toFieldValue(payload.request_name) || undefined,
       consultingUnitId: toFieldValue(payload.consulting_unit_id) || null,
       practiceAreaId: toFieldValue(payload.practice_area_id) || null,
       competencyCenterId: toFieldValue(payload.competency_center_id) || null,
       siteId: toFieldValue(payload.site_id) || null,
-      jobCategory: (toFieldValue(payload.job_category) || null) as JobCategory | null,
+      jobLevelId: toFieldValue(payload.job_level_id) || null,
       weeks,
     };
   };
@@ -286,24 +282,9 @@ export const LabTab: React.FC = () => {
   const handleCreate = async (
     input: { type: string; payload: Record<string, unknown>[] },
     rawText: string,
-    mode: 'draft' | 'publish',
   ) => {
     const simulationType = normalizeSimulationType(input.type);
     const payload = Array.isArray(input.payload) && input.payload.length > 0 ? input.payload : [{}];
-
-    if (mode === 'draft') {
-      const draftRow: SimulationRow = {
-        id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        timestamp: new Date().toLocaleString(),
-        simulationType,
-        payload,
-        recordCount: payload.length,
-        rawPayloadText: rawText || toRawPayloadText(simulationType, payload),
-        isDraft: true,
-      };
-      setDraftRows((current) => [draftRow, ...current]);
-      return;
-    }
 
     await labService.publish({ type: simulationType, payload });
     await refreshSimulations();
@@ -372,10 +353,6 @@ export const LabTab: React.FC = () => {
         type: editingType,
         payload: [payloadObject],
       });
-
-      if (editingRow.isDraft) {
-        setDraftRows((current) => current.filter((row) => row.id !== editingRow.id));
-      }
 
       await refreshSimulations();
 
@@ -450,7 +427,7 @@ export const LabTab: React.FC = () => {
               {rows.length === 0 ? (
                 <tr>
                   <td className="px-6 py-10 text-sm text-tertiary" colSpan={4}>
-                    No simulation rows yet. Use Create and publish a JSON payload.
+                    No simulation rows yet. Use Create and publish a request payload.
                   </td>
                 </tr>
               ) : (
@@ -458,14 +435,7 @@ export const LabTab: React.FC = () => {
                   <tr key={row.id} className="hover:bg-surface-muted/40 transition-colors">
                     <td className="px-6 py-4 text-sm font-medium text-primary whitespace-nowrap">{row.timestamp}</td>
                     <td className="px-6 py-4 text-sm text-secondary">
-                      <div className="inline-flex items-center gap-2">
-                        <span>{row.simulationType}</span>
-                        {row.isDraft && (
-                          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-                            Draft
-                          </span>
-                        )}
-                      </div>
+                      <span>{row.simulationType}</span>
                     </td>
                     <td className="px-6 py-4 text-sm text-secondary">{row.recordCount}</td>
                     <td className="px-6 py-4 text-sm">
@@ -510,7 +480,7 @@ export const LabTab: React.FC = () => {
         editError={editError}
         isPublishing={isPublishingEdit}
         isRepublishAsNewRequest={Boolean(
-          editingRow && !editingRow.isDraft && editingType === 'Request',
+          editingRow && editingType === 'Request',
         )}
         onSelectPrefillRequest={handlePrefillRequestChange}
         onFieldChange={handleEditFieldChange}

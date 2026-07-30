@@ -23,7 +23,7 @@ export interface Resource {
   site?: string;
   status?: PersonStatus;
   lifecycleStatus?: LifecycleStatus;
-  jobCategory?: JobCategory;
+  jobLevelId?: string | null;
   practiceArea?: string;
   employmentType?: string;
   fte?: number;
@@ -56,6 +56,7 @@ export interface Project {
   color: string;
   textColor: string;
   isOpportunity?: boolean;
+  billableType?: BillableType;
   group?: string;
   winProbability?: number | null;
   managerId?: string | null;
@@ -63,7 +64,7 @@ export interface Project {
   consultingUnitId?: string | null;
 }
 
-export type BillableType = 'Billable' | 'Opportunity';
+export type BillableType = 'Billable' | 'Non-billable' | 'Opportunity';
 export type BookingCommitmentType = 'hard' | 'soft';
 
 export interface WeekKey {
@@ -120,12 +121,12 @@ export interface BookingRequest {
   probability: number;
   status: 'Pending' | 'Approved' | 'Rejected';
   notes?: string;
-  requiredSkill?: string;
+  requestName?: string;
   consultingUnitId?: string | null;
   practiceAreaId?: string | null;
   competencyCenterId?: string | null;
   siteId?: string | null;
-  jobCategory?: JobCategory | null;
+  jobLevelId?: string | null;
   weeks: WeekAllocation[];
 }
 
@@ -146,7 +147,7 @@ export interface PersonUtilizationResult {
   name: string;
   email?: string;
   role: string;
-  jobCategory?: JobCategory;
+  jobLevelId?: string | null;
   consultingUnitId?: string | null;
   practiceAreaId?: string | null;
   competencyCenterId?: string | null;

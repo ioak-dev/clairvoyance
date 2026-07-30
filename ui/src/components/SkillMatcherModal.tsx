@@ -3,7 +3,6 @@ import { Award, Check, List, RotateCcw, Search, User, X } from 'lucide-react';
 import type {
   AvailabilityMode,
   BookingRequest,
-  JobCategory,
   PersonUtilizationResult,
   Project,
   WeekAllocation,
@@ -37,12 +36,6 @@ const defaultFilters: FilterState = {
   site: 'all',
   level: 'all',
 };
-
-const JOB_CATEGORY_OPTIONS: JobCategory[] = [
-  'B0- Fresher',
-  'L0', 'L1', 'L2', 'L3', 'L4', 'L5',
-  'D0', 'D1', 'D2', 'D3', 'D4', 'D5',
-];
 
 type WeekGap = {
   isoYear: number;
@@ -345,7 +338,7 @@ function filtersFromRequest(request: BookingRequest | null): FilterState {
     practice: request.practiceAreaId || 'all',
     cc: request.competencyCenterId || 'all',
     site: request.siteId || 'all',
-    level: request.jobCategory || 'all',
+    level: request.jobLevelId || 'all',
   };
 }
 
@@ -391,7 +384,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
           practiceAreaId: filters.practice === 'all' ? null : filters.practice,
           competencyCenterId: filters.cc === 'all' ? null : filters.cc,
           siteId: filters.site === 'all' ? null : filters.site,
-          jobCategory: filters.level === 'all' ? null : filters.level,
+          jobLevelId: filters.level === 'all' ? null : filters.level,
           name: null,
         });
 
@@ -452,9 +445,13 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
       practice: lookups?.practiceAreas || [],
       cc: filteredCompetencyCenters,
       site: lookups?.sites || [],
-      level: JOB_CATEGORY_OPTIONS,
+      level: lookups?.jobLevels || [],
     };
   }, [lookups, selectedFilters.practice]);
+
+  const levelNameById = useMemo(() => {
+    return new Map((lookups?.jobLevels || []).map((entry) => [entry.id, entry.name]));
+  }, [lookups]);
 
   useEffect(() => {
     if (selectedFilters.cc === 'all') return;
@@ -516,7 +513,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
               </div>
               <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
                 <span className="font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
-                  {request.requiredSkill || 'General skill'}
+                  {request.requestName || 'General request'}
                 </span>
                 <span className="text-secondary">{requiredDays}d/wk required</span>
                 <span className="text-tertiary">·</span>
@@ -569,8 +566,8 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                   >
                     <option value="all">Any</option>
                     {filterOptions.level.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
+                      <option key={option.id} value={option.id}>
+                        {option.name}
                       </option>
                     ))}
                   </select>
@@ -710,9 +707,9 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                             Site · {res.site}
                           </span>
                         )}
-                        {res.jobCategory && (
+                        {res.jobLevelId && (
                           <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
-                            Level · {res.jobCategory}
+                            Level · {(levelNameById.get(res.jobLevelId) || res.jobLevelId)}
                           </span>
                         )}
                       </div>

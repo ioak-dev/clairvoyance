@@ -1,17 +1,27 @@
 import type { Project } from '../types';
 import type { BillableType } from '../types';
 
-export type ProjectCategory = 'Billable' | 'Non-billable' | 'Internal' | 'Opportunity';
+export type ProjectCategory = 'Billable' | 'Non-billable' | 'Opportunity';
 
 export function getProjectCategory(project: Project): ProjectCategory {
+  // Use billableType if available (project-level field)
+  if (project.billableType) {
+    if (project.billableType === 'Opportunity') {
+      return 'Opportunity';
+    }
+    if (project.billableType === 'Non-billable') {
+      return 'Non-billable';
+    }
+    // billableType === 'Billable'
+    return 'Billable';
+  }
+
+  // Fallback: check naming conventions if billableType not set
   const name = project.name.toLowerCase();
   const group = (project.group || '').toLowerCase();
 
   if (project.isOpportunity || (project.winProbability ?? 100) < 100) {
     return 'Opportunity';
-  }
-  if (name.includes('internal') || name.includes('support') || group.includes('internal')) {
-    return 'Internal';
   }
   if (name.includes('non-billable') || group.includes('non-billable')) {
     return 'Non-billable';
@@ -24,8 +34,6 @@ export function getProjectCategoryDotClass(category: ProjectCategory): string {
   switch (category) {
     case 'Opportunity':
       return 'bg-purple-500';
-    case 'Internal':
-      return 'bg-blue-500';
     case 'Non-billable':
       return 'bg-amber-500';
     case 'Billable':
@@ -43,8 +51,6 @@ export function getProjectCategoryIconClass(category: ProjectCategory): string {
   switch (category) {
     case 'Opportunity':
       return 'bg-purple-500';
-    case 'Internal':
-      return 'bg-blue-500';
     case 'Non-billable':
       return 'bg-amber-500';
     case 'Billable':
@@ -64,12 +70,6 @@ export function getProjectCategoryBlockStyle(category: ProjectCategory): {
       return {
         colorClass: 'bg-blue-600',
         borderClass: 'border border-blue-700',
-        textClass: 'text-white',
-      };
-    case 'Internal':
-      return {
-        colorClass: 'bg-[rgb(129,164,137)]',
-        borderClass: 'border border-[rgb(109,144,117)]',
         textClass: 'text-white',
       };
     case 'Non-billable':
@@ -137,7 +137,6 @@ function getProjectCategoryBlockRgb(category: ProjectCategory): {
         fill: { r: 217, g: 150, b: 148 },
         border: { r: 197, g: 130, b: 128 },
       };
-    case 'Internal':
     case 'Billable':
     default:
       return {
@@ -208,7 +207,10 @@ export function getProjectCategoryLabel(category: ProjectCategory): string {
   return category;
 }
 
-/** Billable type stored on schedules — inherited from the project, not user-editable. */
+/** Billable type stored on project — get directly from project.billableType. */
 export function getBillableTypeFromProject(project: Project): BillableType {
+  if (project.billableType) {
+    return project.billableType;
+  }
   return getProjectCategory(project) === 'Opportunity' ? 'Opportunity' : 'Billable';
 }

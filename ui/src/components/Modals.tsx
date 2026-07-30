@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import type { AllocationBlock, BillableType, BookingCommitmentType, BookingRequest, Project, Resource, ScheduleAssignment, Vacation, JobCategory } from '../types';
+import type { AllocationBlock, BillableType, BookingCommitmentType, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
 import { Search, ShieldAlert, Check, Calendar, Plus, X, UserMinus, UserCheck, Trash2 } from 'lucide-react';
 import { getProjectCategory, getProjectCategoryIconClass, getBillableTypeFromProject, getProjectCategoryLabel } from '../lib/projectCategory';
 import { dateRangeToWeeks, isoWeekToDateRange } from '../lib/weekUtils';
@@ -431,12 +431,6 @@ interface RequestModalProps {
   onSave: (request: Omit<BookingRequest, 'id' | 'status'>) => void;
 }
 
-const JOB_CATEGORY_OPTIONS: JobCategory[] = [
-  'B0- Fresher',
-  'L0', 'L1', 'L2', 'L3', 'L4', 'L5',
-  'D0', 'D1', 'D2', 'D3', 'D4', 'D5',
-];
-
 export const RequestModal: React.FC<RequestModalProps> = ({
   isOpen,
   onClose,
@@ -455,7 +449,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
   const [practiceAreaId, setPracticeAreaId] = useState('');
   const [competencyCenterId, setCompetencyCenterId] = useState('');
   const [siteId, setSiteId] = useState('');
-  const [jobCategory, setJobCategory] = useState('');
+  const [jobLevelId, setJobLevelId] = useState('');
   const { data: lookups } = useLookups();
 
   useEffect(() => {
@@ -471,7 +465,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       setPracticeAreaId('');
       setCompetencyCenterId('');
       setSiteId('');
-      setJobCategory('');
+      setJobLevelId('');
     }
   }, [isOpen, resources, projects]);
 
@@ -497,7 +491,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       practiceAreaId: practiceAreaId || null,
       competencyCenterId: competencyCenterId || null,
       siteId: siteId || null,
-      jobCategory: (jobCategory as JobCategory) || null,
+      jobLevelId: jobLevelId || null,
       weeks,
     });
     onClose();
@@ -581,6 +575,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
                 className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
               >
                 <option value="Billable">Billable</option>
+                <option value="Non-billable">Non-billable</option>
                 <option value="Opportunity">Opportunity</option>
               </select>
             </div>
@@ -658,13 +653,13 @@ export const RequestModal: React.FC<RequestModalProps> = ({
             <div className="col-span-2">
               <label className="block text-sm font-semibold text-secondary mb-1">Level</label>
               <select
-                value={jobCategory}
-                onChange={(e) => setJobCategory(e.target.value)}
+                value={jobLevelId}
+                onChange={(e) => setJobLevelId(e.target.value)}
                 className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
               >
                 <option value="">Any</option>
-                {JOB_CATEGORY_OPTIONS.map((option) => (
-                  <option key={option} value={option}>{option}</option>
+                {(lookups?.jobLevels || []).map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
                 ))}
               </select>
             </div>
@@ -873,16 +868,15 @@ interface ResourceFormModalProps {
   onSave: (resource: Omit<Resource, 'id'> | Resource) => void;
 }
 
-const JOB_CATEGORIES = ['B0- Fresher', 'L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5'] as const;
-
 export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, onClose, resource, onSave }) => {
   const isEdit = Boolean(resource?.id);
+  const { data: lookups } = useLookups();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   const [role, setRole] = useState('Consultant');
-  const [jobCategory, setJobCategory] = useState<string>('L1');
+  const [jobLevelId, setJobLevelId] = useState<string>('');
   const [status, setStatus] = useState<'Active' | 'Inactive'>('Active');
 
   useEffect(() => {
@@ -894,7 +888,7 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
       setEmail(resource.email || '');
       setEmployeeId(resource.employeeId || '');
       setRole(resource.role || 'Consultant');
-      setJobCategory(resource.jobCategory || 'L1');
+      setJobLevelId(resource.jobLevelId || '');
       setStatus(resource.status || 'Active');
     } else {
       setFirstName('');
@@ -902,7 +896,7 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
       setEmail('');
       setEmployeeId('');
       setRole('Consultant');
-      setJobCategory('L1');
+      setJobLevelId('');
       setStatus('Active');
     }
   }, [isOpen, resource]);
@@ -920,7 +914,7 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
       email: email.trim() || undefined,
       employeeId: employeeId.trim() || undefined,
       role: role.trim(),
-      jobCategory: jobCategory as Resource['jobCategory'],
+      jobLevelId: jobLevelId || null,
       status,
     };
 
@@ -970,10 +964,11 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-secondary mb-1 uppercase">Job Category</label>
-              <select value={jobCategory} onChange={(e) => setJobCategory(e.target.value)} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none">
-                {JOB_CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
+              <label className="block text-xs font-bold text-secondary mb-1 uppercase">Job Level</label>
+              <select value={jobLevelId} onChange={(e) => setJobLevelId(e.target.value)} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                <option value="">Any</option>
+                {(lookups?.jobLevels || []).map((level) => (
+                  <option key={level.id} value={level.id}>{level.name}</option>
                 ))}
               </select>
             </div>

@@ -277,12 +277,12 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
       const assignedRes = req.resourceId ? resources.find((r) => r.id === req.resourceId) : null;
       const dateLabel = bounds ? `${bounds.startDate} to ${bounds.endDate}` : '';
       if (assignedRes) {
-        blockTitle = `Assigned: ${assignedRes.name}\nSkill: ${req.requiredSkill || 'General'}\n${dateLabel}\n${block.daysPerWeek}d/wk`;
+        blockTitle = `Assigned: ${assignedRes.name}\nRequest: ${req.requestName || 'General request'}\n${dateLabel}\n${block.daysPerWeek}d/wk`;
         blockLabel = assignedRes.name;
         showUserCheckIcon = true;
       } else {
-        blockTitle = `Skill: ${req.requiredSkill || 'General'}\n${dateLabel}\n${block.daysPerWeek}d/wk`;
-        blockLabel = req.requiredSkill || 'Skill Required';
+        blockTitle = `Request: ${req.requestName || 'General request'}\n${dateLabel}\n${block.daysPerWeek}d/wk`;
+        blockLabel = req.requestName || 'Request';
         showPersonIcon = true;
       }
     } else if (viewMode === 'projects') {

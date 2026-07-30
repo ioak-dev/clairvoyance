@@ -1,0 +1,247 @@
+{
+  "info": {
+    "_postman_id": "excel-import-collection",
+    "name": "Clairvoyance Excel Import",
+    "description": "API endpoints for importing persons and projects from Excel sheets",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Import Persons (EmplMaster)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "Universal_Resource_Schedular_MasterData_Jul2026 demo.xlsx",
+              "disabled": false
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/import/persons",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "import",
+            "persons"
+          ]
+        },
+        "description": "Upload and import persons from EmplMaster sheet of Excel file.\n\n**Expected sheet:**\n- EmplMaster: Person data with columns (Employee ID, First Name, Last Name, Email, Start Date, Gender, Consulting Unit, Site, Practice Area, Job Level, Band, FTE, Weekly Hours, Global Designation, Cost Center, DOB, Job Category)\n\n**Response:**\n- status: 'success' or 'error'\n- count: Number of persons imported\n- errors: Array of error messages (if any)"
+      },
+      "response": [
+        {
+          "name": "Success Response",
+          "originalRequest": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "excel_file.xlsx"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/import/persons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "import",
+                "persons"
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"status\": \"success\",\n  \"count\": 250,\n  \"errors\": []\n}"
+        },
+        {
+          "name": "Error Response",
+          "originalRequest": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "excel_file.xlsx"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/import/persons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "import",
+                "persons"
+              ]
+            }
+          },
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"status\": \"error\",\n  \"count\": 0,\n  \"errors\": [\n    \"Row 2: Missing required fields (Employee ID, First Name, Last Name, Email)\",\n    \"Row 5: Duplicate key value violates unique constraint\"\n  ]\n}"
+        }
+      ]
+    },
+    {
+      "name": "Import Projects (PSP_Master)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "Universal_Resource_Schedular_MasterData_Jul2026 demo.xlsx",
+              "disabled": false
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/import/projects",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "import",
+            "projects"
+          ]
+        },
+        "description": "Upload and import projects from PSP_Master sheet of Excel file.\n\n**Expected sheet:**\n- PSP_Master: Project data with columns (Project ID, Reference ID, Project Name, Client Name, Consulting Unit, Market Unit, Win Probability, Project Status, Start Date, End Date, Delivery Model, Industry, Engagement Type, Description)\n\n**Response:**\n- status: 'success' or 'error'\n- count: Number of projects imported\n- errors: Array of error messages (if any)"
+      },
+      "response": [
+        {
+          "name": "Success Response",
+          "originalRequest": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "excel_file.xlsx"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/import/projects",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "import",
+                "projects"
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"status\": \"success\",\n  \"count\": 32,\n  \"errors\": []\n}"
+        },
+        {
+          "name": "Error Response",
+          "originalRequest": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "excel_file.xlsx"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/import/projects",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "import",
+                "projects"
+              ]
+            }
+          },
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"status\": \"error\",\n  \"count\": 0,\n  \"errors\": [\n    \"Row 5: Missing required fields (Project ID, Project Name)\",\n    \"Row 8: Duplicate key value violates unique constraint\"\n  ]\n}"
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Check API health status"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    }
+  ]
+}

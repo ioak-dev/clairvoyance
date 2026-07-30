@@ -15,7 +15,7 @@ const headerSelect = `*,${weekSelect}`;
 
 export const requestsService = {
   async list(): Promise<BookingRequest[]> {
-    const rows = await http.get<RequestRow[]>(`${baseUrl}?select=${encodeURIComponent(headerSelect)}`);
+    const rows = await http.get<RequestRow[]>(`${baseUrl}?select=${encodeURIComponent(headerSelect)}&limit=1000000`);
     return rows.map(toBookingRequest);
   },
 

@@ -2,7 +2,6 @@ import type {
   BillableType,
   BookingCommitmentType,
   BookingRequest,
-  JobCategory,
   LifecycleStatus,
   PersonStatus,
   Project,
@@ -33,6 +32,7 @@ export interface ProjectRow {
   manager_id: string | null;
   market_unit_id: string | null;
   consulting_unit_id: string | null;
+  billable_type: BillableType;
   win_probability: number | null;
   market_unit?: LookupRow | null;
   consulting_unit?: LookupRow | null;
@@ -55,7 +55,7 @@ export interface PersonRow {
   manager_id: string | null;
   termination_date: string | null;
   employment_type: string | null;
-  job_category: JobCategory | null;
+  job_level_id: string | null;
   fte: number | null;
   weekly_hours: number | null;
   global_designation: string | null;
@@ -103,13 +103,13 @@ export interface RequestRow {
   booking_type: BookingCommitmentType;
   probability: number;
   status: ApprovalStatus;
-  required_skill: string | null;
+  request_name: string | null;
   notes: string | null;
   consulting_unit_id: string | null;
   practice_area_id: string | null;
   competency_center_id: string | null;
   site_id: string | null;
-  job_category: string | null;
+  job_level_id: string | null;
   request_week?: RequestWeekRow[];
 }
 
@@ -130,7 +130,7 @@ export interface PersonUtilizationSearchRow {
   email: string;
   global_designation: string | null;
   local_designation: string | null;
-  job_category: string | null;
+  job_level_id: string | null;
   consulting_unit_id: string | null;
   practice_area_id: string | null;
   competency_center_id: string | null;
@@ -192,6 +192,7 @@ export function toProject(row: ProjectRow): Project {
     color: 'bg-emerald-500',
     textColor: 'text-white',
     isOpportunity,
+    billableType: row.billable_type,
     group: row.consulting_unit?.name || undefined,
     winProbability,
     managerId: row.manager_id,
@@ -220,7 +221,7 @@ export function toResource(row: PersonRow): Resource {
     site: row.site?.name || undefined,
     status: row.status,
     lifecycleStatus: row.lifecycle_status,
-    jobCategory: row.job_category || undefined,
+    jobLevelId: row.job_level_id,
     practiceArea: row.practice_area?.name || undefined,
     employmentType: row.employment_type || undefined,
     fte: row.fte ?? undefined,
@@ -254,12 +255,12 @@ export function toBookingRequest(row: RequestRow): BookingRequest {
     probability: row.probability ?? 100,
     status: row.status,
     notes: row.notes || undefined,
-    requiredSkill: row.required_skill || undefined,
+    requestName: row.request_name || undefined,
     consultingUnitId: row.consulting_unit_id,
     practiceAreaId: row.practice_area_id,
     competencyCenterId: row.competency_center_id,
     siteId: row.site_id,
-    jobCategory: (row.job_category as JobCategory) || null,
+    jobLevelId: row.job_level_id,
     weeks: mapRequestWeeks(row.request_week),
   };
 }
@@ -273,7 +274,7 @@ export function toPersonUtilizationResult(row: PersonUtilizationSearchRow) {
     name: `${row.first_name} ${row.last_name}`.trim(),
     email: row.email,
     role: row.global_designation || row.local_designation || 'Consultant',
-    jobCategory: (row.job_category as JobCategory) || undefined,
+    jobLevelId: row.job_level_id,
     consultingUnitId: row.consulting_unit_id,
     practiceAreaId: row.practice_area_id,
     competencyCenterId: row.competency_center_id,
@@ -361,7 +362,7 @@ export function createPersonPayload(resource: Omit<Resource, 'id'>) {
     status: resource.status || 'Active',
     lifecycle_status: resource.lifecycleStatus || 'Employed',
     global_designation: resource.role || 'Consultant',
-    job_category: resource.jobCategory || 'L1',
+    job_level_id: resource.jobLevelId || null,
     employment_type: resource.employmentType || 'Full Time',
     fte: resource.fte ?? 1,
     weekly_hours: resource.weeklyHours ?? 40,
@@ -380,7 +381,7 @@ export function updatePersonPayload(resource: Partial<Resource>) {
     ...(resource.status !== undefined ? { status: resource.status } : {}),
     ...(resource.lifecycleStatus !== undefined ? { lifecycle_status: resource.lifecycleStatus } : {}),
     ...(resource.role !== undefined ? { global_designation: resource.role } : {}),
-    ...(resource.jobCategory !== undefined ? { job_category: resource.jobCategory || null } : {}),
+    ...(resource.jobLevelId !== undefined ? { job_level_id: resource.jobLevelId || null } : {}),
     ...(resource.employmentType !== undefined ? { employment_type: resource.employmentType || null } : {}),
     ...(resource.fte !== undefined ? { fte: resource.fte } : {}),
     ...(resource.weeklyHours !== undefined ? { weekly_hours: resource.weeklyHours } : {}),
@@ -455,13 +456,13 @@ export function createRequestHeaderPayload(
     booking_type: request.bookingType ?? 'hard',
     probability: request.probability ?? 100,
     status,
-    required_skill: request.requiredSkill || null,
+    request_name: request.requestName || null,
     notes: request.notes || null,
     consulting_unit_id: request.consultingUnitId || null,
     practice_area_id: request.practiceAreaId || null,
     competency_center_id: request.competencyCenterId || null,
     site_id: request.siteId || null,
-    job_category: request.jobCategory || null,
+    job_level_id: request.jobLevelId || null,
   };
 }
 
@@ -474,13 +475,13 @@ export function updateRequestPayload(request: Partial<BookingRequest> & { status
     ...(request.bookingType !== undefined ? { booking_type: request.bookingType } : {}),
     ...(request.probability !== undefined ? { probability: request.probability } : {}),
     ...(request.status !== undefined ? { status: request.status } : {}),
-    ...(request.requiredSkill !== undefined ? { required_skill: request.requiredSkill || null } : {}),
+    ...(request.requestName !== undefined ? { request_name: request.requestName || null } : {}),
     ...(request.notes !== undefined ? { notes: request.notes || null } : {}),
     ...(request.consultingUnitId !== undefined ? { consulting_unit_id: request.consultingUnitId || null } : {}),
     ...(request.practiceAreaId !== undefined ? { practice_area_id: request.practiceAreaId || null } : {}),
     ...(request.competencyCenterId !== undefined ? { competency_center_id: request.competencyCenterId || null } : {}),
     ...(request.siteId !== undefined ? { site_id: request.siteId || null } : {}),
-    ...(request.jobCategory !== undefined ? { job_category: request.jobCategory || null } : {}),
+    ...(request.jobLevelId !== undefined ? { job_level_id: request.jobLevelId || null } : {}),
   };
 }
 
@@ -493,13 +494,13 @@ export function toLabRequestPayloadItem(request: BookingRequest): Record<string,
     status: request.status,
     booking_type: request.bookingType,
     probability: request.probability,
-    required_skill: request.requiredSkill ?? null,
+    request_name: request.requestName ?? null,
     notes: request.notes ?? null,
     consulting_unit_id: request.consultingUnitId ?? null,
     practice_area_id: request.practiceAreaId ?? null,
     competency_center_id: request.competencyCenterId ?? null,
     site_id: request.siteId ?? null,
-    job_category: request.jobCategory ?? null,
+    job_level_id: request.jobLevelId ?? null,
     weeks: request.weeks.map((w) => ({
       iso_year: w.isoYear,
       iso_week: w.isoWeek,
