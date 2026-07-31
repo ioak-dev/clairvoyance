@@ -16,6 +16,7 @@ interface ImportResult {
 
 interface UploadState {
   isLoading: boolean;
+  isDownloading: boolean;
   result: ImportResult | null;
   error: string | null;
 }
@@ -34,20 +35,22 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
     persons: useRef<HTMLInputElement>(null),
     projects: useRef<HTMLInputElement>(null),
     opportunities: useRef<HTMLInputElement>(null),
+    schedules: useRef<HTMLInputElement>(null),
   };
 
   const [uploadStates, setUploadStates] = useState<Record<string, UploadState>>({
-    persons: { isLoading: false, result: null, error: null },
-    projects: { isLoading: false, result: null, error: null },
-    opportunities: { isLoading: false, result: null, error: null },
+    persons: { isLoading: false, isDownloading: false, result: null, error: null },
+    projects: { isLoading: false, isDownloading: false, result: null, error: null },
+    opportunities: { isLoading: false, isDownloading: false, result: null, error: null },
+    schedules: { isLoading: false, isDownloading: false, result: null, error: null },
   });
 
-  const handleFileUpload = async (type: 'persons' | 'projects' | 'opportunities', file: File) => {
+  const handleFileUpload = async (type: 'persons' | 'projects' | 'opportunities' | 'schedules', file: File) => {
     if (!file) return;
 
     setUploadStates((prev) => ({
       ...prev,
-      [type]: { isLoading: true, result: null, error: null },
+      [type]: { ...prev[type], isLoading: true, result: null, error: null },
     }));
 
     try {
@@ -69,29 +72,72 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
 
       setUploadStates((prev) => ({
         ...prev,
-        [type]: { isLoading: false, result: data, error: null },
+        [type]: { ...prev[type], isLoading: false, result: data, error: null },
       }));
 
       // Clear success message after 5 seconds
       setTimeout(() => {
         setUploadStates((prev) => ({
           ...prev,
-          [type]: { isLoading: false, result: null, error: null },
+          [type]: { ...prev[type], isLoading: false, result: null, error: null },
         }));
       }, 5000);
     } catch (err) {
       setUploadStates((prev) => ({
         ...prev,
-        [type]: { isLoading: false, result: null, error: (err as Error).message },
+        [type]: { ...prev[type], isLoading: false, result: null, error: (err as Error).message },
       }));
     }
   };
 
-  const handleBrowseClick = (type: 'persons' | 'projects' | 'opportunities') => {
+  const handleDownload = async (type: 'persons' | 'projects' | 'opportunities' | 'schedules') => {
+    setUploadStates((prev) => ({
+      ...prev,
+      [type]: { ...prev[type], isDownloading: true, error: null },
+    }));
+
+    try {
+      const apiBaseUrl = env.apiUrl;
+      const response = await fetch(`${apiBaseUrl}/api/import/${type}/download`);
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('content-disposition') || '';
+      const match = contentDisposition.match(/filename="?([^\"]+)"?/i);
+      const fileName = match?.[1] || `${type}_import_template.xlsx`;
+
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+
+      setUploadStates((prev) => ({
+        ...prev,
+        [type]: { ...prev[type], isDownloading: false },
+      }));
+    } catch (err) {
+      setUploadStates((prev) => ({
+        ...prev,
+        [type]: {
+          ...prev[type],
+          isDownloading: false,
+          error: err instanceof Error ? err.message : 'Download failed',
+        },
+      }));
+    }
+  };
+
+  const handleBrowseClick = (type: 'persons' | 'projects' | 'opportunities' | 'schedules') => {
     fileInputRefs[type].current?.click();
   };
 
-  const handleFileChange = (type: 'persons' | 'projects' | 'opportunities', e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (type: 'persons' | 'projects' | 'opportunities' | 'schedules', e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       handleFileUpload(type, file);
@@ -107,7 +153,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
     title,
     description,
   }: {
-    type: 'persons' | 'projects' | 'opportunities';
+    type: 'persons' | 'projects' | 'opportunities' | 'schedules';
     title: string;
     description: string;
   }) => {
@@ -120,23 +166,42 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
 
         {/* Upload Button */}
         {!state.result && (
-          <button
-            onClick={() => handleBrowseClick(type)}
-            disabled={state.isLoading}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-          >
-            {state.isLoading ? (
-              <>
-                <Loader className="w-4 h-4 animate-spin" />
-                Uploading...
-              </>
-            ) : (
-              <>
-                <FileUp className="w-4 h-4" />
-                Browse & Upload
-              </>
-            )}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => handleBrowseClick(type)}
+              disabled={state.isLoading}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {state.isLoading ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <FileUp className="w-4 h-4" />
+                  Browse & Upload
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => handleDownload(type)}
+              disabled={state.isDownloading}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-default bg-surface hover:bg-surface-hover text-sm font-semibold text-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {state.isDownloading ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4" />
+                  Download Current Data
+                </>
+              )}
+            </button>
+          </div>
         )}
 
         {/* Success State */}
@@ -211,7 +276,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
         <h2 className="text-2xl font-extrabold text-primary tracking-tight mb-2">Data Import</h2>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         <ImportCard
           type="persons"
           title="Import Persons"
@@ -226,6 +291,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
           type="opportunities"
           title="Import Opportunities"
           description="Upload opportunity data with market units, probability, practice areas, and regions."
+        />
+        <ImportCard
+          type="schedules"
+          title="Import Schedules"
+          description="Upload schedule rows (Employee ID or Resource Name, Project ID or Project Name, Year, Week, Days). Supports fractional days from 0 to 10."
         />
       </div>
     </div>

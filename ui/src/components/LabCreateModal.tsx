@@ -173,6 +173,10 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
         updateFormField('weeks', buildWeeksJson(weekStartDate, weekEndDate, weekDays));
     };
 
+    const generateRequestReferenceId = () => {
+        updateFormField('id', crypto.randomUUID());
+    };
+
     const handleCreate = async () => {
         if (inputMode === 'form') {
             if (!form.id.trim()) {
@@ -314,13 +318,23 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs font-medium text-secondary mb-1.5">Request Reference ID</label>
-                                    <input
-                                        type="text"
-                                        value={form.id}
-                                        onChange={(e) => updateFormField('id', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    />
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={form.id}
+                                            onChange={(e) => updateFormField('id', e.target.value)}
+                                            disabled={isSubmitting}
+                                            className="flex-1 rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={generateRequestReferenceId}
+                                            disabled={isSubmitting}
+                                            className="shrink-0 rounded-lg border border-default px-3 py-2 text-xs font-semibold text-secondary transition-colors hover:bg-surface-hover disabled:opacity-60"
+                                        >
+                                            Generate
+                                        </button>
+                                    </div>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-medium text-secondary mb-1.5">Opportunity</label>

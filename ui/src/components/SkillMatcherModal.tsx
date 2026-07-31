@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Award, Check, List, RotateCcw, Search, User, X } from 'lucide-react';
 import type {
   AvailabilityMode,
@@ -101,55 +101,8 @@ function formatWeekLabel(isoYear: number, isoWeek: number): string {
   return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
 }
 
-function mixChannel(start: number, end: number, ratio: number) {
-  return Math.round(start + (end - start) * ratio);
-}
-
-/** Same green→yellow→red scale as before (0–100). Shortfall days map via ×20. */
-function shortfallToColor(days: number) {
-  const value = (Number(days) || 0) * 20;
-  const green = { r: 34, g: 197, b: 94 };
-  const yellow = { r: 234, g: 179, b: 8 };
-  const red = { r: 239, g: 68, b: 68 };
-
-  if (value <= 20) {
-    return `rgb(${green.r}, ${green.g}, ${green.b})`;
-  }
-  if (value >= 100) {
-    return `rgb(${red.r}, ${red.g}, ${red.b})`;
-  }
-  if (value <= 60) {
-    const ratio = (value - 20) / 40;
-    return `rgb(${mixChannel(green.r, yellow.r, ratio)}, ${mixChannel(green.g, yellow.g, ratio)}, ${mixChannel(green.b, yellow.b, ratio)})`;
-  }
-  const ratio = (value - 60) / 40;
-  return `rgb(${mixChannel(yellow.r, red.r, ratio)}, ${mixChannel(yellow.g, red.g, ratio)}, ${mixChannel(yellow.b, red.b, ratio)})`;
-}
-
-function buildSmoothPath(points: Array<{ x: number; y: number }>) {
-  if (points.length === 0) return '';
-  if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
-
-  const path = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
-
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index];
-    const next = points[index + 1];
-    const midX = (current.x + next.x) / 2;
-    const midY = (current.y + next.y) / 2;
-    path.push(`Q ${current.x.toFixed(2)} ${current.y.toFixed(2)} ${midX.toFixed(2)} ${midY.toFixed(2)}`);
-  }
-
-  const penultimate = points[points.length - 2];
-  const last = points[points.length - 1];
-  path.push(`Q ${penultimate.x.toFixed(2)} ${penultimate.y.toFixed(2)} ${last.x.toFixed(2)} ${last.y.toFixed(2)}`);
-
-  return path.join(' ');
-}
-
 const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const gradientId = useId();
 
   const chart = useMemo(() => {
     if (!gaps.length) return null;
@@ -162,42 +115,28 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
     const segments = gaps.map((gap, index) => {
       const x = index * slot;
       const segmentWidth = slot;
-      const y = height - (gap.shortfallDays / maxDays) * height;
+      const requestedDays = Math.max(0, Math.min(maxDays, gap.requiredDays));
+      const fulfillableDays = Math.max(0, Math.min(requestedDays, gap.availableDays));
+      const unfulfillableDays = Math.max(0, requestedDays - fulfillableDays);
+      const fulfillableTopY = height - (fulfillableDays / maxDays) * height;
+      const requestedTopY = height - (requestedDays / maxDays) * height;
+      const fulfillableHeight = (fulfillableDays / maxDays) * height;
+      const unfulfillableHeight = (unfulfillableDays / maxDays) * height;
       return {
         gap,
         x,
         width: segmentWidth,
-        y,
-        color: shortfallToColor(gap.shortfallDays),
+        requestedDays,
+        fulfillableDays,
+        unfulfillableDays,
+        fulfillableTopY,
+        requestedTopY,
+        fulfillableHeight,
+        unfulfillableHeight,
       };
     });
 
-    const smoothPoints = segments.map((segment) => ({
-      x: segment.x + segment.width / 2,
-      y: segment.y,
-    }));
-
-    const linePath = buildSmoothPath([
-      { x: segments[0].x, y: segments[0].y },
-      ...smoothPoints,
-      {
-        x: segments[segments.length - 1].x + segments[segments.length - 1].width,
-        y: segments[segments.length - 1].y,
-      },
-    ]);
-    const areaPath = `${linePath} L ${width.toFixed(2)} ${height} L 0 ${height} Z`;
-
-    const gradientStops = segments.map((segment) => ({
-      offset: `${((segment.x + segment.width / 2) / width) * 100}%`,
-      color: segment.color,
-    }));
-
-    if (gradientStops.length > 0) {
-      gradientStops.unshift({ offset: '0%', color: segments[0].color });
-      gradientStops.push({ offset: '100%', color: segments[segments.length - 1].color });
-    }
-
-    return { width, height, linePath, areaPath, segments, gradientStops };
+    return { width, height, segments };
   }, [gaps]);
 
   if (!chart) return null;
@@ -212,19 +151,28 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <defs>
-          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
-            {chart.gradientStops.map((stop, index) => (
-              <stop
-                key={`${stop.offset}-${index}`}
-                offset={stop.offset}
-                stopColor={stop.color}
-                stopOpacity="0.16"
-              />
-            ))}
-          </linearGradient>
-        </defs>
-        <path d={chart.areaPath} fill={`url(#${gradientId})`} />
+        {chart.segments.map((segment) => (
+          <rect
+            key={`amber-${segment.gap.isoYear}-${segment.gap.isoWeek}`}
+            x={segment.x}
+            y={segment.requestedTopY}
+            width={segment.width}
+            height={segment.unfulfillableHeight}
+            fill="#f59e0b"
+            fillOpacity="0.07"
+          />
+        ))}
+        {chart.segments.map((segment) => (
+          <rect
+            key={`green-${segment.gap.isoYear}-${segment.gap.isoWeek}`}
+            x={segment.x}
+            y={segment.fulfillableTopY}
+            width={segment.width}
+            height={segment.fulfillableHeight}
+            fill="#22c55e"
+            fillOpacity="0.09"
+          />
+        ))}
         {chart.segments.map((segment, index) => (
           <rect
             key={`${segment.gap.isoYear}-${segment.gap.isoWeek}`}
@@ -247,12 +195,10 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
         >
           <div>{formatWeekLabel(hovered.gap.isoYear, hovered.gap.isoWeek)}</div>
           <div className="text-tertiary">
-            {hovered.gap.shortfallDays === 0
-              ? 'Covers request'
-              : `${hovered.gap.shortfallDays}d/wk short`}
+            Fulfillable {hovered.fulfillableDays}d · Unfulfillable {hovered.unfulfillableDays}d
           </div>
           <div className="text-tertiary">
-            Need {hovered.gap.requiredDays}d · Available {hovered.gap.availableDays}d
+            Requested {hovered.requestedDays}d on a 5d/week scale
           </div>
         </div>
       )}
@@ -683,7 +629,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                       </div>
 
                       <div className="mt-2 text-[11px] text-tertiary">
-                        Days short vs request (0 = availability covers need)
+                        Green = fulfillable request days, amber = unfulfillable request days (5d/week scale)
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-tertiary">

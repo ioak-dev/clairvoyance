@@ -5,7 +5,7 @@
 
 import React, { useMemo, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
-import { Calendar, Loader2, Plus, User, UserCheck } from 'lucide-react';
+import { Calendar, CalendarClock, Loader2, Plus, User, UserCheck } from 'lucide-react';
 import {
   getProjectCategory,
   getAllocationBlockChrome,
@@ -29,6 +29,7 @@ import { requestDateBounds } from '../types/api';
 import { useSchedulesInRange } from '../hooks/useSchedules';
 import { useHorizontalTimelineWindow } from '../hooks/useHorizontalTimelineWindow';
 import { SkillMatcherModal } from './SkillMatcherModal';
+import { BulkScheduleModal } from './BulkScheduleModal';
 
 const WEEKDAY_COL_WIDTH = 52;
 const WEEKEND_COL_WIDTH = 28;
@@ -130,6 +131,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
   onUnassignRequest,
 }, ref) {
   const [selectedRequestForSkills, setSelectedRequestForSkills] = useState<BookingRequest | null>(null);
+  const [bulkScheduleResource, setBulkScheduleResource] = useState<Resource | null>(null);
 
   const {
     scrollRef,
@@ -402,13 +404,22 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
               <Plus className="w-3.5 h-3.5" />
             </button>
           ) : row.resource ? (
-            <button
-              onClick={() => onOpenScheduleModalWithRes(row.resource!.id)}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-blue-50 text-blue-600 rounded cursor-pointer transition-opacity"
-              title={`Schedule ${row.resource.name}`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-            </button>
+            <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+              <button
+                onClick={() => onOpenScheduleModalWithRes(row.resource!.id)}
+                className="p-1 hover:bg-blue-50 text-blue-600 rounded cursor-pointer"
+                title={`Schedule ${row.resource.name}`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setBulkScheduleResource(row.resource!)}
+                className="p-1 hover:bg-indigo-50 text-indigo-500 rounded cursor-pointer"
+                title={`Bulk schedule ${row.resource.name} for 2026`}
+              >
+                <CalendarClock className="w-3.5 h-3.5" />
+              </button>
+            </div>
           ) : null}
         </div>
 
@@ -556,6 +567,14 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
         onUnassignRequest={onUnassignRequest}
         onApproveRequestWithResource={onApproveRequestWithResource}
       />
+      {bulkScheduleResource && (
+        <BulkScheduleModal
+          isOpen
+          resource={bulkScheduleResource}
+          projects={projects}
+          onClose={() => setBulkScheduleResource(null)}
+        />
+      )}
     </div>
   );
 });

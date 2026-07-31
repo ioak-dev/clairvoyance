@@ -721,13 +721,32 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   const [applyEndDate, setApplyEndDate] = useState('');
   const [useFullBlock, setUseFullBlock] = useState(true);
   const [daysPerWeek, setDaysPerWeek] = useState(5);
+  const [daysInput, setDaysInput] = useState('5');
+
+  const minDays = 0;
+  const maxDays = 5;
+  const dayStep = 0.25;
+
+  const clampDays = (value: number) => Math.max(minDays, Math.min(maxDays, value));
+
+  const normalizeDays = (value: number) => {
+    const clamped = clampDays(value);
+    return Math.round(clamped / dayStep) * dayStep;
+  };
+
+  const formatDays = (value: number) => {
+    const text = normalizeDays(value).toFixed(2);
+    return text.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+  };
 
   useEffect(() => {
     if (isOpen && block) {
       setApplyStartDate(block.startDate);
       setApplyEndDate(block.endDate);
       setUseFullBlock(true);
-      setDaysPerWeek(block.daysPerWeek);
+      const normalized = normalizeDays(block.daysPerWeek);
+      setDaysPerWeek(normalized);
+      setDaysInput(formatDays(normalized));
     }
   }, [isOpen, block]);
 
@@ -740,7 +759,8 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!applyStartDate || !applyEndDate) return;
-    onUpdate(block, applyStartDate, applyEndDate, daysPerWeek);
+    const normalized = normalizeDays(daysPerWeek);
+    onUpdate(block, applyStartDate, applyEndDate, normalized);
     onClose();
   };
 
@@ -823,12 +843,37 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
                 type="range"
                 min="0"
                 max="5"
-                step="1"
+                step="0.25"
                 value={daysPerWeek}
-                onChange={(e) => setDaysPerWeek(Number(e.target.value))}
+                onChange={(e) => {
+                  const next = normalizeDays(Number(e.target.value));
+                  setDaysPerWeek(next);
+                  setDaysInput(formatDays(next));
+                }}
                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
               />
-              <span className="text-sm font-bold text-primary w-12 text-right">{daysPerWeek}d</span>
+              <input
+                type="number"
+                min={minDays}
+                max={maxDays}
+                step={dayStep}
+                value={daysInput}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setDaysInput(raw);
+                  const parsed = Number(raw);
+                  if (!Number.isNaN(parsed)) {
+                    setDaysPerWeek(normalizeDays(parsed));
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = Number(daysInput);
+                  const normalized = Number.isNaN(parsed) ? normalizeDays(daysPerWeek) : normalizeDays(parsed);
+                  setDaysPerWeek(normalized);
+                  setDaysInput(formatDays(normalized));
+                }}
+                className="w-20 text-sm font-semibold text-primary border border-default rounded-lg px-2 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:outline-none"
+              />
             </div>
           </div>
 

@@ -71,7 +71,9 @@ export const ResourceTab: React.FC<ResourceTabProps> = ({
       <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">Resources</h2>
-          <p className="text-sm text-gray-500">Manage people master data</p>
+          <p className="text-sm text-gray-500">
+            Manage people master data · {filteredResources.length} entr{filteredResources.length === 1 ? 'y' : 'ies'} in view
+          </p>
         </div>
         <button
           type="button"
