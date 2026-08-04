@@ -45,6 +45,57 @@ services:
       clairvoyance-postgres:
         condition: service_healthy
 
+  clairvoyance-api:
+    build:
+      context: ../node
+      dockerfile: Dockerfile
+    container_name: clairvoyance-api
+    restart: always
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env.node.dev
+    environment:
+      DATABASE_URL: postgres://api:helloapi@clairvoyance-postgres:5432/clairvoyance
+      CORS_ORIGIN: http://localhost:3000
+    networks:
+      - clairvoyance-network
+    depends_on:
+      clairvoyance-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  clairvoyance-ui:
+    build:
+      context: ../ui
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:4000}
+        VITE_POSTGREST_URL: ${VITE_POSTGREST_URL:-http://localhost:4001}
+        VITE_POSTGREST_JWT: ${VITE_POSTGREST_JWT:-}
+    container_name: clairvoyance-ui
+    restart: always
+    ports:
+      - "3000:80"
+    networks:
+      - clairvoyance-network
+    depends_on:
+      clairvoyance-api:
+        condition: service_healthy
+      clairvoyance-postgrest:
+        condition: service_started
+
 volumes:
   clairvoyance-postgres_data:
 
