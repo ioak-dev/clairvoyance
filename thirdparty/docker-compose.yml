@@ -82,7 +82,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-http://plan-api.ioak.io}
-        VITE_POSTGREST_URL: ${VITE_POSTGREST_URL:-http://localhost:4001}
+        VITE_POSTGREST_URL: ${VITE_POSTGREST_URL:-http://plan-pg.ioak.io}
         VITE_POSTGREST_JWT: ${VITE_POSTGREST_JWT:-}
     container_name: clairvoyance-ui
     restart: always

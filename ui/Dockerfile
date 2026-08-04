@@ -9,9 +9,9 @@ COPY index.html vite.config.ts tsconfig.json ./
 COPY src ./src
 COPY assets ./assets
 
-# Browser-reachable URLs (host ports), not Docker-internal hostnames.
-ARG VITE_API_URL=http://localhost:4000
-ARG VITE_POSTGREST_URL=http://localhost:4001
+# Browser-reachable URLs (host ports / public hostnames), not Docker-internal names.
+ARG VITE_API_URL=http://plan-api.ioak.io
+ARG VITE_POSTGREST_URL=http://plan-pg.ioak.io
 ARG VITE_POSTGREST_JWT=
 
 ENV VITE_API_URL=$VITE_API_URL \
@@ -20,9 +20,13 @@ ENV VITE_API_URL=$VITE_API_URL \
 
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+# Alpine + nginx (avoids official nginx image EXPOSE 80 metadata).
+FROM alpine:3.21 AS runtime
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN apk add --no-cache nginx \
+    && mkdir -p /run/nginx /usr/share/nginx/html
+
+COPY nginx.conf /etc/nginx/http.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 3000

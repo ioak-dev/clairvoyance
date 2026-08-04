@@ -80,7 +80,7 @@ postgres://api:helloapi@localhost:5433/clairvoyance
 postgres://api:helloapi@clairvoyance-postgres:5432/clairvoyance
 ```
 
-UI Vite URLs are baked at **image build** time and must use host ports the browser can reach (`http://localhost:4000` / `http://localhost:4001`). Override via `thirdparty/.env` or shell env before `docker compose build`.
+UI Vite URLs are baked at **image build** time and must be browser-reachable public hostnames (`http://plan-api.ioak.io` / `http://plan-pg.ioak.io`). Override via `thirdparty/.env` or shell env before `docker compose build`.
 
 ## Database migrations (Flyway)
 
