@@ -57,7 +57,7 @@ services:
       - .env.node.dev
     environment:
       DATABASE_URL: postgres://api:helloapi@clairvoyance-postgres:5432/clairvoyance
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://plan.ioak.io,https://plan.ioak.io}
     networks:
       - clairvoyance-network
     depends_on:
@@ -81,7 +81,7 @@ services:
       context: ../ui
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:4000}
+        VITE_API_URL: ${VITE_API_URL:-http://plan-api.ioak.io}
         VITE_POSTGREST_URL: ${VITE_POSTGREST_URL:-http://localhost:4001}
         VITE_POSTGREST_JWT: ${VITE_POSTGREST_JWT:-}
     container_name: clairvoyance-ui
