@@ -419,8 +419,8 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
           }, new Map<string, number>());
 
     return (
-      <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-default min-h-[64px]">
-        <div className="w-[190px] min-w-[190px] border-r border-default px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[64px]">
+      <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[64px]">
+        <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[64px]">
           <div className="flex items-center gap-2 overflow-hidden py-3 w-full">
             {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
               <div className="truncate text-left flex-1">
@@ -527,7 +527,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
               <div
                 key={col.dateStr}
                 style={{ width: `${col.width}px`, left: `${col.left}px` }}
-                className={`absolute top-0 bottom-0 border-r border-default ${
+                className={`absolute top-0 bottom-0 border-r border-subtle ${
                   col.isWeekend ? 'bg-weekend-cell' : 'bg-transparent'
                 }`}
               />
@@ -549,7 +549,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
                   top: '50%',
                   transform: 'translateY(-50%)',
                 }}
-                className="absolute bg-slate-200 dark:bg-zinc-600 border border-slate-300 dark:border-zinc-500 text-slate-600 dark:text-slate-300 rounded px-2 flex items-center justify-center text-[9px] font-bold tracking-wider uppercase pointer-events-none z-[4]"
+                className="absolute bg-surface-muted border border-subtle text-secondary rounded px-2 flex items-center justify-center text-[9px] font-bold tracking-wider uppercase pointer-events-none z-[4]"
                 title={`Absence/Vacation: ${v.reason || 'Annual Leave'}`}
               >
                 Time Off
@@ -589,7 +589,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
     <div className="app-card overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
       {(isFetchingSchedules || isFilterApplying) && (
         <div className="absolute inset-0 z-20 bg-surface/55 backdrop-blur-[1px] pointer-events-none flex items-center justify-center">
-          <div className="flex items-center gap-2 rounded-full bg-surface border border-default px-4 py-2 text-xs font-medium text-secondary shadow-app-md">
+          <div className="flex items-center gap-2 rounded-full bg-surface border border-subtle px-4 py-2 text-xs font-medium text-secondary shadow-app-md">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
             {isFilterApplying ? 'Applying filter…' : 'Loading schedules…'}
           </div>
@@ -597,22 +597,22 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
       )}
       <div ref={scrollRef} onScroll={onTimelineScroll} className="flex-1 min-h-0 overflow-auto select-none relative scrollbar-thin">
         {isFetchingSchedules && (
-          <div className="absolute top-2 right-3 z-30 flex items-center gap-1.5 rounded-full bg-surface/95 border border-default px-2.5 py-1 text-[10px] font-medium text-secondary shadow-app-sm pointer-events-none">
+          <div className="absolute top-2 right-3 z-30 flex items-center gap-1.5 rounded-full bg-surface/95 border border-subtle px-2.5 py-1 text-[10px] font-medium text-secondary shadow-app-sm pointer-events-none">
             <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
             Loading…
           </div>
         )}
         <div style={{ width: `calc(190px + ${gridWidth}px)` }} className="flex flex-col">
           {/* Month header row */}
-          <div className="flex bg-grid-header border-b border-default text-xs font-bold text-secondary uppercase tracking-wider h-9 items-center sticky top-0 z-30">
-            <div className="w-[190px] min-w-[190px] border-r border-default px-4 flex items-center bg-grid-header sticky left-0 z-40 h-full">
+          <div className="flex bg-grid-header border-b border-subtle text-xs font-bold text-secondary uppercase tracking-wider h-9 items-center sticky top-0 z-30">
+            <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40 h-full">
               {viewMode === 'projects' || viewMode === 'requests' ? 'Projects' : 'Resources'}
             </div>
             {monthsHeader.map((m) => (
               <div
                 key={m.monthName}
                 style={{ width: `${m.width}px` }}
-                className="text-left pl-3 font-semibold text-primary tracking-wide border-r border-default shrink-0"
+                className="text-left pl-3 font-semibold text-primary tracking-wide border-r border-subtle shrink-0"
               >
                 {m.monthName}
               </div>
@@ -620,8 +620,8 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
           </div>
 
           {/* Day header row */}
-          <div className="flex bg-grid-header border-b border-default text-[11px] font-semibold h-10 items-stretch sticky top-9 z-30">
-            <div className="w-[190px] min-w-[190px] border-r border-default px-4 flex items-center bg-grid-header sticky left-0 z-40">
+          <div className="flex bg-grid-header border-b border-subtle text-[11px] font-semibold h-10 items-stretch sticky top-9 z-30">
+            <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40">
               <span className="text-tertiary text-[10px] uppercase">
                 {viewMode === 'projects' || viewMode === 'requests' ? 'Resource Allocation' : 'Project Allocation'}
               </span>
@@ -632,7 +632,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
               <div
                 key={`hdr-${col.dateStr}`}
                 style={{ width: `${col.width}px` }}
-                className={`text-center flex flex-col justify-center border-r border-default shrink-0 ${
+                className={`text-center flex flex-col justify-center border-r border-subtle shrink-0 ${
                   isToday
                     ? 'bg-amber-400/25 text-secondary'
                     : col.isWeekend
@@ -652,7 +652,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
             })}
           </div>
 
-          <div className="divide-y divide-[var(--app-border)]">
+          <div className="divide-y divide-[var(--app-border-subtle)]">
             {assignmentRows.length === 0 ? (
               <div className="flex items-center justify-center py-20 bg-surface-muted text-tertiary text-sm">
                 No rows match the current filters.

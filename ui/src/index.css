@@ -53,39 +53,39 @@
 .dark {
   color-scheme: dark;
 
-  /* L0 — outer backdrop */
-  --app-bg: #141417;
-  /* L1 — scrollable main area (slightly lifted from backdrop) */
-  --app-bg-subtle: #18181c;
+  /* L0 — outer backdrop (lighter charcoal, avoids near-black canvas) */
+  --app-bg: #1c2129;
+  /* L1 — scrollable main area */
+  --app-bg-subtle: #212730;
   /* L1.5 — persistent chrome (header, left rail) */
-  --app-header: #1c1c21;
-  --app-rail: #1c1c21;
+  --app-header: #252c36;
+  --app-rail: #252c36;
   /* L2 — recessed areas: table headers, inputs, filter bars */
-  --app-surface-muted: #1f1f24;
-  --app-input-bg: #1f1f24;
-  --app-grid-header: #1f1f24;
-  /* L3 — primary cards & panels (clearly above canvas) */
-  --app-surface: #26262c;
-  /* L4 — dropdowns, modals, elevated popovers */
-  --app-surface-raised: #2f2f36;
-  --app-surface-hover: #36363e;
-  --app-nav-active: #2f2f36;
+  --app-surface-muted: #2a313c;
+  --app-input-bg: #2a313c;
+  --app-grid-header: #2a313c;
+  /* L3 — primary cards & panels */
+  --app-surface: #313948;
+  /* L4 — popovers, modals, menus */
+  --app-surface-raised: #394252;
+  --app-surface-hover: #434d5f;
+  --app-nav-active: #3d4657;
 
-  --app-border-subtle: #32323a;
-  --app-border: #43434d;
+  --app-border-subtle: #3b4555;
+  --app-border: #465163;
 
-  --app-text: #ededf0;
-  --app-text-secondary: #a8a8b3;
-  --app-text-tertiary: #787884;
+  --app-text: #d6dde8;
+  --app-text-secondary: #aeb8c9;
+  --app-text-tertiary: #8d98ac;
 
-  --app-overlay: rgba(8, 8, 12, 0.62);
-  --app-shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 8px rgba(0, 0, 0, 0.28);
-  --app-shadow-md: 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 32px rgba(0, 0, 0, 0.38);
+  --app-overlay: rgba(8, 12, 18, 0.54);
+  --app-shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.03), 0 3px 10px rgba(0, 0, 0, 0.2);
+  --app-shadow-md: 0 1px 0 rgba(255, 255, 255, 0.04), 0 14px 30px rgba(0, 0, 0, 0.28);
 
-  --app-scrollbar-track: #18181c;
-  --app-scrollbar-thumb: #43434d;
+  --app-scrollbar-track: #252c36;
+  --app-scrollbar-thumb: #536075;
 
-  --app-weekend-cell: color-mix(in srgb, var(--app-surface-muted) 70%, #2a2a32);
+  --app-weekend-cell: color-mix(in srgb, var(--app-surface-muted) 74%, #394252);
   --app-stripe-a: rgba(245, 158, 11, 0.07);
   --app-stripe-b: rgba(245, 158, 11, 0.14);
 }

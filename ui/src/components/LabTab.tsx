@@ -423,7 +423,7 @@ export const LabTab: React.FC = () => {
                 <th className="px-6 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-subtle">
+            <tbody>
               {rows.length === 0 ? (
                 <tr>
                   <td className="px-6 py-10 text-sm text-tertiary" colSpan={4}>

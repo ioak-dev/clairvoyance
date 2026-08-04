@@ -59,6 +59,19 @@ export function getProjectCategoryIconClass(category: ProjectCategory): string {
   }
 }
 
+/** Category badge styling aligned with scheduler block palette. */
+export function getProjectCategoryBadgeClass(category: ProjectCategory): string {
+  switch (category) {
+    case 'Opportunity':
+      return 'bg-[rgb(78,130,194)] text-white border-[rgb(56,100,155)]';
+    case 'Non-billable':
+      return 'bg-[rgb(217,150,148)] text-white border-[rgb(197,130,128)]';
+    case 'Billable':
+    default:
+      return 'bg-[rgb(129,164,137)] text-white border-[rgb(109,144,117)]';
+  }
+}
+
 /** Timeline allocation block styling (scheduler calendar). */
 export function getProjectCategoryBlockStyle(category: ProjectCategory): {
   colorClass: string;
