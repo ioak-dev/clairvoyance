@@ -5,7 +5,7 @@
 
 import React, { useMemo, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
-import { Calendar, CalendarClock, Loader2, Plus, User, UserCheck } from 'lucide-react';
+import { AlertTriangle, Calendar, CalendarClock, CheckCircle2, Loader2, MinusCircle, Plus, User, UserCheck } from 'lucide-react';
 import {
   getProjectCategory,
   getAllocationBlockChrome,
@@ -22,6 +22,7 @@ import {
   buildDayColumnLayout,
   deriveAllocationBlocks,
   getDateRangeBounds,
+  getIsoWeekKey,
   getIsoWeekWeekdayBounds,
   type DayColumnLayout,
 } from '../lib/weekUtils';
@@ -47,6 +48,7 @@ interface SchedulerGridProps {
   vacations: Vacation[];
   requests?: BookingRequest[];
   filterCriteria?: Record<string, unknown> | null;
+  isFilterApplying?: boolean;
   viewMode?: 'resources' | 'projects' | 'requests';
   onEditBlock: (block: AllocationBlock) => void;
   onOpenScheduleModalWithRes: (resId: string, projId?: string) => void;
@@ -90,29 +92,32 @@ function UtilizationDayBar({
   isoYear,
   isoWeek,
   daysPerWeek,
+  topOffset = 0,
 }: {
   columns: DayColumnLayout[];
   isoYear: number;
   isoWeek: number;
   daysPerWeek: number;
+  topOffset?: number;
 }) {
   const bounds = getIsoWeekWeekdayBounds(columns, isoYear, isoWeek);
   if (!bounds) return null;
 
-  const filledDays = Math.min(5, Math.max(0, Math.round(daysPerWeek)));
+  const clampedDays = Math.min(5, Math.max(0, daysPerWeek));
   const dayWidth = bounds.width / 5;
 
   return (
     <div
       className="absolute pointer-events-none flex gap-px"
-      style={{ left: bounds.left + 4, width: Math.max(bounds.width - 8, 8), top: 0, height: 4 }}
+      style={{ left: bounds.left + 4, width: Math.max(bounds.width - 8, 8), top: topOffset, height: 4 }}
     >
       {Array.from({ length: 5 }).map((_, i) => (
-        <div
-          key={i}
-          style={{ width: dayWidth - 1 }}
-          className={i < filledDays ? 'bg-emerald-500 rounded-sm' : 'bg-transparent'}
-        />
+        <div key={i} style={{ width: dayWidth - 1 }} className="bg-emerald-100/50 rounded-sm overflow-hidden">
+          <div
+            style={{ width: `${Math.max(0, Math.min(1, clampedDays - i)) * 100}%` }}
+            className="h-full bg-emerald-500 rounded-sm"
+          />
+        </div>
       ))}
     </div>
   );
@@ -124,6 +129,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
   vacations,
   requests = [],
   filterCriteria = null,
+  isFilterApplying = false,
   viewMode = 'resources',
   onEditBlock,
   onOpenScheduleModalWithRes,
@@ -132,6 +138,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
 }, ref) {
   const [selectedRequestForSkills, setSelectedRequestForSkills] = useState<BookingRequest | null>(null);
   const [bulkScheduleResource, setBulkScheduleResource] = useState<Resource | null>(null);
+  const [bulkScheduleProject, setBulkScheduleProject] = useState<Project | null>(null);
 
   const {
     scrollRef,
@@ -175,6 +182,22 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
     return groups;
   }, [dayColumns]);
 
+  const visibleIsoWeeks = useMemo(() => {
+    const seen = new Set<string>();
+    const weeks: Array<{ isoYear: number; isoWeek: number }> = [];
+
+    dayColumns.forEach((col) => {
+      if (col.isWeekend) return;
+      const key = getIsoWeekKey(col.dateStr);
+      const weekId = `${key.isoYear}-${key.isoWeek}`;
+      if (seen.has(weekId)) return;
+      seen.add(weekId);
+      weeks.push({ isoYear: key.isoYear, isoWeek: key.isoWeek });
+    });
+
+    return weeks;
+  }, [dayColumns]);
+
   const assignmentRows = useMemo(() => {
     interface Lane {
       project?: Project;
@@ -211,8 +234,10 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
         }
       });
     } else if (viewMode === 'projects') {
+      const hasScheduleOnly = filterCriteria?.has_schedule === true;
       filterProjects(projects, filterCriteria).forEach((proj) => {
         const projBlocks = allBlocks.filter((b) => b.projectId === proj.id);
+        if (hasScheduleOnly && projBlocks.length === 0) return;
         const resIds = Array.from(new Set(projBlocks.map((b) => b.resourceId)));
 
         const projectLanes: Lane[] =
@@ -226,8 +251,10 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
         rows.push({ id: `row-${proj.id}`, project: proj, projectLanes });
       });
     } else {
+      const hasScheduleOnly = filterCriteria?.has_schedule === true;
       filterPeople(resources, filterCriteria).forEach((res) => {
         const resBlocks = allBlocks.filter((b) => b.resourceId === res.id);
+        if (hasScheduleOnly && resBlocks.length === 0) return;
         const projIds = Array.from(new Set(resBlocks.map((b) => b.projectId)));
 
         const projectLanes: Lane[] =
@@ -331,6 +358,9 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
       ? `${daysPerWeekLabel(block.daysPerWeek)} - ${blockCategory.charAt(0)} - ${block.billableType}`
       : daysPerWeekLabel(block.daysPerWeek);
 
+    const resourceRowOffset = viewMode === 'resources' ? 8 : 0;
+    const resourceBlockTop = viewMode === 'resources' ? 14 : 6;
+
     return segments.map(({ week, bounds }) => (
       <React.Fragment key={`${block.scheduleId}-${week.isoYear}-${week.isoWeek}`}>
         <UtilizationDayBar
@@ -338,13 +368,14 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
           isoYear={week.isoYear}
           isoWeek={week.isoWeek}
           daysPerWeek={week.daysPerWeek}
+          topOffset={resourceRowOffset}
         />
         <div
           style={{
             left: `${bounds.left + 4}px`,
             width: `${Math.max(bounds.width - 8, 8)}px`,
             height: '44px',
-            top: '6px',
+            top: `${resourceBlockTop}px`,
             ...blockSurfaceStyle,
           }}
           onClick={() => {
@@ -374,6 +405,19 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
         ? []
         : getApprovedVacationsForResource(row.resource.id);
 
+    const resourceWeeklyTotals =
+      viewMode === 'projects' || viewMode === 'requests' || !row.resource
+        ? null
+        : row.projectLanes.reduce((acc, lane) => {
+            lane.blocks.forEach((block) => {
+              block.weeks.forEach((week) => {
+                const weekId = `${week.isoYear}-${week.isoWeek}`;
+                acc.set(weekId, (acc.get(weekId) || 0) + week.daysPerWeek);
+              });
+            });
+            return acc;
+          }, new Map<string, number>());
+
     return (
       <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-default min-h-[64px]">
         <div className="w-[190px] min-w-[190px] border-r border-default px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[64px]">
@@ -396,13 +440,24 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
           </div>
 
           {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
-            <button
-              onClick={() => onOpenScheduleModalWithRes('', row.project!.id)}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-surface-hover text-secondary rounded cursor-pointer transition-opacity"
-              title={`Schedule on ${row.project.name}`}
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
+            <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+              <button
+                onClick={() => onOpenScheduleModalWithRes('', row.project!.id)}
+                className="p-1 hover:bg-surface-hover text-secondary rounded cursor-pointer"
+                title={`Schedule on ${row.project.name}`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+              {viewMode === 'projects' && (
+                <button
+                  onClick={() => setBulkScheduleProject(row.project!)}
+                  className="p-1 hover:bg-indigo-50 text-indigo-500 rounded cursor-pointer"
+                  title={`Bulk schedule resources on ${row.project.name}`}
+                >
+                  <CalendarClock className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           ) : row.resource ? (
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
               <button
@@ -423,7 +478,49 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
           ) : null}
         </div>
 
-        <div style={{ width: `${gridWidth}px` }} className="relative flex flex-col justify-center py-1 shrink-0 min-h-[64px]">
+        <div style={{ width: `${gridWidth}px` }} className="relative flex flex-col justify-center py-3 shrink-0 min-h-[64px]">
+          {resourceWeeklyTotals && row.resource && (
+            <div className="absolute inset-x-0 top-0 h-[12px] pointer-events-none z-[6]">
+              {visibleIsoWeeks.map((week) => {
+                const bounds = getIsoWeekWeekdayBounds(dayColumns, week.isoYear, week.isoWeek);
+                if (!bounds) return null;
+
+                const weekId = `${week.isoYear}-${week.isoWeek}`;
+                const totalDays = resourceWeeklyTotals.get(weekId) || 0;
+                if (totalDays <= 0) return null;
+                const utilizationLabel = totalDays > 5
+                  ? 'Over-utilized'
+                  : totalDays === 5
+                    ? 'Fully utilized'
+                    : 'Under-utilized';
+
+                const indicatorLeft = bounds.left + Math.max((bounds.width - 12) / 2, 0);
+                const indicatorClass = totalDays > 5
+                  ? 'text-rose-600'
+                  : totalDays === 5
+                    ? 'text-emerald-600'
+                    : 'text-amber-600';
+
+                const IndicatorIcon = totalDays > 5
+                  ? AlertTriangle
+                  : totalDays === 5
+                    ? CheckCircle2
+                    : MinusCircle;
+
+                return (
+                  <div
+                    key={`util-${row.id}-${weekId}`}
+                    style={{ left: `${indicatorLeft}px`, width: '12px' }}
+                    className={`absolute top-0 h-[12px] w-[12px] rounded-full bg-surface shadow-app-sm flex items-center justify-center ${indicatorClass}`}
+                    title={`${row.resource.name} - ${week.isoYear} W${String(week.isoWeek).padStart(2, '0')}: ${totalDays}d/wk (${utilizationLabel})`}
+                  >
+                    <IndicatorIcon className="w-[10px] h-[10px]" />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Day column grid lines */}
           <div className="absolute inset-0 flex pointer-events-none">
             {dayColumns.map((col) => (
@@ -489,7 +586,15 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
   }, [selectedRequestForSkills, projects]);
 
   return (
-    <div className="app-card overflow-hidden flex flex-col h-full min-h-0" id="scheduler-grid-main-board">
+    <div className="app-card overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
+      {(isFetchingSchedules || isFilterApplying) && (
+        <div className="absolute inset-0 z-20 bg-surface/55 backdrop-blur-[1px] pointer-events-none flex items-center justify-center">
+          <div className="flex items-center gap-2 rounded-full bg-surface border border-default px-4 py-2 text-xs font-medium text-secondary shadow-app-md">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+            {isFilterApplying ? 'Applying filter…' : 'Loading schedules…'}
+          </div>
+        </div>
+      )}
       <div ref={scrollRef} onScroll={onTimelineScroll} className="flex-1 min-h-0 overflow-auto select-none relative scrollbar-thin">
         {isFetchingSchedules && (
           <div className="absolute top-2 right-3 z-30 flex items-center gap-1.5 rounded-full bg-surface/95 border border-default px-2.5 py-1 text-[10px] font-medium text-secondary shadow-app-sm pointer-events-none">
@@ -567,12 +672,17 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
         onUnassignRequest={onUnassignRequest}
         onApproveRequestWithResource={onApproveRequestWithResource}
       />
-      {bulkScheduleResource && (
+      {(bulkScheduleResource || bulkScheduleProject) && (
         <BulkScheduleModal
           isOpen
-          resource={bulkScheduleResource}
+          resources={resources}
           projects={projects}
-          onClose={() => setBulkScheduleResource(null)}
+          fixedResource={bulkScheduleResource || undefined}
+          fixedProject={bulkScheduleProject || undefined}
+          onClose={() => {
+            setBulkScheduleResource(null);
+            setBulkScheduleProject(null);
+          }}
         />
       )}
     </div>

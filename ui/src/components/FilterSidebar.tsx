@@ -140,7 +140,9 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           ) : (
             filteredList.map((filter) => {
               const isSelected = activeFilterId === filter.id;
-              const count = filter.itemCount ?? 0;
+              const isBuiltInFilter = filter.id.startsWith('__dynamic_');
+              const count = filter.itemCount;
+              const showCount = typeof count === 'number' && count > 0;
               return (
                 <div
                   key={filter.id}
@@ -155,13 +157,15 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <h4 className="text-sm font-semibold text-primary truncate">{filter.name}</h4>
-                        <span
-                          className={`shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                            isSelected ? 'bg-blue-600 text-white' : 'bg-surface-muted text-secondary'
-                          }`}
-                        >
-                          {count}
-                        </span>
+                        {showCount && (
+                          <span
+                            className={`shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                              isSelected ? 'bg-blue-600 text-white' : 'bg-surface-muted text-secondary'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        )}
                       </div>
                       {filter.description && (
                         <p className="text-[11px] text-secondary mt-1 line-clamp-2 leading-snug">
@@ -170,38 +174,40 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                       )}
                     </div>
 
-                    <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => setMenuOpenId(menuOpenId === filter.id ? null : filter.id)}
-                        className="p-1 rounded-md text-tertiary hover:text-primary hover:bg-surface-hover opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <MoreVertical className="w-4 h-4" />
-                      </button>
-                      {menuOpenId === filter.id && (
-                        <div className="absolute right-0 top-full mt-1 w-32 bg-surface-raised border border-subtle rounded-lg shadow-app-md py-1 z-10">
-                          <button
-                            onClick={() => openEdit(filter)}
-                            className="w-full text-left px-3 py-1.5 text-xs text-primary hover:bg-surface-muted flex items-center gap-2"
-                          >
-                            <Pencil className="w-3 h-3" /> Edit
-                          </button>
-                          <button
-                            onClick={async () => {
-                              setMenuOpenId(null);
-                              if (safeConfirm(`Delete filter "${filter.name}"?`)) {
-                                if (activeFilterId === filter.id) {
-                                  onSelectFilter(null);
+                    {!isBuiltInFilter && (
+                      <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => setMenuOpenId(menuOpenId === filter.id ? null : filter.id)}
+                          className="p-1 rounded-md text-tertiary hover:text-primary hover:bg-surface-hover opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <MoreVertical className="w-4 h-4" />
+                        </button>
+                        {menuOpenId === filter.id && (
+                          <div className="absolute right-0 top-full mt-1 w-32 bg-surface-raised border border-subtle rounded-lg shadow-app-md py-1 z-10">
+                            <button
+                              onClick={() => openEdit(filter)}
+                              className="w-full text-left px-3 py-1.5 text-xs text-primary hover:bg-surface-muted flex items-center gap-2"
+                            >
+                              <Pencil className="w-3 h-3" /> Edit
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setMenuOpenId(null);
+                                if (safeConfirm(`Delete filter "${filter.name}"?`)) {
+                                  if (activeFilterId === filter.id) {
+                                    onSelectFilter(null);
+                                  }
+                                  await onDeleteFilter(filter.id);
                                 }
-                                await onDeleteFilter(filter.id);
-                              }
-                            }}
-                            className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-surface-muted"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-surface-muted"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

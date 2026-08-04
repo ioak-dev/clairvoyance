@@ -7,6 +7,8 @@ type CapacityAlertsProps = {
   underUtilized: PersonUtilization[];
 };
 
+const MAX_ALERTS_SHOWN = 10;
+
 function PersonChip({
   person,
   variant,
@@ -46,44 +48,61 @@ function PersonChip({
 export const CapacityAlerts: React.FC<CapacityAlertsProps> = ({
   overAllocated,
   underUtilized,
-}) => (
-  <div className="app-card p-5">
-    <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Capacity Alerts</h3>
-    <p className="text-xs text-secondary mb-4">People over-allocated or under-utilized</p>
+}) => {
+  const shownOverAllocated = overAllocated.slice(0, MAX_ALERTS_SHOWN);
+  const shownUnderUtilized = underUtilized.slice(0, MAX_ALERTS_SHOWN);
+  const remainingOverAllocated = Math.max(0, overAllocated.length - shownOverAllocated.length);
+  const remainingUnderUtilized = Math.max(0, underUtilized.length - shownUnderUtilized.length);
 
-    {overAllocated.length === 0 && underUtilized.length === 0 ? (
-      <p className="text-sm text-tertiary text-center py-6">Team utilization looks balanced.</p>
-    ) : (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div>
-          <p className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] mb-2">
-            Over-allocated (&gt;100%)
-          </p>
-          {overAllocated.length === 0 ? (
-            <p className="text-xs text-tertiary">None</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {overAllocated.map((p) => (
-                <PersonChip key={p.resourceId} person={p} variant="over" />
-              ))}
-            </div>
-          )}
+  return (
+    <div className="app-card p-5">
+      <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Capacity Alerts</h3>
+      <p className="text-xs text-secondary mb-4">People over-allocated or under-utilized</p>
+
+      {overAllocated.length === 0 && underUtilized.length === 0 ? (
+        <p className="text-sm text-tertiary text-center py-6">Team utilization looks balanced.</p>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <p className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] mb-2">
+              Over-allocated (&gt;100%)
+            </p>
+            {overAllocated.length === 0 ? (
+              <p className="text-xs text-tertiary">None</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {shownOverAllocated.map((p) => (
+                    <PersonChip key={p.resourceId} person={p} variant="over" />
+                  ))}
+                </div>
+                {remainingOverAllocated > 0 && (
+                  <p className="mt-2 text-xs text-tertiary">+ {remainingOverAllocated} more</p>
+                )}
+              </>
+            )}
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] mb-2">
+              Under-utilized (&lt;50%)
+            </p>
+            {underUtilized.length === 0 ? (
+              <p className="text-xs text-tertiary">None</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {shownUnderUtilized.map((p) => (
+                    <PersonChip key={p.resourceId} person={p} variant="under" />
+                  ))}
+                </div>
+                {remainingUnderUtilized > 0 && (
+                  <p className="mt-2 text-xs text-tertiary">+ {remainingUnderUtilized} more</p>
+                )}
+              </>
+            )}
+          </div>
         </div>
-        <div>
-          <p className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] mb-2">
-            Under-utilized (&lt;50%)
-          </p>
-          {underUtilized.length === 0 ? (
-            <p className="text-xs text-tertiary">None</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {underUtilized.map((p) => (
-                <PersonChip key={p.resourceId} person={p} variant="under" />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    )}
-  </div>
-);
+      )}
+    </div>
+  );
+};

@@ -80,6 +80,8 @@ import {
 import { CURRENT_DATE_STRING } from './lib/dateUtils';
 import { dateRangeToWeeks, isoWeekToDateRange } from './lib/weekUtils';
 
+const DYNAMIC_HAS_SCHEDULE_FILTER_ID = '__dynamic_has_schedule__';
+
 function navMenuItemClass(isActive: boolean): string {
   return `inline-flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-medium tracking-[0.02em] leading-none transition-colors cursor-pointer whitespace-nowrap ${
     isActive
@@ -234,6 +236,7 @@ export default function App() {
   const timelineDateInputRef = useRef<HTMLInputElement>(null);
   const timelineCommittedDateRef = useRef(CURRENT_DATE_STRING);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isFilterApplying, setIsFilterApplying] = useState(false);
   const [activeProjectFilterId, setActiveProjectFilterId] = useState<string | null>(null);
   const [activePersonFilterId, setActivePersonFilterId] = useState<string | null>(null);
   const [activeRequestFilterId, setActiveRequestFilterId] = useState<string | null>(null);
@@ -244,8 +247,28 @@ export default function App() {
   }, [activeTab, sidebarActive]);
 
   const sidebarFilters = useMemo(() => {
-    if (filterViewContext === 'projects') return projectFilters;
-    if (filterViewContext === 'resources') return personFilters;
+    if (filterViewContext === 'projects') {
+      const dynamicProjectFilter: SavedFilter = {
+        id: DYNAMIC_HAS_SCHEDULE_FILTER_ID,
+        name: 'Scheduled Projects',
+        description: 'Show only projects with schedule entries in the current timeline window.',
+        criteria: { has_schedule: true },
+        isActive: true,
+        sortOrder: -9999,
+      };
+      return [dynamicProjectFilter, ...projectFilters];
+    }
+    if (filterViewContext === 'resources') {
+      const dynamicResourceFilter: SavedFilter = {
+        id: DYNAMIC_HAS_SCHEDULE_FILTER_ID,
+        name: 'Scheduled Resources',
+        description: 'Show only resources with schedule entries in the current timeline window.',
+        criteria: { has_schedule: true },
+        isActive: true,
+        sortOrder: -9999,
+      };
+      return [dynamicResourceFilter, ...personFilters];
+    }
     return requestFilters;
   }, [filterViewContext, projectFilters, personFilters, requestFilters]);
 
@@ -262,11 +285,20 @@ export default function App() {
   }, [activeFilterId, sidebarFilters]);
 
   const handleSelectFilter = useCallback((filter: SavedFilter | null) => {
+    setIsFilterApplying(true);
     const id = filter?.id ?? null;
     if (filterViewContext === 'projects') setActiveProjectFilterId(id);
     else if (filterViewContext === 'resources') setActivePersonFilterId(id);
     else setActiveRequestFilterId(id);
   }, [filterViewContext]);
+
+  useEffect(() => {
+    if (!isFilterApplying) return;
+    const timer = window.setTimeout(() => {
+      setIsFilterApplying(false);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [isFilterApplying, activeFilterId, filterViewContext]);
 
   // Auto-select first available filter when entering a tab with no active filter
   useEffect(() => {
@@ -896,6 +928,7 @@ export default function App() {
                 vacations={vacations}
                 requests={requests}
                 filterCriteria={filterCriteria}
+                isFilterApplying={isFilterApplying}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
                 onEditBlock={(block) => setSelectedEditBlock(block)}
                 onOpenScheduleModalWithRes={(resId, projId) => {
@@ -960,6 +993,8 @@ export default function App() {
               resources={resources}
               projects={projects}
               assignments={scheduleAssignments}
+              requests={requests}
+              vacations={vacations}
             />
           )}
 

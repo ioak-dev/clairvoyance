@@ -101,6 +101,11 @@ function formatWeekLabel(isoYear: number, isoWeek: number): string {
   return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
 }
 
+function formatDays(value: number): string {
+  const normalized = Number(value) || 0;
+  return `${normalized} day${Math.abs(normalized) === 1 ? '' : 's'}`;
+}
+
 const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -195,10 +200,10 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
         >
           <div>{formatWeekLabel(hovered.gap.isoYear, hovered.gap.isoWeek)}</div>
           <div className="text-tertiary">
-            Fulfillable {hovered.fulfillableDays}d · Unfulfillable {hovered.unfulfillableDays}d
+            Fulfillable {formatDays(hovered.fulfillableDays)} · Unfulfillable {formatDays(hovered.unfulfillableDays)}
           </div>
           <div className="text-tertiary">
-            Requested {hovered.requestedDays}d on a 5d/week scale
+            Requested {formatDays(hovered.requestedDays)} on a 5 days/week scale
           </div>
         </div>
       )}
@@ -228,8 +233,8 @@ const ResourceAvailabilityDetailsModal: React.FC<{
               <p className="mt-1 text-xs text-tertiary">
                 Avg shortfall across request weeks:{' '}
                 {resource.avgShortfallDays === 0
-                  ? '0d/wk (covers request)'
-                  : `${resource.avgShortfallDays.toFixed(1)}d/wk`}
+                  ? '0 days/wk (covers request)'
+                  : `${resource.avgShortfallDays.toFixed(1)} days/wk`}
               </p>
             </div>
             <button
@@ -261,10 +266,10 @@ const ResourceAvailabilityDetailsModal: React.FC<{
                     className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 px-4 py-3 text-sm text-primary"
                   >
                     <span>{formatWeekLabel(gap.isoYear, gap.isoWeek)}</span>
-                    <span className="text-right">{gap.requiredDays}d</span>
-                    <span className="text-right">{gap.availableDays}d</span>
+                    <span className="text-right">{formatDays(gap.requiredDays)}</span>
+                    <span className="text-right">{formatDays(gap.availableDays)}</span>
                     <span className="text-right font-semibold">
-                      {gap.shortfallDays === 0 ? '0d' : `${gap.shortfallDays}d`}
+                      {formatDays(gap.shortfallDays)}
                     </span>
                   </div>
                 ))}

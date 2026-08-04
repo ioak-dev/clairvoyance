@@ -1,5 +1,5 @@
-/** Shared app reference date (demo / seeded data context). */
-export const CURRENT_DATE_STRING = '2026-06-22';
+/** Shared app reference date based on runtime local date. */
+export const CURRENT_DATE_STRING = formatDateString(new Date());
 
 /** Format a Date as YYYY-MM-DD in local time. */
 export function formatDateString(date: Date): string {

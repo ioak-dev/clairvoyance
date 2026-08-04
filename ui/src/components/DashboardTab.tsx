@@ -24,7 +24,6 @@ import { CategoryBreakdown } from './dashboard/CategoryBreakdown';
 import { DashboardPeriodBar } from './dashboard/DashboardPeriodBar';
 import { KpiCard } from './dashboard/KpiCard';
 import { PipelinePanel } from './dashboard/PipelinePanel';
-import { TopProjectsChart } from './dashboard/TopProjectsChart';
 import { UtilizationGauge } from './dashboard/UtilizationGauge';
 import { WeeklyTrendChart } from './dashboard/WeeklyTrendChart';
 
@@ -146,8 +145,6 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           pendingVacations={snapshot.pendingVacations}
         />
       </div>
-
-      <TopProjectsChart projects={snapshot.topProjects} />
 
       <CapacityAlerts
         overAllocated={snapshot.overAllocated}

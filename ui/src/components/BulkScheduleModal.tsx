@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { CalendarClock, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { BillableType, Project, Resource } from '../types';
@@ -13,8 +13,10 @@ import { scheduleQueryKeys } from '../hooks/useSchedules';
 
 interface BulkScheduleModalProps {
   isOpen: boolean;
-  resource: Resource;
+  resources: Resource[];
   projects: Project[];
+  fixedResource?: Resource;
+  fixedProject?: Project;
   onClose: () => void;
 }
 
@@ -33,13 +35,18 @@ function parsePattern(input: string): number[] | null {
 
 export const BulkScheduleModal: React.FC<BulkScheduleModalProps> = ({
   isOpen,
-  resource,
+  resources,
   projects,
+  fixedResource,
+  fixedProject,
   onClose,
 }) => {
+  const isResourceFixed = !!fixedResource;
+  const isProjectFixed = !!fixedProject;
   const queryClient = useQueryClient();
-  const [billableType, setBillableType] = useState<BillableType>('Billable');
-  const [projectId, setProjectId] = useState('');
+  const [billableType, setBillableType] = useState<BillableType>(fixedProject?.billableType || 'Billable');
+  const [projectId, setProjectId] = useState(fixedProject?.id || '');
+  const [resourceId, setResourceId] = useState(fixedResource?.id || '');
   const [pattern, setPattern] = useState('');
   const [startDate, setStartDate] = useState(DEFAULT_START_DATE);
   const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
@@ -47,9 +54,26 @@ export const BulkScheduleModal: React.FC<BulkScheduleModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setBillableType(fixedProject?.billableType || 'Billable');
+    setProjectId(fixedProject?.id || '');
+    setResourceId(fixedResource?.id || '');
+  }, [isOpen, fixedProject, fixedResource]);
+
   const filteredProjects = useMemo(
     () => projects.filter((p) => p.billableType === billableType),
     [projects, billableType],
+  );
+
+  const selectedResource = useMemo(
+    () => resources.find((r) => r.id === resourceId) || null,
+    [resources, resourceId],
+  );
+
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === projectId) || null,
+    [projects, projectId],
   );
 
   const handleBillableTypeChange = (type: BillableType) => {
@@ -60,8 +84,9 @@ export const BulkScheduleModal: React.FC<BulkScheduleModalProps> = ({
   const handleClose = () => {
     setError(null);
     setPattern('');
-    setProjectId('');
-    setBillableType('Billable');
+    setProjectId(fixedProject?.id || '');
+    setResourceId(fixedResource?.id || '');
+    setBillableType(fixedProject?.billableType || 'Billable');
     setStartDate(DEFAULT_START_DATE);
     setEndDate(DEFAULT_END_DATE);
     setPatternMode('repeat');
@@ -74,6 +99,11 @@ export const BulkScheduleModal: React.FC<BulkScheduleModalProps> = ({
 
     if (!projectId) {
       setError('Please select a project.');
+      return;
+    }
+
+    if (!resourceId) {
+      setError('Please select a resource.');
       return;
     }
 
@@ -120,12 +150,12 @@ export const BulkScheduleModal: React.FC<BulkScheduleModalProps> = ({
       // Bootstrap the schedule record using only the first non-zero week's range
       const firstWeek = isoWeekToDateRange(weekAllocations[0].isoYear, weekAllocations[0].isoWeek);
       const scheduleId = await schedulesService.upsertRange({
-        personId: resource.id,
+        personId: resourceId,
         projectId,
         startDate: firstWeek.start,
         endDate: firstWeek.end,
         daysPerWeek: weekAllocations[0].daysPerWeek,
-        billableType,
+        billableType: selectedProject?.billableType || billableType,
       });
 
       await schedulesService.upsertWeeks(scheduleId, weekAllocations);
@@ -155,7 +185,8 @@ export const BulkScheduleModal: React.FC<BulkScheduleModalProps> = ({
 
         <form onSubmit={handleSubmit} className="px-5 py-4 flex flex-col gap-4">
           <p className="text-sm text-secondary">
-            Scheduling <span className="font-semibold text-primary">{resource.name}</span>.
+            Scheduling <span className="font-semibold text-primary">{selectedResource?.name || 'resource'}</span>
+            {' '}on <span className="font-semibold text-primary">{selectedProject?.name || 'project'}</span>.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -183,39 +214,85 @@ export const BulkScheduleModal: React.FC<BulkScheduleModalProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
-              Billability Type
-            </label>
-            <select
-              value={billableType}
-              onChange={(e) => handleBillableTypeChange(e.target.value as BillableType)}
-              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {BILLABILITY_TYPES.map((bt) => (
-                <option key={bt} value={bt}>{bt}</option>
-              ))}
-            </select>
-          </div>
+          {!isProjectFixed && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+                Billability Type
+              </label>
+              <select
+                value={billableType}
+                onChange={(e) => handleBillableTypeChange(e.target.value as BillableType)}
+                className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {BILLABILITY_TYPES.map((bt) => (
+                  <option key={bt} value={bt}>{bt}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
-              Project
-            </label>
-            <select
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">— Select a project —</option>
-              {filteredProjects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            {filteredProjects.length === 0 && (
-              <p className="text-xs text-amber-600">No {billableType} projects available.</p>
-            )}
-          </div>
+          {isProjectFixed ? (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+                Project
+              </label>
+              <input
+                type="text"
+                value={fixedProject?.name || ''}
+                readOnly
+                className="w-full rounded-lg border border-default bg-surface-muted px-3 py-2 text-sm text-primary"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+                Project
+              </label>
+              <select
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Select a project —</option>
+                {filteredProjects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              {filteredProjects.length === 0 && (
+                <p className="text-xs text-amber-600">No {billableType} projects available.</p>
+              )}
+            </div>
+          )}
+
+          {isResourceFixed ? (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+                Resource
+              </label>
+              <input
+                type="text"
+                value={fixedResource?.name || ''}
+                readOnly
+                className="w-full rounded-lg border border-default bg-surface-muted px-3 py-2 text-sm text-primary"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+                Resource
+              </label>
+              <select
+                value={resourceId}
+                onChange={(e) => setResourceId(e.target.value)}
+                className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Select a resource —</option>
+                {resources.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
