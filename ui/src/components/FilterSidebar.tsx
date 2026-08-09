@@ -4,10 +4,24 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Search, X, Plus, MoreVertical, Pencil } from 'lucide-react';
+import { Description } from '@headlessui/react';
+import { Search, X, Plus, MoreVertical, Pencil, ArrowLeft } from 'lucide-react';
 import type { FilterKind, SavedFilter } from '../types';
 import type { Lookups } from '../lib/services/lookups';
 import { FilterFormModal, type FilterFormValues } from './FilterFormModal';
+import {
+  Badge,
+  Button,
+  CardHeader,
+  DialogTitle,
+  Drawer,
+  IconButton,
+  Input,
+  Menu,
+  DropdownMenuButton,
+  DropdownMenuItems,
+  DropdownMenuItem,
+} from './ui';
 
 const safeConfirm = (msg: string): boolean => {
   try {
@@ -22,6 +36,7 @@ export type FilterViewContext = 'projects' | 'resources' | 'requests';
 interface FilterSidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  onBack?: () => void;
   viewContext: FilterViewContext;
   filters: SavedFilter[];
   activeFilterId: string | null;
@@ -47,6 +62,7 @@ function contextLabel(context: FilterViewContext): string {
 export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   isOpen,
   onClose,
+  onBack,
   viewContext,
   filters,
   activeFilterId,
@@ -57,9 +73,9 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   onDeleteFilter,
 }) => {
   const [search, setSearch] = useState('');
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingFilter, setEditingFilter] = useState<SavedFilter | null>(null);
+  const [deletingFilterId, setDeletingFilterId] = useState<string | null>(null);
 
   const filterKind = contextToKind(viewContext);
 
@@ -78,58 +94,75 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   const openCreate = () => {
     setEditingFilter(null);
     setFormOpen(true);
-    setMenuOpenId(null);
   };
 
   const openEdit = (filter: SavedFilter) => {
     setEditingFilter(filter);
     setFormOpen(true);
-    setMenuOpenId(null);
   };
-
-  if (!isOpen) return null;
 
   return (
     <>
-      <div className="fixed left-[110px] top-14 bottom-0 w-80 bg-surface border-r border-default shadow-app-md z-50 flex flex-col">
-        <div className="app-card-header px-4 py-3 flex items-center justify-between shrink-0">
-          <div>
-            <h3 className="text-sm font-semibold text-primary">Filters</h3>
-            <p className="text-[11px] text-tertiary mt-0.5">{contextLabel(viewContext)}</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 hover:bg-surface-hover rounded-lg text-tertiary hover:text-primary transition"
+      <Drawer
+        open={isOpen}
+        onClose={onClose}
+        header={
+          <CardHeader className="shrink-0 rounded-none">
+            <div className="flex items-center gap-2 min-w-0">
+              {onBack && (
+                <IconButton label="Back to list" size="sm" onClick={onBack} className="-ml-1">
+                  <ArrowLeft className="w-4 h-4" />
+                </IconButton>
+              )}
+              <div className="min-w-0">
+                <DialogTitle className="text-sm font-semibold text-primary">Filters</DialogTitle>
+                <Description className="text-[11px] text-tertiary mt-0.5">
+                  {contextLabel(viewContext)}
+                </Description>
+              </div>
+            </div>
+            <IconButton label="Close filters" size="sm" onClick={onClose}>
+              <X className="w-4 h-4" />
+            </IconButton>
+          </CardHeader>
+        }
+        footer={
+          <Button
+            onClick={openCreate}
+            variant="outline"
+            className="w-full border-dashed"
+            leftIcon={<Plus className="w-4 h-4" />}
           >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+            New filter
+          </Button>
+        }
+      >
         <div className="px-3 py-3 border-b border-subtle space-y-2 shrink-0">
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-tertiary absolute left-3 top-2.5" />
-            <input
+            <Search className="w-3.5 h-3.5 text-tertiary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Input
               type="text"
               placeholder="Search saved filters…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 border border-default rounded-lg text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none bg-input"
+              className="pl-8 h-8 text-xs"
             />
           </div>
 
           {activeFilter && (
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-tertiary font-medium uppercase tracking-wide">Active</span>
-              <div className="inline-flex items-center gap-1 tint-blue pl-2 pr-1 py-0.5 rounded-full text-[11px] font-medium min-w-0">
+              <Badge tone="blue" className="pl-2 pr-1 gap-1 min-w-0 max-w-full">
                 <span className="truncate">{activeFilter.name}</span>
-                <button
+                <IconButton
+                  label="Clear filter"
+                  size="sm"
                   onClick={() => onSelectFilter(null)}
-                  className="p-0.5 hover:bg-surface-hover rounded-full shrink-0"
-                  title="Clear filter"
+                  className="h-5 w-5 -mr-0.5"
                 >
                   <X className="w-3 h-3" />
-                </button>
-              </div>
+                </IconButton>
+              </Badge>
             </div>
           )}
         </div>
@@ -143,6 +176,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
               const isBuiltInFilter = filter.id.startsWith('__dynamic_');
               const count = filter.itemCount;
               const showCount = typeof count === 'number' && count > 0;
+              const isDeleting = deletingFilterId === filter.id;
               return (
                 <div
                   key={filter.id}
@@ -158,13 +192,12 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                       <div className="flex items-center justify-between gap-2">
                         <h4 className="text-sm font-semibold text-primary truncate">{filter.name}</h4>
                         {showCount && (
-                          <span
-                            className={`shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                              isSelected ? 'bg-blue-600 text-white' : 'bg-surface-muted text-secondary'
-                            }`}
+                          <Badge
+                            tone={isSelected ? 'blue' : 'neutral'}
+                            className={isSelected ? 'bg-blue-600 text-white border-blue-600' : ''}
                           >
                             {count}
-                          </span>
+                          </Badge>
                         )}
                       </div>
                       {filter.description && (
@@ -176,36 +209,45 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
 
                     {!isBuiltInFilter && (
                       <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => setMenuOpenId(menuOpenId === filter.id ? null : filter.id)}
-                          className="p-1 rounded-md text-tertiary hover:text-primary hover:bg-surface-hover opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <MoreVertical className="w-4 h-4" />
-                        </button>
-                        {menuOpenId === filter.id && (
-                          <div className="absolute right-0 top-full mt-1 w-32 bg-surface-raised border border-subtle rounded-lg shadow-app-md py-1 z-10">
-                            <button
+                        <Menu>
+                          <DropdownMenuButton
+                            variant="ghost"
+                            size="icon"
+                            className={`h-8 w-8 transition-opacity ${
+                              isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                            }`}
+                            aria-label="Filter actions"
+                            loading={isDeleting}
+                            disabled={Boolean(deletingFilterId)}
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </DropdownMenuButton>
+                          <DropdownMenuItems className="w-32">
+                            <DropdownMenuItem
+                              disabled={Boolean(deletingFilterId)}
                               onClick={() => openEdit(filter)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-primary hover:bg-surface-muted flex items-center gap-2"
                             >
                               <Pencil className="w-3 h-3" /> Edit
-                            </button>
-                            <button
-                              onClick={async () => {
-                                setMenuOpenId(null);
-                                if (safeConfirm(`Delete filter "${filter.name}"?`)) {
-                                  if (activeFilterId === filter.id) {
-                                    onSelectFilter(null);
-                                  }
-                                  await onDeleteFilter(filter.id);
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              destructive
+                              disabled={Boolean(deletingFilterId)}
+                              onClick={() => {
+                                if (deletingFilterId) return;
+                                if (!safeConfirm(`Delete filter "${filter.name}"?`)) return;
+                                if (activeFilterId === filter.id) {
+                                  onSelectFilter(null);
                                 }
+                                setDeletingFilterId(filter.id);
+                                void Promise.resolve(onDeleteFilter(filter.id)).finally(() => {
+                                  setDeletingFilterId(null);
+                                });
                               }}
-                              className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-surface-muted"
                             >
                               Delete
-                            </button>
-                          </div>
-                        )}
+                            </DropdownMenuItem>
+                          </DropdownMenuItems>
+                        </Menu>
                       </div>
                     )}
                   </div>
@@ -214,16 +256,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
             })
           )}
         </div>
-
-        <div className="shrink-0 p-3 border-t border-subtle bg-surface">
-          <button
-            onClick={openCreate}
-            className="w-full py-2.5 px-3 rounded-lg border border-dashed border-default text-sm font-medium text-secondary hover:text-blue-500 hover:border-blue-500/40 hover:bg-surface-muted flex items-center justify-center gap-2 transition-colors"
-          >
-            <Plus className="w-4 h-4" /> New filter
-          </button>
-        </div>
-      </div>
+      </Drawer>
 
       <FilterFormModal
         isOpen={formOpen}

@@ -1,5 +1,6 @@
 import React from 'react';
 import type { CategoryHours } from '../../lib/dashboardMetrics';
+import { Card } from '../ui';
 
 type CategoryBreakdownProps = {
   categories: CategoryHours[];
@@ -10,7 +11,7 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({ categories
   const maxHours = Math.max(...categories.map((c) => c.hours), 1);
 
   return (
-    <div className="app-card p-5 flex flex-col h-full">
+    <Card padded className="flex flex-col h-full">
       <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Category Mix</h3>
       <p className="text-xs text-secondary mb-4">Planned hours by project type</p>
 
@@ -56,6 +57,6 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({ categories
           </div>
         </>
       )}
-    </div>
+    </Card>
   );
 };

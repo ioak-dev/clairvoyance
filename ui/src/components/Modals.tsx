@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type {
   AllocationBlock,
   BillableType,
@@ -16,8 +16,8 @@ import type {
   ScheduleUnit,
 } from '../types';
 import { DEFAULT_ROSTER } from '../types';
-import { Search, Calendar, Plus, X, Trash2 } from 'lucide-react';
-import { getProjectCategory, getProjectCategoryIconClass, getBillableTypeFromProject, getProjectCategoryLabel } from '../lib/projectCategory';
+import { Search, Plus, Trash2 } from 'lucide-react';
+import { getProjectCategory, getProjectCategoryIconClass, getBillableTypeFromProject, getProjectCategoryLabel, getEffectiveBillableType } from '../lib/projectCategory';
 import {
   blockHoursOnDate,
   countWeekdaysInRange,
@@ -26,13 +26,29 @@ import {
   isoWeekdayIndex,
   normalizeRoster,
   personDailyCapacityHours,
+  scheduleSiblingDateBounds,
   weekdayAllocationValue,
   weekdayRoster,
 } from '../lib/rosterUtils';
 import { addDays } from '../lib/dateUtils';
 import { useLookups } from '../hooks/useLookups';
+import {
+  Modal,
+  Button,
+  Input,
+  Textarea,
+  Field,
+  Label,
+  Description,
+  Select,
+  Combobox,
+  Checkbox,
+  RadioGroup,
+} from './ui';
 
 export type BookingEndsMode = 'on' | 'after';
+
+export type ScheduleApplyScope = 'entire' | 'partial';
 
 export type ScheduleEditPatch = {
   title?: string;
@@ -40,7 +56,31 @@ export type ScheduleEditPatch = {
   endDate: string;
   unit: ScheduleUnit;
   roster: Roster;
+  applyScope: ScheduleApplyScope;
+  /** null clears override (inherit project); undefined leaves unchanged on partial. */
+  billableType?: BillableType | null;
 };
+
+const BILLABLE_OVERRIDE_EMPTY = '';
+
+function billableOverrideOptions(project: Project | null | undefined): { value: string; label: string }[] {
+  const projectDefault = project
+    ? getBillableTypeFromProject(project)
+    : 'Billable';
+  return [
+    { value: BILLABLE_OVERRIDE_EMPTY, label: `Project default (${projectDefault})` },
+    { value: 'Billable', label: 'Billable' },
+    { value: 'Non-billable', label: 'Non-billable' },
+    { value: 'Opportunity', label: 'Opportunity' },
+  ];
+}
+
+function parseBillableOverride(value: string): BillableType | undefined {
+  if (value === 'Billable' || value === 'Non-billable' || value === 'Opportunity') {
+    return value;
+  }
+  return undefined;
+}
 
 /** End date covering `occurrences` weekly periods starting at startDate. */
 function endDateAfterWeeklyOccurrences(startDate: string, occurrences: number): string {
@@ -70,6 +110,11 @@ const safeConfirm = (msg: string): boolean => {
     return true;
   }
 };
+
+const ALLOCATION_UNIT_OPTIONS: { value: ScheduleUnit; label: string }[] = [
+  { value: 'utilization', label: '%' },
+  { value: 'hours', label: 'hrs / day' },
+];
 
 /** Single allocation by % or hours/day; weekends always free. Total hours is derived. */
 function AllocationFields({
@@ -117,32 +162,28 @@ function AllocationFields({
   };
 
   return (
-    <div className="space-y-1.5">
-      <label className="block text-sm font-semibold text-secondary">Allocation</label>
-      <div className="flex items-stretch border border-default rounded-lg focus-within:ring-2 focus-within:ring-emerald-500 overflow-hidden">
-        <input
+    <Field>
+      <Label className="text-sm font-semibold">Allocation</Label>
+      <div className="grid grid-cols-[1fr_8.5rem] gap-2">
+        <Input
           type="number"
           min={0}
           max={unit === 'utilization' ? 200 : 24}
           step={unit === 'utilization' ? 5 : 0.5}
           value={displayValue}
           onChange={(e) => setValue(Number(e.target.value))}
-          className="min-w-0 flex-1 text-sm p-2.5 bg-transparent focus:outline-none"
         />
-        <select
+        <Select
           value={unit}
-          onChange={(e) => setUnit(e.target.value as ScheduleUnit)}
-          className="shrink-0 border-l border-default bg-surface-muted text-sm font-medium text-secondary px-2.5 focus:outline-none cursor-pointer"
+          onChange={setUnit}
+          options={ALLOCATION_UNIT_OPTIONS}
           aria-label="Allocation unit"
-        >
-          <option value="utilization">%</option>
-          <option value="hours">hrs / day</option>
-        </select>
+        />
       </div>
-      <p className="text-xs text-tertiary">
+      <Description>
         Total hours: <span className="font-semibold text-secondary">{totalHours}</span>
-      </p>
-    </div>
+      </Description>
+    </Field>
   );
 }
 
@@ -206,115 +247,122 @@ export const CapacityFinderModal: React.FC<CapacityFinderModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="capacity-finder-modal-container">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-2xl w-full flex flex-col overflow-hidden max-h-[90vh]">
-        <div className="app-card-header px-6 py-4 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
-            <Search className="w-5 h-5 text-blue-500" />
-            Resource Capacity Finder
-          </h3>
-          <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
-            <X className="w-5 h-5" />
-          </button>
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      id="capacity-finder-modal-container"
+      size="lg"
+      title={
+        <span className="flex items-center gap-2">
+          <Search className="w-5 h-5 text-blue-500" />
+          Resource Capacity Finder
+        </span>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-surface-muted p-4 rounded-lg border border-subtle">
+          <Field>
+            <Label className="uppercase tracking-wider">Start Date</Label>
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </Field>
+          <Field>
+            <Label className="uppercase tracking-wider">End Date</Label>
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </Field>
+          <Field>
+            <Label className="uppercase tracking-wider">Min free days/wk</Label>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min="0"
+                max="5"
+                step="1"
+                value={minAvailableDays}
+                onChange={(e) => setMinAvailableDays(Number(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              />
+              <span className="text-sm font-semibold text-primary w-10 text-right">{minAvailableDays}d</span>
+            </div>
+          </Field>
         </div>
 
-        <div className="p-6 space-y-4 overflow-y-auto">
-          {/* Query Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-surface-muted p-4 rounded-lg border border-subtle">
-            <div>
-              <label className="block text-xs font-semibold text-secondary uppercase tracking-wider mb-1">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-secondary uppercase tracking-wider mb-1">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-secondary uppercase tracking-wider mb-1">Min free days/wk</label>
-              <div className="flex items-center gap-2 mt-1">
-                <input
-                  type="range"
-                  min="0"
-                  max="5"
-                  step="1"
-                  value={minAvailableDays}
-                  onChange={(e) => setMinAvailableDays(Number(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                />
-                <span className="text-sm font-semibold text-primary w-10 text-right">{minAvailableDays}d</span>
-              </div>
-            </div>
-          </div>
+        <div className="relative">
+          <Input
+            type="text"
+            placeholder="Search resource name or role..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+          <Search className="w-4 h-4 text-tertiary absolute left-3 top-1/2 -translate-y-1/2" />
+        </div>
 
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search resource name or role..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-default rounded-lg focus:ring-2 focus:ring-blue-400 focus:outline-none text-sm"
-            />
-            <Search className="w-4 h-4 text-tertiary absolute left-3 top-3" />
-          </div>
-
-          {/* Results List */}
-          <div className="space-y-3">
-            <h4 className="text-xs font-semibold text-secondary uppercase tracking-wide">Available Resources ({filteredResults.length})</h4>
-            {filteredResults.length === 0 ? (
-              <div className="text-center py-8 text-tertiary text-sm">
-                No resources match the selected criteria or availability percentage.
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-100 max-h-[300px] overflow-y-auto pr-1">
-                {filteredResults.map((item) => (
-                  <div key={item.resource.id} className="py-3 flex items-center justify-between hover:bg-surface-muted px-2 rounded-lg transition-colors">
-                    <div className="flex items-center gap-3">
-                      {item.resource.avatarUrl ? (
-                        <img referrerPolicy="no-referrer" src={item.resource.avatarUrl} alt={item.resource.name} className="w-10 h-10 rounded-full object-cover border border-subtle" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-700 text-sm">
-                          {item.resource.name.split(' ').map((n) => n[0]).join('')}
-                        </div>
-                      )}
-                      <div>
-                        <h5 className="text-sm font-semibold text-primary">{item.resource.name}</h5>
-                        <p className="text-xs text-secondary">{item.resource.role}</p>
+        <div className="space-y-3">
+          <h4 className="text-xs font-semibold text-secondary uppercase tracking-wide">
+            Available Resources ({filteredResults.length})
+          </h4>
+          {filteredResults.length === 0 ? (
+            <div className="text-center py-8 text-tertiary text-sm">
+              No resources match the selected criteria or availability percentage.
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100 max-h-[300px] overflow-y-auto pr-1">
+              {filteredResults.map((item) => (
+                <div
+                  key={item.resource.id}
+                  className="py-3 flex items-center justify-between hover:bg-surface-muted px-2 rounded-lg transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    {item.resource.avatarUrl ? (
+                      <img
+                        referrerPolicy="no-referrer"
+                        src={item.resource.avatarUrl}
+                        alt={item.resource.name}
+                        className="w-10 h-10 rounded-full object-cover border border-subtle"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-700 text-sm">
+                        {item.resource.name.split(' ').map((n) => n[0]).join('')}
                       </div>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <div className="text-sm font-bold text-emerald-600">{item.availableDays}d free/wk</div>
-                        <div className="text-xs text-tertiary">({item.assignedDays}d booked peak)</div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          onBookResource(item.resource.id, startDate, endDate);
-                          onClose();
-                        }}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" /> Book
-                      </button>
+                    )}
+                    <div>
+                      <h5 className="text-sm font-semibold text-primary">{item.resource.name}</h5>
+                      <p className="text-xs text-secondary">{item.resource.role}</p>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <div className="text-sm font-bold text-emerald-600">{item.availableDays}d free/wk</div>
+                      <div className="text-xs text-tertiary">({item.assignedDays}d booked peak)</div>
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      leftIcon={<Plus className="w-3.5 h-3.5" />}
+                      onClick={() => {
+                        onBookResource(item.resource.id, startDate, endDate);
+                        onClose();
+                      }}
+                    >
+                      Book
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };
 
@@ -332,9 +380,9 @@ interface ScheduleModalProps {
     unit: ScheduleUnit;
     roster: Roster;
     title?: string;
-    billableType: BillableType;
+    billableType?: BillableType;
     bookingType: BookingCommitmentType;
-  }) => void;
+  }) => void | Promise<void>;
   initialResourceId?: string;
   initialProjectId?: string;
   initialStartDate?: string;
@@ -355,6 +403,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
   const fromProject = Boolean(initialProjectId) && !initialResourceId;
   const fromResource = Boolean(initialResourceId) && !initialProjectId;
   const fromBoth = Boolean(initialResourceId) && Boolean(initialProjectId);
+  const fromScratch = !initialResourceId && !initialProjectId;
 
   const [resourceId, setResourceId] = useState(initialResourceId);
   const [projectId, setProjectId] = useState(initialProjectId);
@@ -363,11 +412,13 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
   const [unit, setUnit] = useState<ScheduleUnit>('utilization');
   const [roster, setRoster] = useState<Roster>([...DEFAULT_ROSTER] as Roster);
   const [bookingType, setBookingType] = useState<BookingCommitmentType>('hard');
+  const [billableOverride, setBillableOverride] = useState(BILLABLE_OVERRIDE_EMPTY);
   const [endsMode, setEndsMode] = useState<BookingEndsMode>('on');
   const [endsOnDate, setEndsOnDate] = useState(initialEndDate);
   const [occurrences, setOccurrences] = useState(
     () => weeklyOccurrencesForEndDate(initialStartDate, initialEndDate),
   );
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -378,11 +429,29 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
       setUnit('utilization');
       setRoster([...DEFAULT_ROSTER] as Roster);
       setBookingType('hard');
+      setBillableOverride(BILLABLE_OVERRIDE_EMPTY);
       setEndsMode('on');
       setEndsOnDate(initialEndDate);
       setOccurrences(weeklyOccurrencesForEndDate(initialStartDate, initialEndDate));
     }
   }, [isOpen, initialResourceId, initialProjectId, initialStartDate, initialEndDate]);
+
+  const resourceOptions = useMemo(
+    () =>
+      resources.map((res) => ({
+        value: res.id,
+        label: `${res.name} (${res.role})`,
+      })),
+    [resources],
+  );
+  const projectOptions = useMemo(
+    () =>
+      projects.map((proj) => ({
+        value: proj.id,
+        label: `${proj.name} - ${proj.client}`,
+      })),
+    [projects],
+  );
 
   if (!isOpen) return null;
 
@@ -394,7 +463,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
     ? getProjectCategoryLabel(getProjectCategory(billingProject))
     : '—';
 
-  const allocationResourceId = fromProject ? resourceId : initialResourceId;
+  const allocationResourceId = fromProject || fromScratch ? resourceId : initialResourceId;
   const allocationResource =
     resources.find((r) => r.id === allocationResourceId) || fixedResource || null;
   const dailyCapacity = personDailyCapacityHours(
@@ -430,220 +499,219 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
     setOccurrences(weeklyOccurrencesForEndDate(nextStart, safeEnd || nextStart));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const resolvedResourceId = fromProject ? resourceId : initialResourceId;
-    const resolvedProjectId = fromResource ? projectId : initialProjectId;
+    const resolvedResourceId = fromProject || fromScratch ? resourceId : initialResourceId;
+    const resolvedProjectId = fromResource || fromScratch ? projectId : initialProjectId;
     const project = projects.find((p) => p.id === resolvedProjectId);
     const resolvedEnd = resolveEndDate();
     if (!resolvedResourceId || !resolvedProjectId || !project || !startDate || !resolvedEnd) return;
     if (startDate > resolvedEnd) return;
 
-    onSave({
-      resourceId: resolvedResourceId,
-      projectId: resolvedProjectId,
-      startDate,
-      endDate: resolvedEnd,
-      unit,
-      roster: weekdayRoster(weekdayAllocationValue(roster)),
-      title: title.trim() || undefined,
-      billableType: getBillableTypeFromProject(project),
-      bookingType,
-    });
-    onClose();
+    setSaving(true);
+    try {
+      await onSave({
+        resourceId: resolvedResourceId,
+        projectId: resolvedProjectId,
+        startDate,
+        endDate: resolvedEnd,
+        unit,
+        roster: weekdayRoster(weekdayAllocationValue(roster)),
+        title: title.trim() || undefined,
+        billableType: parseBillableOverride(billableOverride),
+        bookingType,
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
+  const description = fromProject
+    ? 'Assign a Resource on a Project'
+    : fromResource
+      ? 'Assign a Project to a Resource'
+      : 'Schedule a Resource on a Project';
+
   return (
-    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="schedule-modal-container">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-2xl w-full flex flex-col overflow-hidden max-h-[92vh]">
-        <div className="app-card-header px-6 py-4 flex justify-between items-start gap-4">
-          <div>
-            <h3 className="text-lg font-semibold text-primary">Schedule Resource</h3>
-            <p className="text-xs text-secondary mt-0.5">
-              {fromProject ? 'Assign a Resource on a Project' : fromResource ? 'Assign a Project to a Resource' : 'Schedule a Resource on a Project'}
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
-          {fromBoth && fixedResource && fixedProject && (
-            <div className="p-3 bg-surface-muted rounded-lg border border-subtle space-y-2">
-              <div>
-                <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Resource</p>
-                <p className="text-sm font-bold text-primary">{fixedResource.name}</p>
-                <p className="text-xs text-secondary">{fixedResource.role}</p>
-              </div>
-              <div className="border-t border-subtle pt-2">
-                <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Project</p>
-                <p className="text-sm font-bold text-primary">{fixedProject.name}</p>
-                <p className="text-xs text-secondary">{fixedProject.client}</p>
-                <p className="text-xs text-secondary mt-1">
-                  Billing: <span className="font-semibold text-primary">{billingLabel}</span>
-                </p>
-              </div>
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      id="schedule-modal-container"
+      size="lg"
+      title="Schedule Resource"
+      description={description}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            type="submit"
+            form="schedule-modal-form"
+            loading={saving}
+          >
+            {saving ? 'Scheduling…' : 'Schedule'}
+          </Button>
+        </>
+      }
+    >
+      <form id="schedule-modal-form" onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        {fromBoth && fixedResource && fixedProject && (
+          <div className="p-3 bg-surface-muted rounded-lg border border-subtle space-y-2">
+            <div>
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Resource</p>
+              <p className="text-sm font-bold text-primary">{fixedResource.name}</p>
+              <p className="text-xs text-secondary">{fixedResource.role}</p>
             </div>
-          )}
-
-          {fromProject && fixedProject && (
-            <div className="p-3 bg-surface-muted rounded-lg border border-subtle">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-1">Project</p>
+            <div className="border-t border-subtle pt-2">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Project</p>
               <p className="text-sm font-bold text-primary">{fixedProject.name}</p>
               <p className="text-xs text-secondary">{fixedProject.client}</p>
               <p className="text-xs text-secondary mt-1">
                 Billing: <span className="font-semibold text-primary">{billingLabel}</span>
               </p>
             </div>
-          )}
-
-          {fromResource && fixedResource && (
-            <div className="p-3 bg-surface-muted rounded-lg border border-subtle">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-1">Resource</p>
-              <p className="text-sm font-bold text-primary">{fixedResource.name}</p>
-              <p className="text-xs text-secondary">{fixedResource.role}</p>
-            </div>
-          )}
-
-          {fromProject && (
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Resource</label>
-              <select
-                value={resourceId}
-                onChange={(e) => setResourceId(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                required
-              >
-                <option value="" disabled>-- Select Resource --</option>
-                {resources.map((res) => (
-                  <option key={res.id} value={res.id}>
-                    {res.name} ({res.role})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {fromResource && (
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Project</label>
-              <select
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                required
-              >
-                <option value="" disabled>-- Select Project --</option>
-                {projects.map((proj) => (
-                  <option key={proj.id} value={proj.id}>
-                    {proj.name} - {proj.client}
-                  </option>
-                ))}
-              </select>
-              {billingProject && (
-                <p className="text-xs text-secondary mt-1.5">
-                  Billing: <span className="font-semibold text-primary">{billingLabel}</span>
-                  <span className="text-tertiary"> (from project)</span>
-                </p>
-              )}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Title (optional)</label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Sprint support"
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-            />
           </div>
+        )}
 
-          <AllocationFields
-            unit={unit}
-            roster={roster}
-            dailyCapacity={dailyCapacity}
-            startDate={startDate}
-            endDate={resolveEndDate()}
-            onChange={({ unit: nextUnit, roster: nextRoster }) => {
-              setUnit(nextUnit);
-              setRoster(nextRoster);
-            }}
+        {fromProject && fixedProject && (
+          <div className="p-3 bg-surface-muted rounded-lg border border-subtle">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-1">Project</p>
+            <p className="text-sm font-bold text-primary">{fixedProject.name}</p>
+            <p className="text-xs text-secondary">{fixedProject.client}</p>
+            <p className="text-xs text-secondary mt-1">
+              Billing: <span className="font-semibold text-primary">{billingLabel}</span>
+            </p>
+          </div>
+        )}
+
+        {fromResource && fixedResource && (
+          <div className="p-3 bg-surface-muted rounded-lg border border-subtle">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-1">Resource</p>
+            <p className="text-sm font-bold text-primary">{fixedResource.name}</p>
+            <p className="text-xs text-secondary">{fixedResource.role}</p>
+          </div>
+        )}
+
+        {(fromProject || fromScratch) && (
+          <Field>
+            <Label className="text-sm font-semibold">Resource</Label>
+            <Combobox
+              value={resourceId || null}
+              onChange={(v) => setResourceId(v || '')}
+              options={resourceOptions}
+              placeholder="Type at least 3 characters…"
+            />
+          </Field>
+        )}
+
+        {(fromResource || fromScratch) && (
+          <Field>
+            <Label className="text-sm font-semibold">Project</Label>
+            <Combobox
+              value={projectId || null}
+              onChange={(v) => setProjectId(v || '')}
+              options={projectOptions}
+              placeholder="Type at least 3 characters…"
+            />
+            {billingProject && (
+              <Description>
+                Billing: <span className="font-semibold text-secondary">{billingLabel}</span>
+                <span className="text-tertiary"> (from project)</span>
+              </Description>
+            )}
+          </Field>
+        )}
+
+        <Field>
+          <Label className="text-sm font-semibold">Title (optional)</Label>
+          <Input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Sprint support"
           />
+        </Field>
 
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Start</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => syncFromStartDate(e.target.value)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              required
-            />
-          </div>
+        <AllocationFields
+          unit={unit}
+          roster={roster}
+          dailyCapacity={dailyCapacity}
+          startDate={startDate}
+          endDate={resolveEndDate()}
+          onChange={({ unit: nextUnit, roster: nextRoster }) => {
+            setUnit(nextUnit);
+            setRoster(nextRoster);
+          }}
+        />
 
-          <div>
-            <p className="text-sm font-semibold text-secondary mb-2">Ends</p>
-            <div className="space-y-2">
-              <label className="flex items-center gap-3 text-sm text-secondary">
-                <input type="radio" name="create-ends-mode" checked={endsMode === 'on'} onChange={() => setEndsMode('on')} />
-                <span className="w-12 font-medium">On</span>
-                <input
-                  type="date"
-                  value={endsOnDate}
-                  disabled={endsMode !== 'on'}
-                  onChange={(e) => syncFromEndsOnDate(e.target.value)}
-                  className="text-sm border border-default rounded-lg p-1.5 disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </label>
-              <label className="flex items-center gap-3 text-sm text-secondary">
-                <input type="radio" name="create-ends-mode" checked={endsMode === 'after'} onChange={() => setEndsMode('after')} />
-                <span className="w-12 font-medium">After</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={occurrences}
-                  disabled={endsMode !== 'after'}
-                  onChange={(e) => syncFromOccurrences(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-20 text-sm border border-default rounded-lg p-1.5 text-center disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-                <span className="text-xs text-tertiary">Occurrences (weeks)</span>
-              </label>
-            </div>
-          </div>
+        <Field>
+          <Label className="text-sm font-semibold">Start</Label>
+          <Input
+            type="date"
+            value={startDate}
+            onChange={(e) => syncFromStartDate(e.target.value)}
+            required
+          />
+        </Field>
 
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Booking</label>
-            <select
-              value={bookingType}
-              onChange={(e) => setBookingType(e.target.value as BookingCommitmentType)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-            >
-              <option value="hard">Hard</option>
-              <option value="soft">Soft</option>
-            </select>
+        <div>
+          <p className="text-sm font-semibold text-secondary mb-2">Ends</p>
+          <div className="space-y-2">
+            <label className="flex items-center gap-3 text-sm text-secondary">
+              <input type="radio" name="create-ends-mode" checked={endsMode === 'on'} onChange={() => setEndsMode('on')} />
+              <span className="w-12 font-medium">On</span>
+              <Input
+                type="date"
+                value={endsOnDate}
+                disabled={endsMode !== 'on'}
+                onChange={(e) => syncFromEndsOnDate(e.target.value)}
+                className="w-auto"
+              />
+            </label>
+            <label className="flex items-center gap-3 text-sm text-secondary">
+              <input type="radio" name="create-ends-mode" checked={endsMode === 'after'} onChange={() => setEndsMode('after')} />
+              <span className="w-12 font-medium">After</span>
+              <Input
+                type="number"
+                min={1}
+                value={occurrences}
+                disabled={endsMode !== 'after'}
+                onChange={(e) => syncFromOccurrences(Math.max(1, Number(e.target.value) || 1))}
+                className="w-20 text-center"
+              />
+              <span className="text-xs text-tertiary">Occurrences (weeks)</span>
+            </label>
           </div>
+        </div>
 
-          <div className="pt-4 flex justify-end gap-3 border-t border-subtle">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-emerald-800 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-sm font-semibold cursor-pointer"
-            >
-              Schedule
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <Field>
+          <Label className="text-sm font-semibold">Booking</Label>
+          <Select
+            value={bookingType}
+            onChange={(v) => setBookingType(v)}
+            options={[
+              { value: 'hard' as const, label: 'Hard' },
+              { value: 'soft' as const, label: 'Soft' },
+            ]}
+          />
+        </Field>
+
+        <Field>
+          <Label className="text-sm font-semibold">Billable type</Label>
+          <Select
+            value={billableOverride}
+            onChange={(v) => setBillableOverride(String(v))}
+            options={billableOverrideOptions(billingProject || selectedProject)}
+          />
+          <p className="mt-1 text-xs text-tertiary">
+            Leave as project default unless this allocation needs a different type.
+          </p>
+        </Field>
+      </form>
+    </Modal>
   );
 };
 
@@ -653,7 +721,7 @@ interface RequestModalProps {
   onClose: () => void;
   resources: Resource[];
   projects: Project[];
-  onSave: (request: Omit<BookingRequest, 'id' | 'status'>) => void;
+  onSave: (request: Omit<BookingRequest, 'id' | 'status'>) => void | Promise<void>;
 }
 
 export const RequestModal: React.FC<RequestModalProps> = ({
@@ -669,13 +737,14 @@ export const RequestModal: React.FC<RequestModalProps> = ({
   const [endDate, setEndDate] = useState('2026-06-30');
   const [unit, setUnit] = useState<ScheduleUnit>('utilization');
   const [roster, setRoster] = useState<Roster>([...DEFAULT_ROSTER] as Roster);
-  const [billableType, setBillableType] = useState<BillableType>('Billable');
+  const [billableOverride, setBillableOverride] = useState(BILLABLE_OVERRIDE_EMPTY);
   const [notes, setNotes] = useState('');
   const [consultingUnitId, setConsultingUnitId] = useState('');
   const [practiceAreaId, setPracticeAreaId] = useState('');
   const [competencyCenterId, setCompetencyCenterId] = useState('');
   const [siteId, setSiteId] = useState('');
   const [jobLevelId, setJobLevelId] = useState('');
+  const [saving, setSaving] = useState(false);
   const { data: lookups } = useLookups();
 
   useEffect(() => {
@@ -686,7 +755,7 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       setEndDate('2026-06-30');
       setUnit('utilization');
       setRoster([...DEFAULT_ROSTER] as Roster);
-      setBillableType('Billable');
+      setBillableOverride(BILLABLE_OVERRIDE_EMPTY);
       setNotes('');
       setConsultingUnitId('');
       setPracticeAreaId('');
@@ -696,6 +765,23 @@ export const RequestModal: React.FC<RequestModalProps> = ({
     }
   }, [isOpen, resources, projects]);
 
+  const resourceOptions = useMemo(
+    () =>
+      resources.map((res) => ({
+        value: res.id,
+        label: `${res.name} (${res.role})`,
+      })),
+    [resources],
+  );
+  const projectOptions = useMemo(
+    () =>
+      projects.map((proj) => ({
+        value: proj.id,
+        label: `${proj.name} - ${proj.client}`,
+      })),
+    [projects],
+  );
+
   if (!isOpen) return null;
 
   const filteredCompetencyCenters = (lookups?.competencyCenters || []).filter(
@@ -703,230 +789,186 @@ export const RequestModal: React.FC<RequestModalProps> = ({
   );
 
   const requestResource = resources.find((r) => r.id === resourceId);
+  const requestProject = projects.find((p) => p.id === projectId);
   const dailyCapacity = personDailyCapacityHours(
     requestResource?.weeklyHours,
     requestResource?.fte,
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resourceId || !projectId || !startDate || !endDate) return;
     if (startDate > endDate) return;
-    onSave({
-      resourceId,
-      projectId,
-      billableType,
-      referenceId: crypto.randomUUID(),
-      bookingType: 'hard',
-      probability: 100,
-      notes,
-      consultingUnitId: consultingUnitId || null,
-      practiceAreaId: practiceAreaId || null,
-      competencyCenterId: competencyCenterId || null,
-      siteId: siteId || null,
-      jobLevelId: jobLevelId || null,
-      startDate,
-      endDate,
-      unit,
-      roster: weekdayRoster(weekdayAllocationValue(roster)),
-    });
-    onClose();
+    setSaving(true);
+    try {
+      await onSave({
+        resourceId,
+        projectId,
+        billableType: parseBillableOverride(billableOverride),
+        referenceId: crypto.randomUUID(),
+        bookingType: 'hard',
+        probability: 100,
+        notes,
+        consultingUnitId: consultingUnitId || null,
+        practiceAreaId: practiceAreaId || null,
+        competencyCenterId: competencyCenterId || null,
+        siteId: siteId || null,
+        jobLevelId: jobLevelId || null,
+        startDate,
+        endDate,
+        unit,
+        roster: weekdayRoster(weekdayAllocationValue(roster)),
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
+  const anyOption = { value: '', label: 'Any' };
+  const cuOptions = [anyOption, ...(lookups?.consultingUnits || []).map((e) => ({ value: e.id, label: e.name }))];
+  const practiceOptions = [anyOption, ...(lookups?.practiceAreas || []).map((e) => ({ value: e.id, label: e.name }))];
+  const ccOptions = [anyOption, ...filteredCompetencyCenters.map((e) => ({ value: e.id, label: e.name }))];
+  const siteOptions = [anyOption, ...(lookups?.sites || []).map((e) => ({ value: e.id, label: e.name }))];
+  const levelOptions = [anyOption, ...(lookups?.jobLevels || []).map((e) => ({ value: e.id, label: e.name }))];
+
   return (
-    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="request-modal-container">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-lg w-full flex flex-col overflow-hidden max-h-[90vh]">
-        <div className="app-card-header px-6 py-4 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
-            <Plus className="w-5 h-5 text-emerald-500" />
-            Request Project Booking
-          </h3>
-          <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
-            <X className="w-5 h-5" />
-          </button>
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      id="request-modal-container"
+      size="md"
+      title={
+        <span className="flex items-center gap-2">
+          <Plus className="w-5 h-5 text-emerald-500" />
+          Request Project Booking
+        </span>
+      }
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            type="submit"
+            form="request-modal-form"
+            loading={saving}
+          >
+            {saving ? 'Submitting…' : 'Submit Approval Request'}
+          </Button>
+        </>
+      }
+    >
+      <form id="request-modal-form" onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        <Field>
+          <Label className="text-sm font-semibold">Allocate Resource</Label>
+          <Combobox
+            value={resourceId || null}
+            onChange={(v) => setResourceId(v || '')}
+            options={resourceOptions}
+            placeholder="Type at least 3 characters…"
+            nullable={false}
+          />
+        </Field>
+
+        <Field>
+          <Label className="text-sm font-semibold">Select Project</Label>
+          <Combobox
+            value={projectId || null}
+            onChange={(v) => setProjectId(v || '')}
+            options={projectOptions}
+            placeholder="Type at least 3 characters…"
+            nullable={false}
+          />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-4">
+          <Field>
+            <Label className="text-sm font-semibold">Start Date</Label>
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              required
+            />
+          </Field>
+          <Field>
+            <Label className="text-sm font-semibold">End Date</Label>
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              required
+            />
+          </Field>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Allocate Resource</label>
-            <select
-              value={resourceId}
-              onChange={(e) => setResourceId(e.target.value)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              required
-            >
-              {resources.map((res) => (
-                <option key={res.id} value={res.id}>
-                  {res.name} ({res.role})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Select Project</label>
-            <select
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              required
-            >
-              {projects.map((proj) => (
-                <option key={proj.id} value={proj.id}>
-                  {proj.name} - {proj.client}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-                required
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Type</label>
-            <select
-              value={billableType}
-              onChange={(e) => setBillableType(e.target.value as BillableType)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-            >
-              <option value="Billable">Billable</option>
-              <option value="Non-billable">Non-billable</option>
-              <option value="Opportunity">Opportunity</option>
-            </select>
-          </div>
-
-          <AllocationFields
-            unit={unit}
-            roster={roster}
-            dailyCapacity={dailyCapacity}
-            startDate={startDate}
-            endDate={endDate}
-            onChange={({ unit: nextUnit, roster: nextRoster }) => {
-              setUnit(nextUnit);
-              setRoster(nextRoster);
-            }}
+        <Field>
+          <Label className="text-sm font-semibold">Billable type</Label>
+          <Select
+            value={billableOverride}
+            onChange={(v) => setBillableOverride(String(v))}
+            options={billableOverrideOptions(requestProject)}
           />
+          <p className="mt-1 text-xs text-tertiary">
+            Leave as project default unless this request needs a different type.
+          </p>
+        </Field>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">CU</label>
-              <select
-                value={consultingUnitId}
-                onChange={(e) => setConsultingUnitId(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              >
-                <option value="">Any</option>
-                {(lookups?.consultingUnits || []).map((entry) => (
-                  <option key={entry.id} value={entry.id}>{entry.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Practice</label>
-              <select
-                value={practiceAreaId}
-                onChange={(e) => {
-                  setPracticeAreaId(e.target.value);
-                  setCompetencyCenterId('');
-                }}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              >
-                <option value="">Any</option>
-                {(lookups?.practiceAreas || []).map((entry) => (
-                  <option key={entry.id} value={entry.id}>{entry.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">CC</label>
-              <select
-                value={competencyCenterId}
-                onChange={(e) => setCompetencyCenterId(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              >
-                <option value="">Any</option>
-                {filteredCompetencyCenters.map((entry) => (
-                  <option key={entry.id} value={entry.id}>{entry.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Site</label>
-              <select
-                value={siteId}
-                onChange={(e) => setSiteId(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              >
-                <option value="">Any</option>
-                {(lookups?.sites || []).map((entry) => (
-                  <option key={entry.id} value={entry.id}>{entry.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-semibold text-secondary mb-1">Level</label>
-              <select
-                value={jobLevelId}
-                onChange={(e) => setJobLevelId(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              >
-                <option value="">Any</option>
-                {(lookups?.jobLevels || []).map((option) => (
-                  <option key={option.id} value={option.id}>{option.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+        <AllocationFields
+          unit={unit}
+          roster={roster}
+          dailyCapacity={dailyCapacity}
+          startDate={startDate}
+          endDate={endDate}
+          onChange={({ unit: nextUnit, roster: nextRoster }) => {
+            setUnit(nextUnit);
+            setRoster(nextRoster);
+          }}
+        />
 
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Justification / Request Notes</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="E.g. Support project launch workload buffer, replacing vacant head count."
-              rows={3}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+        <div className="grid grid-cols-2 gap-4">
+          <Field>
+            <Label className="text-sm font-semibold">CU</Label>
+            <Select value={consultingUnitId} onChange={(v) => setConsultingUnitId(v)} options={cuOptions} />
+          </Field>
+          <Field>
+            <Label className="text-sm font-semibold">Practice</Label>
+            <Select
+              value={practiceAreaId}
+              onChange={(v) => {
+                setPracticeAreaId(v);
+                setCompetencyCenterId('');
+              }}
+              options={practiceOptions}
             />
-          </div>
+          </Field>
+          <Field>
+            <Label className="text-sm font-semibold">CC</Label>
+            <Select value={competencyCenterId} onChange={(v) => setCompetencyCenterId(v)} options={ccOptions} />
+          </Field>
+          <Field>
+            <Label className="text-sm font-semibold">Site</Label>
+            <Select value={siteId} onChange={(v) => setSiteId(v)} options={siteOptions} />
+          </Field>
+          <Field className="col-span-2">
+            <Label className="text-sm font-semibold">Level</Label>
+            <Select value={jobLevelId} onChange={(v) => setJobLevelId(v)} options={levelOptions} />
+          </Field>
+        </div>
 
-          <div className="pt-4 flex justify-end gap-3 border-t border-subtle">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 border border-default text-secondary hover:bg-gray-50 rounded-lg text-sm font-medium cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium cursor-pointer"
-            >
-              Submit Approval Request
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <Field>
+          <Label className="text-sm font-semibold">Justification / Request Notes</Label>
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="E.g. Support project launch workload buffer, replacing vacant head count."
+            rows={3}
+          />
+        </Field>
+      </form>
+    </Modal>
   );
 };
 
@@ -937,8 +979,14 @@ interface EditAllocationModalProps {
   block: AllocationBlock | null;
   projects: Project[];
   resources: Resource[];
+  /** All schedules — used to clamp Entire-mode dates away from same person+project siblings. */
+  assignments?: ScheduleAssignment[];
   onUpdate: (block: AllocationBlock, updated: ScheduleEditPatch) => void | Promise<void>;
-  onDelete: (block: AllocationBlock) => void;
+  onDelete: (block: AllocationBlock) => void | Promise<void>;
+  /** Prefill apply scope when opening (e.g. from week menu or bar drag). */
+  initialApplyScope?: ScheduleApplyScope;
+  /** Prefill partial From/To when opening in partial mode. */
+  initialPartialRange?: { startDate: string; endDate: string } | null;
 }
 
 export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
@@ -947,8 +995,11 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   block,
   projects,
   resources,
+  assignments = [],
   onUpdate,
   onDelete,
+  initialApplyScope = 'entire',
+  initialPartialRange = null,
 }) => {
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -957,7 +1008,12 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   const [endsMode, setEndsMode] = useState<BookingEndsMode>('on');
   const [endsOnDate, setEndsOnDate] = useState('');
   const [occurrences, setOccurrences] = useState(4);
+  const [applyScope, setApplyScope] = useState<ScheduleApplyScope>('entire');
+  const [billableOverride, setBillableOverride] = useState(BILLABLE_OVERRIDE_EMPTY);
+  const [partialFrom, setPartialFrom] = useState('');
+  const [partialTo, setPartialTo] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !block) return;
@@ -968,22 +1024,65 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
     setEndsMode('on');
     setEndsOnDate(block.endDate);
     setOccurrences(weeklyOccurrencesForEndDate(block.startDate, block.endDate));
-  }, [isOpen, block]);
+    setApplyScope(initialApplyScope);
+    setBillableOverride(block.billableType || BILLABLE_OVERRIDE_EMPTY);
+    const from = initialPartialRange?.startDate || block.startDate;
+    const to = initialPartialRange?.endDate || block.endDate;
+    setPartialFrom(from < block.startDate ? block.startDate : from > block.endDate ? block.endDate : from);
+    setPartialTo(to > block.endDate ? block.endDate : to < block.startDate ? block.startDate : to);
+    setSaving(false);
+    setDeleting(false);
+  }, [isOpen, block, initialApplyScope, initialPartialRange]);
 
   if (!isOpen || !block) return null;
 
   const resource = resources.find((r) => r.id === block.resourceId);
   const project = projects.find((p) => p.id === block.projectId);
-  const billingLabel = project ? getProjectCategoryLabel(getProjectCategory(project)) : block.billableType;
+  const effectiveBillable = getEffectiveBillableType(block.billableType, project);
+  const billingLabel = project
+    ? `${getProjectCategoryLabel(getProjectCategory(project))}${block.billableType ? ` · override ${block.billableType}` : ''}`
+    : effectiveBillable;
   const dailyCapacity = personDailyCapacityHours(resource?.weeklyHours, resource?.fte);
+  const { minStart: siblingMinStart, maxEnd: siblingMaxEnd } = scheduleSiblingDateBounds(
+    block,
+    assignments,
+  );
+
+  const clampEntireStart = (nextStart: string): string => {
+    let start = nextStart;
+    if (siblingMinStart && start < siblingMinStart) start = siblingMinStart;
+    if (siblingMaxEnd && start > siblingMaxEnd) start = siblingMaxEnd;
+    return start;
+  };
+
+  const clampEntireEnd = (nextEnd: string, forStart: string): string => {
+    let end = nextEnd < forStart ? forStart : nextEnd;
+    if (siblingMaxEnd && end > siblingMaxEnd) end = siblingMaxEnd;
+    if (siblingMinStart && end < siblingMinStart) end = siblingMinStart;
+    if (end < forStart) end = forStart;
+    return end;
+  };
 
   const resolveEndDate = (): string => {
-    if (endsMode === 'after') return endDateAfterWeeklyOccurrences(startDate, occurrences);
-    return endsOnDate || startDate;
+    const raw = endsMode === 'after'
+      ? endDateAfterWeeklyOccurrences(startDate, occurrences)
+      : (endsOnDate || startDate);
+    return clampEntireEnd(raw, startDate);
+  };
+
+  const clampPartial = (from: string, to: string) => {
+    let nextFrom = from;
+    let nextTo = to;
+    if (nextFrom < block.startDate) nextFrom = block.startDate;
+    if (nextFrom > block.endDate) nextFrom = block.endDate;
+    if (nextTo > block.endDate) nextTo = block.endDate;
+    if (nextTo < block.startDate) nextTo = block.startDate;
+    if (nextTo < nextFrom) nextTo = nextFrom;
+    return { from: nextFrom, to: nextTo };
   };
 
   const syncFromEndsOnDate = (nextEnd: string) => {
-    const safeEnd = startDate && nextEnd < startDate ? startDate : nextEnd;
+    const safeEnd = clampEntireEnd(nextEnd, startDate);
     setEndsOnDate(safeEnd);
     setOccurrences(weeklyOccurrencesForEndDate(startDate, safeEnd));
   };
@@ -991,33 +1090,68 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   const syncFromOccurrences = (nextOccurrences: number) => {
     const n = Math.max(1, nextOccurrences);
     setOccurrences(n);
-    setEndsOnDate(endDateAfterWeeklyOccurrences(startDate, n));
+    const computed = endDateAfterWeeklyOccurrences(startDate, n);
+    const safeEnd = clampEntireEnd(computed, startDate);
+    setEndsOnDate(safeEnd);
+    if (safeEnd !== computed) {
+      setOccurrences(weeklyOccurrencesForEndDate(startDate, safeEnd));
+    }
   };
 
   const syncFromStartDate = (nextStart: string) => {
-    setStartDate(nextStart);
+    const safeStart = clampEntireStart(nextStart);
+    setStartDate(safeStart);
     if (endsMode === 'after') {
-      setEndsOnDate(endDateAfterWeeklyOccurrences(nextStart, occurrences));
+      const computed = endDateAfterWeeklyOccurrences(safeStart, occurrences);
+      const safeEnd = clampEntireEnd(computed, safeStart);
+      setEndsOnDate(safeEnd);
+      if (safeEnd !== computed) {
+        setOccurrences(weeklyOccurrencesForEndDate(safeStart, safeEnd));
+      }
       return;
     }
-    const safeEnd = endsOnDate && endsOnDate < nextStart ? nextStart : endsOnDate;
+    const safeEnd = clampEntireEnd(endsOnDate || safeStart, safeStart);
     setEndsOnDate(safeEnd);
-    setOccurrences(weeklyOccurrencesForEndDate(nextStart, safeEnd || nextStart));
+    setOccurrences(weeklyOccurrencesForEndDate(safeStart, safeEnd));
   };
+
+  const allocationStart = applyScope === 'partial' ? partialFrom : startDate;
+  const allocationEnd = applyScope === 'partial' ? partialTo : resolveEndDate();
+
+  const partialValid =
+    Boolean(partialFrom && partialTo) &&
+    partialFrom <= partialTo &&
+    partialFrom >= block.startDate &&
+    partialTo <= block.endDate;
+
+  const entireValid = Boolean(startDate && resolveEndDate() && startDate <= resolveEndDate());
+  const canSubmit = applyScope === 'partial' ? partialValid : entireValid;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const resolvedEnd = resolveEndDate();
-    if (!startDate || !resolvedEnd || startDate > resolvedEnd) return;
+    if (!canSubmit) return;
     setSaving(true);
     try {
-      await onUpdate(block, {
-        title: title.trim() || undefined,
-        startDate,
-        endDate: resolvedEnd,
-        unit,
-        roster: weekdayRoster(weekdayAllocationValue(roster)),
-      });
+      if (applyScope === 'partial') {
+        await onUpdate(block, {
+          title: title.trim() || undefined,
+          startDate: partialFrom,
+          endDate: partialTo,
+          unit,
+          roster: weekdayRoster(weekdayAllocationValue(roster)),
+          applyScope: 'partial',
+        });
+      } else {
+        await onUpdate(block, {
+          title: title.trim() || undefined,
+          startDate,
+          endDate: resolveEndDate(),
+          unit,
+          roster: weekdayRoster(weekdayAllocationValue(roster)),
+          applyScope: 'entire',
+          billableType: parseBillableOverride(billableOverride) ?? null,
+        });
+      }
       onClose();
     } finally {
       setSaving(false);
@@ -1025,129 +1159,217 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="edit-allocation-modal-container">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-2xl w-full flex flex-col overflow-hidden max-h-[92vh]">
-        <div className="app-card-header px-6 py-4 flex justify-between items-start gap-4">
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      id="edit-allocation-modal-container"
+      size="lg"
+      title="Schedule Resource"
+      description="Edit allocation on a project"
+      footer={
+        <>
+          <Button
+            variant="danger"
+            className="mr-auto"
+            leftIcon={<Trash2 className="w-4 h-4" />}
+            loading={deleting}
+            disabled={saving}
+            onClick={() => {
+              if (!safeConfirm('Delete this entire allocation?')) return;
+              void (async () => {
+                setDeleting(true);
+                try {
+                  await onDelete(block);
+                  onClose();
+                } finally {
+                  setDeleting(false);
+                }
+              })();
+            }}
+          >
+            {deleting ? 'Deleting…' : 'Delete'}
+          </Button>
+          <Button variant="ghost" onClick={onClose} disabled={saving || deleting}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            type="submit"
+            form="edit-allocation-modal-form"
+            loading={saving}
+            disabled={!canSubmit || deleting}
+          >
+            {saving ? 'Updating…' : 'Update'}
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-allocation-modal-form" onSubmit={(e) => void handleSubmit(e)} className="space-y-5">
+        <div className="p-3 bg-surface-muted rounded-lg border border-subtle grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-primary">Schedule Resource</h3>
-            <p className="text-xs text-secondary mt-0.5">Edit allocation on a project</p>
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Resource</p>
+            <p className="text-sm font-bold text-primary">{resource?.name || 'Unknown'}</p>
+            <p className="text-xs text-secondary">{resource?.role}</p>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
-            <X className="w-5 h-5" />
-          </button>
+          <div>
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Project</p>
+            <p className="text-sm font-bold text-primary">{project?.name || 'Unknown'}</p>
+            <p className="text-xs text-secondary">{billingLabel} · {block.bookingType}</p>
+          </div>
         </div>
 
-        <form onSubmit={(e) => void handleSubmit(e)} className="p-6 space-y-5 overflow-y-auto">
-          <div className="p-3 bg-surface-muted rounded-lg border border-subtle grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Resource</p>
-              <p className="text-sm font-bold text-primary">{resource?.name || 'Unknown'}</p>
-              <p className="text-xs text-secondary">{resource?.role}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Project</p>
-              <p className="text-sm font-bold text-primary">{project?.name || 'Unknown'}</p>
-              <p className="text-xs text-secondary">{billingLabel} · {block.bookingType}</p>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Title (optional)</label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Sprint support"
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-            />
-          </div>
-
-          <AllocationFields
-            unit={unit}
-            roster={roster}
-            dailyCapacity={dailyCapacity}
-            startDate={startDate}
-            endDate={resolveEndDate()}
-            onChange={({ unit: nextUnit, roster: nextRoster }) => {
-              setUnit(nextUnit);
-              setRoster(nextRoster);
-            }}
+        <Field>
+          <Label className="text-sm font-semibold">Apply changes to</Label>
+          <RadioGroup
+            aria-label="Apply changes to"
+            value={applyScope}
+            onChange={(value) => setApplyScope(value as ScheduleApplyScope)}
+            options={[
+              {
+                value: 'entire',
+                label: 'Entire allocation',
+                description: `${block.startDate} – ${block.endDate}`,
+              },
+              {
+                value: 'partial',
+                label: 'Partial range',
+                description: 'Change hours only inside a date window',
+              },
+            ]}
           />
+        </Field>
 
-          <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Start</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => syncFromStartDate(e.target.value)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+        <Field>
+          <Label className="text-sm font-semibold">Title (optional)</Label>
+          <Input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Sprint support"
+          />
+        </Field>
+
+        {applyScope === 'entire' && (
+          <Field>
+            <Label className="text-sm font-semibold">Billable type</Label>
+            <Select
+              value={billableOverride}
+              onChange={(v) => setBillableOverride(String(v))}
+              options={billableOverrideOptions(project)}
             />
-          </div>
+            <p className="mt-1 text-xs text-tertiary">
+              Effective: {getEffectiveBillableType(parseBillableOverride(billableOverride), project)}
+            </p>
+          </Field>
+        )}
 
-          <div>
-            <p className="text-sm font-semibold text-secondary mb-2">Ends</p>
-            <div className="space-y-2">
-              <label className="flex items-center gap-3 text-sm text-secondary">
-                <input type="radio" name="ends-mode" checked={endsMode === 'on'} onChange={() => setEndsMode('on')} />
-                <span className="w-12 font-medium">On</span>
-                <input
+        <AllocationFields
+          unit={unit}
+          roster={roster}
+          dailyCapacity={dailyCapacity}
+          startDate={allocationStart}
+          endDate={allocationEnd}
+          onChange={({ unit: nextUnit, roster: nextRoster }) => {
+            setUnit(nextUnit);
+            setRoster(nextRoster);
+          }}
+        />
+
+        {applyScope === 'partial' ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field>
+                <Label className="text-sm font-semibold">From</Label>
+                <Input
                   type="date"
-                  value={endsOnDate}
-                  disabled={endsMode !== 'on'}
-                  onChange={(e) => syncFromEndsOnDate(e.target.value)}
-                  className="text-sm border border-default rounded-lg p-1.5 disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  min={block.startDate}
+                  max={block.endDate}
+                  value={partialFrom}
+                  onChange={(e) => {
+                    const { from, to } = clampPartial(e.target.value, partialTo || e.target.value);
+                    setPartialFrom(from);
+                    setPartialTo(to);
+                  }}
                 />
-              </label>
-              <label className="flex items-center gap-3 text-sm text-secondary">
-                <input type="radio" name="ends-mode" checked={endsMode === 'after'} onChange={() => setEndsMode('after')} />
-                <span className="w-12 font-medium">After</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={occurrences}
-                  disabled={endsMode !== 'after'}
-                  onChange={(e) => syncFromOccurrences(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-20 text-sm border border-default rounded-lg p-1.5 text-center disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              </Field>
+              <Field>
+                <Label className="text-sm font-semibold">To</Label>
+                <Input
+                  type="date"
+                  min={block.startDate}
+                  max={block.endDate}
+                  value={partialTo}
+                  onChange={(e) => {
+                    const { from, to } = clampPartial(partialFrom || e.target.value, e.target.value);
+                    setPartialFrom(from);
+                    setPartialTo(to);
+                  }}
                 />
-                <span className="text-xs text-tertiary">Occurrences (weeks)</span>
-              </label>
+              </Field>
             </div>
+            <Description>
+              Outside this range the current allocation is unchanged. The booking may split into up to 3 parts.
+            </Description>
           </div>
+        ) : (
+          <>
+            <Field>
+              <Label className="text-sm font-semibold">Start</Label>
+              <Input
+                type="date"
+                min={siblingMinStart ?? undefined}
+                max={siblingMaxEnd ?? undefined}
+                value={startDate}
+                onChange={(e) => syncFromStartDate(e.target.value)}
+              />
+            </Field>
 
-          <div className="pt-2 flex flex-wrap justify-between items-center gap-3 border-t border-subtle">
-            <button
-              type="button"
-              onClick={() => {
-                if (safeConfirm('Delete this entire allocation?')) {
-                  onDelete(block);
-                  onClose();
-                }
-              }}
-              className="px-3 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium flex items-center gap-1 cursor-pointer"
-            >
-              <Trash2 className="w-4 h-4" /> Delete
-            </button>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-emerald-800 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-60"
-              >
-                Update
-              </button>
+            <div>
+              <p className="text-sm font-semibold text-secondary mb-2">Ends</p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-3 text-sm text-secondary">
+                  <input type="radio" name="ends-mode" checked={endsMode === 'on'} onChange={() => setEndsMode('on')} />
+                  <span className="w-12 font-medium">On</span>
+                  <Input
+                    type="date"
+                    min={startDate || siblingMinStart || undefined}
+                    max={siblingMaxEnd ?? undefined}
+                    value={endsOnDate}
+                    disabled={endsMode !== 'on'}
+                    onChange={(e) => syncFromEndsOnDate(e.target.value)}
+                    className="w-auto"
+                  />
+                </label>
+                <label className="flex items-center gap-3 text-sm text-secondary">
+                  <input type="radio" name="ends-mode" checked={endsMode === 'after'} onChange={() => setEndsMode('after')} />
+                  <span className="w-12 font-medium">After</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={occurrences}
+                    disabled={endsMode !== 'after'}
+                    onChange={(e) => syncFromOccurrences(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-20 text-center"
+                  />
+                  <span className="text-xs text-tertiary">Occurrences (weeks)</span>
+                </label>
+              </div>
+              {(siblingMinStart || siblingMaxEnd) && (
+                <Description className="mt-2">
+                  Dates are limited so this allocation stays clear of other bookings for the same resource and project
+                  {siblingMinStart && siblingMaxEnd
+                    ? ` (${siblingMinStart} – ${siblingMaxEnd})`
+                    : siblingMinStart
+                      ? ` (from ${siblingMinStart})`
+                      : ` (through ${siblingMaxEnd})`}
+                  .
+                </Description>
+              )}
             </div>
-          </div>
-        </form>
-      </div>
-    </div>
+          </>
+        )}
+      </form>
+    </Modal>
   );
 };
 
@@ -1155,7 +1377,7 @@ interface ResourceFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   resource?: Resource | null;
-  onSave: (resource: Omit<Resource, 'id'> | Resource) => void;
+  onSave: (resource: Omit<Resource, 'id'> | Resource) => void | Promise<void>;
 }
 
 export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, onClose, resource, onSave }) => {
@@ -1168,6 +1390,7 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
   const [role, setRole] = useState('Consultant');
   const [jobLevelId, setJobLevelId] = useState<string>('');
   const [status, setStatus] = useState<'Active' | 'Inactive'>('Active');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1193,7 +1416,7 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim()) return;
 
@@ -1208,82 +1431,116 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
       status,
     };
 
-    if (isEdit && resource) {
-      onSave({ ...resource, ...payload });
-    } else {
-      onSave(payload);
+    setSaving(true);
+    try {
+      if (isEdit && resource) {
+        await onSave({ ...resource, ...payload });
+      } else {
+        await onSave(payload);
+      }
+      onClose();
+    } finally {
+      setSaving(false);
     }
-    onClose();
   };
 
-  return (
-    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden">
-        <div className="app-card-header px-6 py-4 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
-            <Plus className="w-5 h-5 text-blue-500" />
-            {isEdit ? 'Edit Resource' : 'Add Resource'}
-          </h3>
-          <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  const jobLevelOptions = [
+    { value: '', label: 'Any' },
+    ...(lookups?.jobLevels || []).map((level) => ({ value: level.id, label: level.name })),
+  ];
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-secondary mb-1 uppercase">First Name</label>
-              <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" required />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-secondary mb-1 uppercase">Last Name</label>
-              <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" required />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1 uppercase">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane.doe@example.com" className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1 uppercase">Employee ID</label>
-            <input type="text" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} placeholder="EMP-1006" className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1 uppercase">Designation</label>
-            <input type="text" value={role} onChange={(e) => setRole(e.target.value)} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" required />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-secondary mb-1 uppercase">Job Level</label>
-              <select value={jobLevelId} onChange={(e) => setJobLevelId(e.target.value)} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none">
-                <option value="">Any</option>
-                {(lookups?.jobLevels || []).map((level) => (
-                  <option key={level.id} value={level.id}>{level.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-secondary mb-1 uppercase">Status</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value as 'Active' | 'Inactive')} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none">
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
-            </div>
-          </div>
-          <div className="pt-4 flex justify-end gap-3 border-t border-subtle">
-            <button type="button" onClick={onClose} className="px-4 py-2 border border-default text-secondary hover:bg-gray-50 rounded-lg text-sm font-medium">Cancel</button>
-            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">{isEdit ? 'Save Changes' : 'Add Resource'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      size="sm"
+      title={
+        <span className="flex items-center gap-2">
+          <Plus className="w-5 h-5 text-blue-500" />
+          {isEdit ? 'Edit Resource' : 'Add Resource'}
+        </span>
+      }
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            type="submit"
+            form="resource-form-modal-form"
+            loading={saving}
+          >
+            {saving
+              ? isEdit
+                ? 'Saving…'
+                : 'Adding…'
+              : isEdit
+                ? 'Save Changes'
+                : 'Add Resource'}
+          </Button>
+        </>
+      }
+    >
+      <form id="resource-form-modal-form" onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Field>
+            <Label className="uppercase">First Name</Label>
+            <Input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+          </Field>
+          <Field>
+            <Label className="uppercase">Last Name</Label>
+            <Input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
+          </Field>
+        </div>
+        <Field>
+          <Label className="uppercase">Email</Label>
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="jane.doe@example.com"
+          />
+        </Field>
+        <Field>
+          <Label className="uppercase">Employee ID</Label>
+          <Input
+            type="text"
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            placeholder="EMP-1006"
+          />
+        </Field>
+        <Field>
+          <Label className="uppercase">Designation</Label>
+          <Input type="text" value={role} onChange={(e) => setRole(e.target.value)} required />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field>
+            <Label className="uppercase">Job Level</Label>
+            <Select value={jobLevelId} onChange={(v) => setJobLevelId(v)} options={jobLevelOptions} />
+          </Field>
+          <Field>
+            <Label className="uppercase">Status</Label>
+            <Select
+              value={status}
+              onChange={(v) => setStatus(v)}
+              options={[
+                { value: 'Active' as const, label: 'Active' },
+                { value: 'Inactive' as const, label: 'Inactive' },
+              ]}
+            />
+          </Field>
+        </div>
+      </form>
+    </Modal>
   );
 };
 
 interface AddResourceModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (resource: Omit<Resource, 'id'>) => void;
+  onAdd: (resource: Omit<Resource, 'id'>) => void | Promise<void>;
 }
 
 export const AddResourceModal: React.FC<AddResourceModalProps> = ({ isOpen, onClose, onAdd }) => (
@@ -1294,7 +1551,7 @@ interface ProjectFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   project?: Project | null;
-  onSave: (project: Omit<Project, 'id'> | Project) => void;
+  onSave: (project: Omit<Project, 'id'> | Project) => void | Promise<void>;
 }
 
 export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({ isOpen, onClose, project, onSave }) => {
@@ -1303,6 +1560,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({ isOpen, onCl
   const [projectId, setProjectId] = useState('');
   const [winProbability, setWinProbability] = useState(100);
   const [isOpportunity, setIsOpportunity] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1322,7 +1580,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({ isOpen, onCl
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
@@ -1347,60 +1605,103 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({ isOpen, onCl
       }),
     );
 
-    if (isEdit && project) {
-      onSave({ ...project, ...payload, color: categoryColor });
-    } else {
-      onSave({ ...payload, color: categoryColor, textColor: 'text-white' });
+    setSaving(true);
+    try {
+      if (isEdit && project) {
+        await onSave({ ...project, ...payload, color: categoryColor });
+      } else {
+        await onSave({ ...payload, color: categoryColor, textColor: 'text-white' });
+      }
+      onClose();
+    } finally {
+      setSaving(false);
     }
-    onClose();
   };
 
   return (
-    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden">
-        <div className="app-card-header px-6 py-4 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
-            <Plus className="w-5 h-5 text-blue-500" />
-            {isEdit ? 'Edit Project' : 'Add Project'}
-          </h3>
-          <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1 uppercase">Project Name</label>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Phoenix Platform" className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" required />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1 uppercase">Project ID</label>
-            <input type="text" value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="e.g. PRJ-DEMO-001" className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" />
-          </div>
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="is-opportunity" checked={isOpportunity} onChange={(e) => setIsOpportunity(e.target.checked)} className="rounded border-default" />
-            <label htmlFor="is-opportunity" className="text-sm text-primary">Opportunity (not yet committed)</label>
-          </div>
-          {isOpportunity && (
-            <div>
-              <label className="block text-xs font-bold text-secondary mb-1 uppercase">Win Probability (%)</label>
-              <input type="number" min={0} max={99} value={winProbability} onChange={(e) => setWinProbability(Number(e.target.value))} className="w-full text-xs border border-default rounded-lg p-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none" />
-            </div>
-          )}
-          <div className="pt-4 flex justify-end gap-3 border-t border-subtle">
-            <button type="button" onClick={onClose} className="px-4 py-2 border border-default text-secondary hover:bg-gray-50 rounded-lg text-sm font-medium">Cancel</button>
-            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">{isEdit ? 'Save Changes' : 'Add Project'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      size="sm"
+      title={
+        <span className="flex items-center gap-2">
+          <Plus className="w-5 h-5 text-blue-500" />
+          {isEdit ? 'Edit Project' : 'Add Project'}
+        </span>
+      }
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            type="submit"
+            form="project-form-modal-form"
+            loading={saving}
+          >
+            {saving
+              ? isEdit
+                ? 'Saving…'
+                : 'Adding…'
+              : isEdit
+                ? 'Save Changes'
+                : 'Add Project'}
+          </Button>
+        </>
+      }
+    >
+      <form id="project-form-modal-form" onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+        <Field>
+          <Label className="uppercase">Project Name</Label>
+          <Input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Phoenix Platform"
+            required
+          />
+        </Field>
+        <Field>
+          <Label className="uppercase">Project ID</Label>
+          <Input
+            type="text"
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            placeholder="e.g. PRJ-DEMO-001"
+          />
+        </Field>
+        <Field className="flex-row items-center gap-2">
+          <Checkbox
+            checked={isOpportunity}
+            onChange={setIsOpportunity}
+            id="is-opportunity"
+          />
+          <Label htmlFor="is-opportunity" className="text-sm text-primary font-normal">
+            Opportunity (not yet committed)
+          </Label>
+        </Field>
+        {isOpportunity && (
+          <Field>
+            <Label className="uppercase">Win Probability (%)</Label>
+            <Input
+              type="number"
+              min={0}
+              max={99}
+              value={winProbability}
+              onChange={(e) => setWinProbability(Number(e.target.value))}
+            />
+          </Field>
+        )}
+      </form>
+    </Modal>
   );
 };
 
 interface AddProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (project: Omit<Project, 'id'>) => void;
+  onAdd: (project: Omit<Project, 'id'>) => void | Promise<void>;
 }
 
 export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClose, onAdd }) => (

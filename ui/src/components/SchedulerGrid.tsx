@@ -3,15 +3,25 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState, useCallback, useImperativeHandle, forwardRef, memo } from 'react';
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  useImperativeHandle,
+  forwardRef,
+  memo,
+} from 'react';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
-import { Calendar, CalendarClock, Loader2, Plus, User, UserCheck } from 'lucide-react';
+import { Calendar, Loader2, MoreVertical, Plus, User, UserCheck } from 'lucide-react';
 import {
   getProjectCategory,
   getAllocationBlockChrome,
   getAllocationBlockBackgroundFromDays,
   getRequestBlockChrome,
   getRequestBlockBackground,
+  getEffectiveBillableType,
   type ProjectCategory,
   type AllocationBlockChrome,
 } from '../lib/projectCategory';
@@ -34,16 +44,29 @@ import { requestDateBounds } from '../types/api';
 import { useSchedulesInRange } from '../hooks/useSchedules';
 import { useHorizontalTimelineWindow } from '../hooks/useHorizontalTimelineWindow';
 import { SkillMatcherModal } from './SkillMatcherModal';
-import { BulkScheduleModal } from './BulkScheduleModal';
+import {
+  Card,
+  IconButton,
+  Menu,
+  DropdownMenuButton,
+  DropdownMenuItems,
+  DropdownMenuItem,
+} from './ui';
 
 const WEEKDAY_COL_WIDTH = 52;
 const WEEKEND_COL_WIDTH = 28;
 const FETCH_BUFFER_DAYS = 14;
+const SIDEBAR_WIDTH = 190;
 
 export type SchedulerGridHandle = {
   scrollByWeeks: (weeks: number) => void;
   focusOnDate: (date: string) => void;
   focusToday: () => void;
+};
+
+export type EditBlockOptions = {
+  applyScope?: 'entire' | 'partial';
+  partialRange?: { startDate: string; endDate: string } | null;
 };
 
 interface SchedulerGridProps {
@@ -52,10 +75,14 @@ interface SchedulerGridProps {
   vacations: Vacation[];
   requests?: BookingRequest[];
   filterCriteria?: Record<string, unknown> | null;
+  focusedEntityId?: string | null;
+  hideUnbooked?: boolean;
   isFilterApplying?: boolean;
   viewMode?: 'resources' | 'projects' | 'requests';
-  onEditBlock: (block: AllocationBlock) => void;
-  onOpenScheduleModalWithRes: (resId: string, projId?: string) => void;
+  onEditBlock: (block: AllocationBlock, options?: EditBlockOptions) => void;
+  onSplitBlock?: (block: AllocationBlock, splitDate: string) => void | Promise<void>;
+  onDeleteBlock?: (block: AllocationBlock) => void | Promise<void>;
+  onOpenScheduleModalWithRes: (resId: string, projId?: string, startDate?: string, endDate?: string) => void;
   onAddResourceClick: () => void;
   onAddProjectClick?: () => void;
   onApproveRequestWithResource?: (requestId: string, resourceId: string) => void | Promise<void>;
@@ -91,34 +118,73 @@ function DailyTotalStrip({
   columns,
   totals,
   capacity,
-  resourceName,
+  label,
+  selectionStartIdx,
+  selectionEndIdx,
+  selectionActive,
+  onDayMouseDown,
+  onDayMouseEnter,
 }: {
   columns: DayColumnLayout[];
   totals: Map<string, number>;
   capacity: number;
-  resourceName: string;
+  label: string;
+  selectionStartIdx?: number | null;
+  selectionEndIdx?: number | null;
+  selectionActive?: boolean;
+  onDayMouseDown?: (index: number) => void;
+  onDayMouseEnter?: (index: number) => void;
 }) {
-  return (
-    <div className="absolute inset-x-0 top-[2px] h-[18px] pointer-events-none z-[6]">
-      {columns.map((col) => {
-        if (col.isWeekend) return null;
-        const hours = totals.get(col.dateStr) || 0;
-        if (hours <= 0) return null;
+  const hasSelection =
+    selectionActive &&
+    selectionStartIdx != null &&
+    selectionEndIdx != null &&
+    selectionStartIdx >= 0 &&
+    selectionEndIdx >= 0;
 
+  return (
+    <div data-date-select-strip className="absolute inset-x-0 top-[2px] h-[18px] z-[6]">
+      {columns.map((col, index) => {
+        const hours = totals.get(col.dateStr) || 0;
+        const inSelection =
+          hasSelection && index >= selectionStartIdx! && index <= selectionEndIdx!;
         const util = capacity > 0 ? hours / capacity : 0;
         const over = util > 1.01;
-        const barClass = over
-          ? 'bg-rose-500/45 text-rose-950'
-          : 'bg-emerald-500/40 text-emerald-950';
+        const showBar = !col.isWeekend;
+        const barClass =
+          hours <= 0
+            ? 'bg-surface-muted text-tertiary border border-subtle'
+            : over
+              ? 'bg-rose-500/45 text-rose-950'
+              : 'bg-emerald-500/40 text-emerald-950';
 
         return (
           <div
             key={`util-${col.dateStr}`}
-            style={{ left: `${col.left + 1}px`, width: `${Math.max(col.width - 2, 2)}px` }}
-            className={`absolute top-0 h-[18px] rounded-[3px] flex items-center justify-center text-[10px] font-bold tabular-nums leading-none ${barClass}`}
-            title={`${resourceName} · ${col.dateStr}: ${hours.toFixed(1)}h / ${capacity.toFixed(1)}h (${Math.round(util * 100)}%)`}
+            style={{ left: `${col.left}px`, width: `${col.width}px` }}
+            onMouseDown={(event) => {
+              if (event.button !== 0 || !onDayMouseDown) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onDayMouseDown(index);
+            }}
+            onMouseEnter={() => onDayMouseEnter?.(index)}
+            className={`absolute top-0 h-[18px] cursor-ew-resize ${
+              inSelection ? 'bg-sky-400/35' : 'hover:bg-sky-400/15'
+            }`}
+            title={
+              capacity > 0
+                ? `${label} · ${col.dateStr}: ${hours.toFixed(1)}h / ${capacity.toFixed(1)}h (${Math.round(util * 100)}%) — drag to select dates`
+                : `${label} · ${col.dateStr}: ${hours.toFixed(1)}h — drag to select dates`
+            }
           >
-            {formatDayHours(hours)}
+            {showBar && (
+              <div
+                className={`absolute inset-x-[1px] inset-y-0 rounded-[3px] flex items-center justify-center text-[10px] font-bold tabular-nums leading-none pointer-events-none ${barClass}`}
+              >
+                {formatDayHours(hours)}
+              </div>
+            )}
           </div>
         );
       })}
@@ -132,16 +198,28 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   vacations,
   requests = [],
   filterCriteria = null,
+  focusedEntityId = null,
+  hideUnbooked = false,
   isFilterApplying = false,
   viewMode = 'resources',
   onEditBlock,
+  onSplitBlock,
+  onDeleteBlock,
   onOpenScheduleModalWithRes,
   onApproveRequestWithResource,
   onUnassignRequest,
 }, ref) {
   const [selectedRequestForSkills, setSelectedRequestForSkills] = useState<BookingRequest | null>(null);
-  const [bulkScheduleResource, setBulkScheduleResource] = useState<Resource | null>(null);
-  const [bulkScheduleProject, setBulkScheduleProject] = useState<Project | null>(null);
+  const [busyBlockId, setBusyBlockId] = useState<string | null>(null);
+  const [dateSelection, setDateSelection] = useState<{
+    anchorIndex: number;
+    focusIndex: number;
+    entityId: string;
+  } | null>(null);
+  const [isSelectingDates, setIsSelectingDates] = useState(false);
+  const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
+  const isSelectingDatesRef = useRef(false);
+  const selectionMenuRef = useRef<HTMLDivElement>(null);
 
   const {
     scrollRef,
@@ -174,6 +252,92 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     () => buildDayColumnLayout(windowStart, windowEnd, WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH),
     [windowStart, windowEnd],
   );
+
+  const selectedDateRange = useMemo(() => {
+    if (!dateSelection || dayColumns.length === 0) return null;
+    const startIdx = Math.min(dateSelection.anchorIndex, dateSelection.focusIndex);
+    const endIdx = Math.max(dateSelection.anchorIndex, dateSelection.focusIndex);
+    const startDate = dayColumns[startIdx]?.dateStr;
+    const endDate = dayColumns[endIdx]?.dateStr;
+    if (!startDate || !endDate) return null;
+    const bounds = getDateRangeBounds(dayColumns, startDate, endDate);
+    if (!bounds) return null;
+    return {
+      startIdx,
+      endIdx,
+      startDate,
+      endDate,
+      bounds,
+      entityId: dateSelection.entityId,
+    };
+  }, [dateSelection, dayColumns]);
+
+  const clearDateSelection = useCallback(() => {
+    isSelectingDatesRef.current = false;
+    setIsSelectingDates(false);
+    setSelectionMenuOpen(false);
+    setDateSelection(null);
+  }, []);
+
+  const beginDateSelection = useCallback((index: number, entityId: string) => {
+    isSelectingDatesRef.current = true;
+    setIsSelectingDates(true);
+    setSelectionMenuOpen(false);
+    setDateSelection({ anchorIndex: index, focusIndex: index, entityId });
+  }, []);
+
+  const updateDateSelection = useCallback((index: number) => {
+    if (!isSelectingDatesRef.current) return;
+    setDateSelection((prev) => (prev ? { ...prev, focusIndex: index } : prev));
+  }, []);
+
+  const endDateSelection = useCallback(() => {
+    if (!isSelectingDatesRef.current) return;
+    isSelectingDatesRef.current = false;
+    setIsSelectingDates(false);
+  }, []);
+
+  useEffect(() => {
+    const onMouseUp = () => endDateSelection();
+    window.addEventListener('mouseup', onMouseUp);
+    return () => window.removeEventListener('mouseup', onMouseUp);
+  }, [endDateSelection]);
+
+  useEffect(() => {
+    if (!dateSelection) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') clearDateSelection();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [dateSelection, clearDateSelection]);
+
+  useEffect(() => {
+    if (!selectionMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (selectionMenuRef.current?.contains(target)) return;
+      setSelectionMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [selectionMenuOpen]);
+
+  // Drop selection when the visible timeline window or view changes.
+  useEffect(() => {
+    clearDateSelection();
+  }, [windowStart, windowEnd, viewMode, clearDateSelection]);
+
+  const handleScheduleSelectedRange = useCallback(() => {
+    if (!selectedDateRange) return;
+    const { startDate, endDate, entityId } = selectedDateRange;
+    clearDateSelection();
+    if (viewMode === 'projects') {
+      onOpenScheduleModalWithRes('', entityId, startDate, endDate);
+    } else {
+      onOpenScheduleModalWithRes(entityId, undefined, startDate, endDate);
+    }
+  }, [selectedDateRange, onOpenScheduleModalWithRes, clearDateSelection, viewMode]);
 
   const monthsHeader = useMemo(() => {
     const groups: { monthName: string; width: number }[] = [];
@@ -221,27 +385,33 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         }
       });
     } else if (viewMode === 'projects') {
-      const hasScheduleOnly = filterCriteria?.has_schedule === true;
       filterProjects(projects, filterCriteria).forEach((proj) => {
+        if (focusedEntityId && proj.id !== focusedEntityId) return;
         const projBlocks = allBlocks.filter((b) => b.projectId === proj.id);
-        if (hasScheduleOnly && projBlocks.length === 0) return;
+        if (hideUnbooked && projBlocks.length === 0) return;
         const resIds = Array.from(new Set(projBlocks.map((b) => b.resourceId)));
 
         const projectLanes: Lane[] =
           resIds.length === 0
             ? [{ resource: { id: 'none', name: 'Unassigned', role: '-' }, blocks: [] }]
-            : resIds.map((rId) => ({
-                resource: resources.find((r) => r.id === rId) || { id: rId, name: 'Resource', role: 'Role' },
-                blocks: projBlocks.filter((b) => b.resourceId === rId),
-              }));
+            : resIds
+                .map((rId) => ({
+                  resource: resources.find((r) => r.id === rId) || { id: rId, name: 'Resource', role: 'Role' },
+                  blocks: projBlocks.filter((b) => b.resourceId === rId),
+                }))
+                .sort((a, b) =>
+                  (a.resource?.name || '').localeCompare(b.resource?.name || '', undefined, {
+                    sensitivity: 'base',
+                  }),
+                );
 
         rows.push({ id: `row-${proj.id}`, project: proj, projectLanes });
       });
     } else {
-      const hasScheduleOnly = filterCriteria?.has_schedule === true;
       filterPeople(resources, filterCriteria).forEach((res) => {
+        if (focusedEntityId && res.id !== focusedEntityId) return;
         const resBlocks = allBlocks.filter((b) => b.resourceId === res.id);
-        if (hasScheduleOnly && resBlocks.length === 0) return;
+        if (hideUnbooked && resBlocks.length === 0) return;
         const projIds = Array.from(new Set(resBlocks.map((b) => b.projectId)));
 
         const projectLanes: Lane[] =
@@ -250,19 +420,25 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
                 project: { id: 'none', name: 'Unassigned', client: '-', color: 'bg-gray-400', textColor: 'text-gray-400' },
                 blocks: [],
               }]
-            : projIds.map((pId) => ({
-                project: projects.find((p) => p.id === pId) || {
-                  id: pId, name: 'Project', client: 'Client', color: 'bg-emerald-500', textColor: 'text-white',
-                },
-                blocks: resBlocks.filter((b) => b.projectId === pId),
-              }));
+            : projIds
+                .map((pId) => ({
+                  project: projects.find((p) => p.id === pId) || {
+                    id: pId, name: 'Project', client: 'Client', color: 'bg-emerald-500', textColor: 'text-white',
+                  },
+                  blocks: resBlocks.filter((b) => b.projectId === pId),
+                }))
+                .sort((a, b) =>
+                  (a.project?.name || '').localeCompare(b.project?.name || '', undefined, {
+                    sensitivity: 'base',
+                  }),
+                );
 
         rows.push({ id: `row-${res.id}`, resource: res, projectLanes });
       });
     }
 
     return rows;
-  }, [resources, projects, rangeAssignments, requests, filterCriteria, viewMode]);
+  }, [resources, projects, rangeAssignments, requests, filterCriteria, focusedEntityId, hideUnbooked, viewMode]);
 
   const resourceDailyTotals = useMemo(() => {
     if (viewMode !== 'resources') return null;
@@ -272,6 +448,27 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
       const capacity = personDailyCapacityHours(row.resource.weeklyHours, row.resource.fte);
       const blocks = row.projectLanes.flatMap((lane) => lane.blocks);
       map.set(row.resource.id, buildDailyTotals(blocks, windowStart, windowEnd, capacity));
+    }
+    return map;
+  }, [assignmentRows, viewMode, windowStart, windowEnd]);
+
+  const projectDailyTotals = useMemo(() => {
+    if (viewMode !== 'projects') return null;
+    const map = new Map<string, Map<string, number>>();
+    for (const row of assignmentRows) {
+      if (!row.project) continue;
+      const totals = new Map<string, number>();
+      for (const lane of row.projectLanes) {
+        if (!lane.resource || lane.resource.id === 'none') continue;
+        const capacity = personDailyCapacityHours(lane.resource.weeklyHours, lane.resource.fte);
+        for (const block of lane.blocks) {
+          const blockTotals = buildDailyTotals([block], windowStart, windowEnd, capacity);
+          for (const [date, hours] of blockTotals) {
+            totals.set(date, (totals.get(date) || 0) + hours);
+          }
+        }
+      }
+      map.set(row.project.id, totals);
     }
     return map;
   }, [assignmentRows, viewMode, windowStart, windowEnd]);
@@ -321,30 +518,34 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     let blockChrome: AllocationBlockChrome | null = null;
     let borderClass = 'border';
 
+    const proj = lane.project || row.project || projects.find((p) => p.id === block.projectId);
+    const effectiveBillable = getEffectiveBillableType(block.billableType, proj);
+    const projectIsOpportunity = proj ? getProjectCategory(proj) === 'Opportunity' : false;
+    // Hue from effective billable type; opportunity projects (and opportunity type) stay translucent.
+    const translucent = projectIsOpportunity || effectiveBillable === 'Opportunity';
+
     if (viewMode === 'requests' && lane.request) {
       const isAssigned = !!lane.request.resourceId;
-      const category = row.project ? getProjectCategory(row.project) : 'Billable';
+      blockCategory = effectiveBillable;
       if (isAssigned) {
-        blockCategory = category;
-        blockChrome = getAllocationBlockChrome(category);
+        blockChrome = getAllocationBlockChrome(effectiveBillable, { translucent });
         blockSurfaceStyle = getAllocationBlockBackgroundFromDays(0, blockChrome);
       } else {
-        blockChrome = getRequestBlockChrome(category);
+        blockChrome = getRequestBlockChrome(effectiveBillable);
         blockSurfaceStyle = getRequestBlockBackground(blockChrome);
       }
       textClass = blockChrome.textClass;
       if (!isAssigned) borderClass = 'border border-dotted';
     } else {
-      const proj = lane.project || row.project || projects.find((p) => p.id === block.projectId);
-      if (proj) {
-        blockCategory = getProjectCategory(proj);
-        blockChrome = getAllocationBlockChrome(blockCategory);
-        blockSurfaceStyle = getAllocationBlockBackgroundFromDays(0, blockChrome);
-        textClass = blockChrome.textClass;
-      }
+      blockCategory = effectiveBillable;
+      blockChrome = getAllocationBlockChrome(effectiveBillable, { translucent });
+      blockSurfaceStyle = getAllocationBlockBackgroundFromDays(0, blockChrome);
+      textClass = blockChrome.textClass;
     }
 
-    const resourceBlockTop = viewMode === 'resources' ? 24 : 6;
+    const blockTopOffset = viewMode === 'requests' ? 6 : 24;
+    const showBlockMenu = viewMode !== 'requests';
+    const blockBusy = busyBlockId === block.scheduleId;
 
     return weekSegments.map((seg) => {
       const bounds = getDateRangeBounds(dayColumns, seg.startDate, seg.endDate);
@@ -352,8 +553,15 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
 
       const segLabel = weekSegmentLabel(block.unit, block.roster, seg.activeDays);
       const subtitle = blockCategory
-        ? `${segLabel} - ${blockCategory.charAt(0)} - ${block.billableType}`
+        ? `${segLabel} - ${blockCategory.charAt(0)} - ${effectiveBillable}`
         : segLabel;
+
+      const splitDate = addDays(seg.endDate, 1);
+      const canSplit =
+        showBlockMenu &&
+        Boolean(onSplitBlock) &&
+        splitDate > block.startDate &&
+        splitDate <= block.endDate;
 
       return (
         <div
@@ -362,25 +570,95 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
             left: `${bounds.left + 4}px`,
             width: `${Math.max(bounds.width - 8, 8)}px`,
             height: '44px',
-            top: `${resourceBlockTop}px`,
+            top: `${blockTopOffset}px`,
             ...blockSurfaceStyle,
           }}
           onClick={() => {
             if (viewMode === 'requests' && lane.request) {
               setSelectedRequestForSkills(lane.request);
-            } else {
-              onEditBlock(block);
+              return;
             }
+            onEditBlock(block);
           }}
-          className={`absolute select-none overflow-hidden text-left px-2 py-1.5 rounded-lg transition-transform hover:scale-[1.01] cursor-pointer shadow-sm flex items-center gap-2 ${borderClass} ${textClass} z-[5]`}
+          className={`absolute select-none overflow-visible text-left px-2 py-1.5 rounded-lg transition-transform hover:scale-[1.01] cursor-pointer shadow-sm flex items-center gap-1 ${borderClass} ${textClass} z-[5]`}
           title={`${blockTitle}\n${seg.startDate} – ${seg.endDate}`}
         >
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 pr-1">
             <div className="text-[11px] font-bold tracking-tight leading-tight truncate">{blockLabel}</div>
             <div className="text-[9px] font-medium opacity-90 truncate mt-0.5">{subtitle}</div>
           </div>
           {showPersonIcon && <User className="w-3.5 h-3.5 shrink-0" />}
           {showUserCheckIcon && <UserCheck className="w-3.5 h-3.5 shrink-0" />}
+          {showBlockMenu && (
+            <div
+              data-block-menu
+              className="shrink-0 opacity-70 hover:opacity-100"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Menu>
+                <DropdownMenuButton
+                  variant="ghost"
+                  size="icon"
+                  className={`h-6 w-6 text-inherit hover:bg-black/10 ${blockBusy ? 'opacity-100' : ''}`}
+                  aria-label="Allocation actions"
+                  title="Allocation actions"
+                  loading={blockBusy}
+                  disabled={Boolean(busyBlockId)}
+                >
+                  <MoreVertical className="w-3.5 h-3.5" />
+                </DropdownMenuButton>
+                <DropdownMenuItems anchor="bottom end" className="z-[80]">
+                  <DropdownMenuItem
+                    disabled={Boolean(busyBlockId)}
+                    onClick={() => onEditBlock(block)}
+                  >
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={Boolean(busyBlockId)}
+                    onClick={() =>
+                      onEditBlock(block, {
+                        applyScope: 'partial',
+                        partialRange: { startDate: seg.startDate, endDate: seg.endDate },
+                      })
+                    }
+                  >
+                    Edit this week…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!canSplit || Boolean(busyBlockId)}
+                    onClick={() => {
+                      if (!canSplit || !onSplitBlock || busyBlockId) return;
+                      setBusyBlockId(block.scheduleId);
+                      void Promise.resolve(onSplitBlock(block, splitDate)).finally(() => {
+                        setBusyBlockId(null);
+                      });
+                    }}
+                  >
+                    Split after this week
+                  </DropdownMenuItem>
+                  {onDeleteBlock && (
+                    <DropdownMenuItem
+                      destructive
+                      disabled={Boolean(busyBlockId)}
+                      onClick={() => {
+                        if (busyBlockId) return;
+                        if (window.confirm('Delete this entire allocation?')) {
+                          setBusyBlockId(block.scheduleId);
+                          void Promise.resolve(onDeleteBlock(block)).finally(() => {
+                            setBusyBlockId(null);
+                          });
+                        }
+                      }}
+                    >
+                      Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuItems>
+              </Menu>
+            </div>
+          )}
         </div>
       );
     });
@@ -392,12 +670,27 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         ? []
         : getApprovedVacationsForResource(row.resource.id);
 
+    const rowEntityId = row.resource?.id ?? row.project?.id ?? null;
+    const rowEntityLabel = row.resource?.name ?? row.project?.name ?? '';
+
     const capacity = row.resource
       ? personDailyCapacityHours(row.resource.weeklyHours, row.resource.fte)
-      : 8;
-    const dailyTotals = row.resource
-      ? resourceDailyTotals?.get(row.resource.id) ?? null
-      : null;
+      : row.project
+        ? row.projectLanes.reduce((sum, lane) => {
+            if (!lane.resource || lane.resource.id === 'none') return sum;
+            return sum + personDailyCapacityHours(lane.resource.weeklyHours, lane.resource.fte);
+          }, 0)
+        : 0;
+
+    const dailyTotals =
+      viewMode === 'resources' && row.resource
+        ? resourceDailyTotals?.get(row.resource.id) ?? new Map<string, number>()
+        : viewMode === 'projects' && row.project
+          ? projectDailyTotals?.get(row.project.id) ?? new Map<string, number>()
+          : null;
+
+    const selectionActive =
+      !!selectedDateRange && !!rowEntityId && selectedDateRange.entityId === rowEntityId;
 
     return (
       <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[72px]">
@@ -422,52 +715,91 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
 
           {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-              <button
+              <IconButton
+                size="sm"
+                label={`Schedule on ${row.project.name}`}
                 onClick={() => onOpenScheduleModalWithRes('', row.project!.id)}
-                className="p-1 hover:bg-surface-hover text-secondary rounded cursor-pointer"
-                title={`Schedule on ${row.project.name}`}
+                className="h-7 w-7 text-secondary"
               >
                 <Plus className="w-3.5 h-3.5" />
-              </button>
-              {viewMode === 'projects' && (
-                <button
-                  onClick={() => setBulkScheduleProject(row.project!)}
-                  className="p-1 hover:bg-indigo-50 text-indigo-500 rounded cursor-pointer"
-                  title={`Bulk schedule resources on ${row.project.name}`}
-                >
-                  <CalendarClock className="w-3.5 h-3.5" />
-                </button>
-              )}
+              </IconButton>
             </div>
           ) : row.resource ? (
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-              <button
+              <IconButton
+                size="sm"
+                label={`Schedule ${row.resource.name}`}
                 onClick={() => onOpenScheduleModalWithRes(row.resource!.id)}
-                className="p-1 hover:bg-blue-50 text-blue-600 rounded cursor-pointer"
-                title={`Schedule ${row.resource.name}`}
+                className="h-7 w-7 text-blue-600 hover:bg-blue-50"
               >
                 <Calendar className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => setBulkScheduleResource(row.resource!)}
-                className="p-1 hover:bg-indigo-50 text-indigo-500 rounded cursor-pointer"
-                title={`Bulk schedule ${row.resource.name}`}
-              >
-                <CalendarClock className="w-3.5 h-3.5" />
-              </button>
+              </IconButton>
             </div>
           ) : null}
         </div>
 
         <div style={{ width: `${gridWidth}px` }} className="relative flex flex-col justify-center py-3 shrink-0 min-h-[72px]">
-          {dailyTotals && row.resource && (
+          {dailyTotals && rowEntityId && (
             <DailyTotalStrip
               columns={dayColumns}
               totals={dailyTotals}
               capacity={capacity}
-              resourceName={row.resource.name}
+              label={rowEntityLabel}
+              selectionActive={selectionActive}
+              selectionStartIdx={selectedDateRange?.startIdx}
+              selectionEndIdx={selectedDateRange?.endIdx}
+              onDayMouseDown={(index) => beginDateSelection(index, rowEntityId)}
+              onDayMouseEnter={updateDateSelection}
             />
           )}
+
+          {selectionActive && selectedDateRange && (
+              <div
+                data-date-selection-overlay
+                className="absolute inset-y-0 z-[12] pointer-events-none"
+                style={{
+                  left: `${selectedDateRange.bounds.left}px`,
+                  width: `${selectedDateRange.bounds.width}px`,
+                }}
+              >
+                <div className="absolute inset-0 bg-sky-400/15 border-x-2 border-sky-400/50 rounded-sm" />
+                {!isSelectingDates && (
+                  <div
+                    ref={selectionMenuRef}
+                    className="absolute inset-0 flex items-center justify-center pointer-events-auto"
+                  >
+                    <div className="relative">
+                      <IconButton
+                        size="sm"
+                        label="Schedule actions for selected dates"
+                        className="h-8 w-8 rounded-md bg-surface border border-subtle shadow-app-sm text-secondary hover:bg-surface-hover"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectionMenuOpen((open) => !open);
+                        }}
+                      >
+                        <MoreVertical className="w-4 h-4" />
+                      </IconButton>
+                      {selectionMenuOpen && (
+                        <div className="absolute left-1/2 top-full z-[70] mt-1 w-36 -translate-x-1/2 rounded-lg border border-default bg-surface-raised shadow-app-md py-1">
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleScheduleSelectedRange();
+                            }}
+                          >
+                            <Calendar className="w-3.5 h-3.5" />
+                            Schedule
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
           {/* Day column grid lines */}
           <div className="absolute inset-0 flex pointer-events-none">
@@ -532,7 +864,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   }, [selectedRequestForSkills, projects]);
 
   return (
-    <div className="app-card overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
+    <Card className="overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
       {(isFetchingSchedules || isFilterApplying) && (
         <div className="absolute inset-0 z-20 bg-surface/55 backdrop-blur-[1px] pointer-events-none flex items-center justify-center">
           <div className="flex items-center gap-2 rounded-full bg-surface border border-subtle px-4 py-2 text-xs font-medium text-secondary shadow-app-md">
@@ -541,17 +873,36 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
           </div>
         </div>
       )}
-      <div ref={scrollRef} onScroll={onTimelineScroll} className="flex-1 min-h-0 overflow-auto select-none relative scrollbar-thin">
+      <div
+        ref={scrollRef}
+        onScroll={onTimelineScroll}
+        onMouseDown={(event) => {
+          if (isSelectingDatesRef.current) return;
+          const target = event.target as HTMLElement;
+          if (
+            target.closest('[data-date-select-strip]') ||
+            target.closest('[data-date-selection-overlay]') ||
+            target.closest('[data-block-menu]')
+          ) {
+            return;
+          }
+          if (dateSelection) clearDateSelection();
+        }}
+        className="flex-1 min-h-0 overflow-auto select-none relative scrollbar-thin"
+      >
         {isFetchingSchedules && (
           <div className="absolute top-2 right-3 z-30 flex items-center gap-1.5 rounded-full bg-surface/95 border border-subtle px-2.5 py-1 text-[10px] font-medium text-secondary shadow-app-sm pointer-events-none">
             <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
             Loading…
           </div>
         )}
-        <div style={{ width: `calc(190px + ${gridWidth}px)` }} className="flex flex-col">
+        <div style={{ width: `calc(${SIDEBAR_WIDTH}px + ${gridWidth}px)` }} className="flex flex-col relative">
           {/* Month header row */}
           <div className="flex bg-grid-header border-b border-subtle text-xs font-bold text-secondary uppercase tracking-wider h-9 items-center sticky top-0 z-30">
-            <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40 h-full">
+            <div
+              className="border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40 h-full"
+              style={{ width: `${SIDEBAR_WIDTH}px`, minWidth: `${SIDEBAR_WIDTH}px` }}
+            >
               {viewMode === 'projects' || viewMode === 'requests' ? 'Projects' : 'Resources'}
             </div>
             {monthsHeader.map((m) => (
@@ -567,7 +918,10 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
 
           {/* Day header row */}
           <div className="flex bg-grid-header border-b border-subtle text-[11px] font-semibold h-10 items-stretch sticky top-9 z-30">
-            <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40">
+            <div
+              className="border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40"
+              style={{ width: `${SIDEBAR_WIDTH}px`, minWidth: `${SIDEBAR_WIDTH}px` }}
+            >
               <span className="text-tertiary text-[10px] uppercase">
                 {viewMode === 'projects' || viewMode === 'requests' ? 'Resource Allocation' : 'Project Allocation'}
               </span>
@@ -575,25 +929,27 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
             {dayColumns.map((col) => {
               const isToday = col.dateStr === CURRENT_DATE_STRING;
               return (
-              <div
-                key={`hdr-${col.dateStr}`}
-                style={{ width: `${col.width}px` }}
-                className={`text-center flex flex-col justify-center border-r border-subtle shrink-0 ${
-                  isToday
-                    ? 'bg-amber-400/25 text-secondary'
-                    : col.isWeekend
-                      ? 'bg-weekend-cell text-tertiary'
-                      : 'text-secondary'
-                }`}
-                title={isToday ? `${col.dateStr} (Today)` : col.dateStr}
-              >
-                <span className="text-[10px] font-bold leading-none">{col.dayLabel}</span>
-                <span className={`text-[11px] font-semibold leading-none mt-0.5 ${
-                  col.isWeekend && !isToday ? 'text-tertiary' : 'text-primary'
-                }`}>
-                  {col.dayNum}
-                </span>
-              </div>
+                <div
+                  key={`hdr-${col.dateStr}`}
+                  style={{ width: `${col.width}px` }}
+                  className={`text-center flex flex-col justify-center border-r border-subtle shrink-0 ${
+                    isToday
+                      ? 'bg-amber-400/25 text-secondary'
+                      : col.isWeekend
+                        ? 'bg-weekend-cell text-tertiary'
+                        : 'text-secondary'
+                  }`}
+                  title={isToday ? `${col.dateStr} (Today)` : col.dateStr}
+                >
+                  <span className="text-[10px] font-bold leading-none">{col.dayLabel}</span>
+                  <span
+                    className={`text-[11px] font-semibold leading-none mt-0.5 ${
+                      col.isWeekend && !isToday ? 'text-tertiary' : 'text-primary'
+                    }`}
+                  >
+                    {col.dayNum}
+                  </span>
+                </div>
               );
             })}
           </div>
@@ -618,20 +974,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         onUnassignRequest={onUnassignRequest}
         onApproveRequestWithResource={onApproveRequestWithResource}
       />
-      {(bulkScheduleResource || bulkScheduleProject) && (
-        <BulkScheduleModal
-          isOpen
-          resources={resources}
-          projects={projects}
-          fixedResource={bulkScheduleResource || undefined}
-          fixedProject={bulkScheduleProject || undefined}
-          onClose={() => {
-            setBulkScheduleResource(null);
-            setBulkScheduleProject(null);
-          }}
-        />
-      )}
-    </div>
+    </Card>
   );
 }));
 

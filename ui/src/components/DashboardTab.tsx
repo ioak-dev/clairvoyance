@@ -26,6 +26,7 @@ import { KpiCard } from './dashboard/KpiCard';
 import { PipelinePanel } from './dashboard/PipelinePanel';
 import { UtilizationGauge } from './dashboard/UtilizationGauge';
 import { WeeklyTrendChart } from './dashboard/WeeklyTrendChart';
+import { Card } from './ui';
 
 export interface DashboardTabProps {
   resources: Resource[];
@@ -151,7 +152,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         underUtilized={snapshot.underUtilized}
       />
 
-      <div className="app-card p-5 flex flex-wrap items-center justify-between gap-4 text-xs text-secondary">
+      <Card padded className="flex flex-wrap items-center justify-between gap-4 text-xs text-secondary">
         <div className="flex items-center gap-2">
           <Users className="w-3.5 h-3.5 text-tertiary" />
           <span>
@@ -164,7 +165,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
             <span className="font-semibold text-primary">{snapshot.opportunityCount}</span> opportunities in portfolio
           </span>
         </div>
-      </div>
+      </Card>
     </div>
   );
 };

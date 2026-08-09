@@ -10,7 +10,7 @@ Single-tenant data model for **date-range + weekly roster** resource scheduling.
 | **Master** | `project`, `person`, `project_filter`, `person_filter`, `request_filter` |
 | **Transactional** | `request`, `schedule`, `vacation`, `simulation_log`, `schedule_audit_log` |
 
-Each `schedule` / `request` row is a first-class **block**: `start_date` / `end_date`, `unit` (`utilization` \| `hours`), and a length-7 `roster` (Mon→Sun). Overlapping blocks on the same person are allowed; the UI stacks daily hour totals.
+Each `schedule` / `request` row is a first-class **block**: `start_date` / `end_date`, `unit` (`utilization` \| `hours`), and a length-7 `roster` (Mon→Sun). Blocks for the **same person + project must not overlap** (adjacent touching ranges are allowed). Different projects on the same person may overlap; daily hour totals still sum across projects.
 
 ## UI mapping
 
@@ -44,7 +44,7 @@ erDiagram
         date end_date
         schedule_unit unit
         numeric roster
-        billable_type billable_type
+        billable_type billable_type "optional override"
         booking_type booking_type
     }
 
@@ -58,7 +58,7 @@ erDiagram
         date end_date
         schedule_unit unit
         numeric roster
-        billable_type billable_type
+        billable_type billable_type "optional override"
         booking_type booking_type
     }
 
@@ -100,6 +100,7 @@ erDiagram
 - `unit: "utilization"` — fraction of daily capacity (`1` = full day)
 - `unit: "hours"` — hours that weekday
 - Partial ranges only apply weekdays that fall inside `[start, end]`
+- `billableType` on schedule/request is an **optional override**. When omitted/`null`, the project's `billable_type` is used. When present, the override wins.
 
 ### Daily hours expansion
 
@@ -109,13 +110,16 @@ For each calendar day `d` in the block:
 2. If `hours` → contribute `roster[i]`
 3. If `utilization` → contribute `roster[i] * (weekly_hours / 5) * fte`
 
-Resource-day total = sum across overlapping schedules (no capacity enforcement).
+Resource-day total = sum across overlapping schedules on **different** projects (same person+project date ranges are rejected). No capacity enforcement yet.
 
 ## Key RPCs
 
 | Function | Purpose |
 |----------|---------|
 | `upsert_schedule(payload jsonb)` | Insert/update a schedule block |
+| `assert_schedule_no_person_project_overlap(...)` | Reject same person+project date overlaps |
+| `replace_schedule_range(payload jsonb)` | Carve a sub-range into up to 3 adjacent blocks |
+| `split_schedule(payload jsonb)` | Split one block at a date into head + tail |
 | `copy_request_to_schedule(request_id, person_id)` | Approve request → schedule |
 | `publish_lab_requests(type, payload)` | Upsert requests with start/end/unit/roster |
 | `publish_lab_projects(type, payload)` | Upsert opportunity projects |
@@ -125,7 +129,7 @@ Resource-day total = sum across overlapping schedules (no capacity enforcement).
 
 ## Migrations
 
-Greenfield sequence under `thirdparty/flyway/migrations/` (`V1`–`V11`). Reset with:
+Greenfield sequence under `thirdparty/flyway/migrations/` (`V1`–`V14`). Reset with:
 
 ```bash
 cd thirdparty && docker compose down -v && docker compose up -d

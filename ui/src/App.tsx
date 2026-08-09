@@ -18,7 +18,18 @@ import { ReportsTab } from './components/ReportsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { LabTab } from './components/LabTab';
 import { FilterSidebar } from './components/FilterSidebar';
+import { ScheduleEntityDrawer } from './components/ScheduleEntityDrawer';
 import type { FilterFormValues } from './components/FilterFormModal';
+import {
+  Button,
+  IconButton,
+  Menu,
+  DropdownMenuButton,
+  DropdownMenuItems,
+  DropdownMenuItem,
+  Switch,
+} from './components/ui';
+import { cn } from './lib/cn';
 
 // Modals
 import {
@@ -28,6 +39,8 @@ import {
   EditAllocationModal,
   AddResourceModal,
   AddProjectModal,
+  type ScheduleApplyScope,
+  type ScheduleEditPatch,
 } from './components/Modals';
 
 // Icons
@@ -35,7 +48,6 @@ import {
   Users,
   FolderKanban,
   Clock,
-  Filter,
   X,
   Sun,
   Moon,
@@ -60,7 +72,9 @@ import {
   useCopyRequestToSchedule,
   useDeleteSchedule,
   useDeleteSchedulesByRequest,
+  useReplaceScheduleRange,
   useSchedules,
+  useSplitSchedule,
   useUpsertSchedule,
   scheduleQueryKeys,
 } from './hooks/useSchedules';
@@ -78,18 +92,17 @@ import {
 import { CURRENT_DATE_STRING } from './lib/dateUtils';
 import { blockHoursOnDate, expandDates, personDailyCapacityHours } from './lib/rosterUtils';
 
-const DYNAMIC_HAS_SCHEDULE_FILTER_ID = '__dynamic_has_schedule__';
-
 function navMenuItemClass(isActive: boolean): string {
-  return `inline-flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-medium tracking-[0.02em] leading-none transition-colors cursor-pointer whitespace-nowrap ${
+  return cn(
+    'inline-flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-medium tracking-[0.02em] leading-none transition-colors cursor-pointer whitespace-nowrap',
     isActive
       ? 'bg-nav-active text-primary'
-      : 'text-secondary hover:text-primary hover:bg-surface-hover'
-  }`;
+      : 'text-secondary hover:text-primary hover:bg-surface-hover',
+  );
 }
 
 function navMenuIconClass(isActive: boolean): string {
-  return `w-[15px] h-[15px] shrink-0 ${isActive ? 'text-primary' : 'text-tertiary'}`;
+  return cn('w-[15px] h-[15px] shrink-0', isActive ? 'text-primary' : 'text-tertiary');
 }
 
 type NavMenuItemProps = {
@@ -110,16 +123,26 @@ function NavMenuItem({
   chevronOpen = false,
 }: NavMenuItemProps) {
   return (
-    <button type="button" onClick={onClick} className={navMenuItemClass(isActive)}>
-      <Icon className={navMenuIconClass(isActive)} strokeWidth={1.75} />
-      <span>{label}</span>
-      {showChevron && (
-        <ChevronDown
-          className={`w-3.5 h-3.5 text-tertiary transition-transform ${chevronOpen ? 'rotate-180' : ''}`}
-          strokeWidth={1.75}
-        />
-      )}
-    </button>
+    <Button
+      type="button"
+      variant="ghost"
+      onClick={onClick}
+      className={navMenuItemClass(isActive)}
+      leftIcon={<Icon className={navMenuIconClass(isActive)} strokeWidth={1.75} />}
+      rightIcon={
+        showChevron ? (
+          <ChevronDown
+            className={cn(
+              'w-3.5 h-3.5 text-tertiary transition-transform',
+              chevronOpen && 'rotate-180',
+            )}
+            strokeWidth={1.75}
+          />
+        ) : undefined
+      }
+    >
+      {label}
+    </Button>
   );
 }
 
@@ -149,33 +172,6 @@ export default function App() {
   const route = parsePathname(location.pathname);
   const activeTab = route?.tab ?? 'scheduler';
   const sidebarActive = route?.scheduleSidebar ?? 'resources';
-
-  const [masterDataMenuOpen, setMasterDataMenuOpen] = useState(false);
-  const masterDataMenuRef = useRef<HTMLDivElement>(null);
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const userMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!masterDataMenuOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (masterDataMenuRef.current && !masterDataMenuRef.current.contains(e.target as Node)) {
-        setMasterDataMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [masterDataMenuOpen]);
-
-  useEffect(() => {
-    if (!userMenuOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setUserMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [userMenuOpen]);
 
   const { data: resources = [] } = usePeople();
   const { data: projects = [] } = useProjects();
@@ -212,6 +208,8 @@ export default function App() {
   const updateRequest = useUpdateRequest();
   const deleteRequest = useDeleteRequest();
   const upsertSchedule = useUpsertSchedule();
+  const replaceScheduleRange = useReplaceScheduleRange();
+  const splitSchedule = useSplitSchedule();
   const copyRequestToSchedule = useCopyRequestToSchedule();
   const deleteSchedule = useDeleteSchedule();
   const deleteSchedulesByRequest = useDeleteSchedulesByRequest();
@@ -232,6 +230,9 @@ export default function App() {
   const timelineDateInputRef = useRef<HTMLInputElement>(null);
   const timelineCommittedDateRef = useRef(CURRENT_DATE_STRING);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isEntityDrawerOpen, setIsEntityDrawerOpen] = useState(false);
+  const [focusedEntityId, setFocusedEntityId] = useState<string | null>(null);
+  const [hideUnbooked, setHideUnbooked] = useState(false);
   const [isFilterApplying, setIsFilterApplying] = useState(false);
   const [activeProjectFilterId, setActiveProjectFilterId] = useState<string | null>(null);
   const [activePersonFilterId, setActivePersonFilterId] = useState<string | null>(null);
@@ -243,28 +244,8 @@ export default function App() {
   }, [activeTab, sidebarActive]);
 
   const sidebarFilters = useMemo(() => {
-    if (filterViewContext === 'projects') {
-      const dynamicProjectFilter: SavedFilter = {
-        id: DYNAMIC_HAS_SCHEDULE_FILTER_ID,
-        name: 'Scheduled Projects',
-        description: 'Show only projects with schedule entries in the current timeline window.',
-        criteria: { has_schedule: true },
-        isActive: true,
-        sortOrder: -9999,
-      };
-      return [dynamicProjectFilter, ...projectFilters];
-    }
-    if (filterViewContext === 'resources') {
-      const dynamicResourceFilter: SavedFilter = {
-        id: DYNAMIC_HAS_SCHEDULE_FILTER_ID,
-        name: 'Scheduled Resources',
-        description: 'Show only resources with schedule entries in the current timeline window.',
-        criteria: { has_schedule: true },
-        isActive: true,
-        sortOrder: -9999,
-      };
-      return [dynamicResourceFilter, ...personFilters];
-    }
+    if (filterViewContext === 'projects') return projectFilters;
+    if (filterViewContext === 'resources') return personFilters;
     return requestFilters;
   }, [filterViewContext, projectFilters, personFilters, requestFilters]);
 
@@ -282,10 +263,15 @@ export default function App() {
 
   const handleSelectFilter = useCallback((filter: SavedFilter | null) => {
     setIsFilterApplying(true);
+    setFocusedEntityId(null);
     const id = filter?.id ?? null;
     if (filterViewContext === 'projects') setActiveProjectFilterId(id);
     else if (filterViewContext === 'resources') setActivePersonFilterId(id);
     else setActiveRequestFilterId(id);
+  }, [filterViewContext]);
+
+  useEffect(() => {
+    setFocusedEntityId(null);
   }, [filterViewContext]);
 
   useEffect(() => {
@@ -342,6 +328,8 @@ export default function App() {
   const [isAddResourceModalOpen, setIsAddResourceModalOpen] = useState(false);
   const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
   const [selectedEditBlock, setSelectedEditBlock] = useState<AllocationBlock | null>(null);
+  const [editApplyScope, setEditApplyScope] = useState<ScheduleApplyScope>('entire');
+  const [editPartialRange, setEditPartialRange] = useState<{ startDate: string; endDate: string } | null>(null);
 
   // Pre-fill states for quick scheduling
   const [prefilledResourceId, setPrefilledResourceId] = useState('');
@@ -383,7 +371,7 @@ export default function App() {
     unit: ScheduleUnit;
     roster: Roster;
     title?: string;
-    billableType: import('./types').BillableType;
+    billableType?: import('./types').BillableType;
     bookingType: import('./types').BookingCommitmentType;
   }) => {
     await upsertSchedule.mutateAsync({
@@ -394,27 +382,29 @@ export default function App() {
       unit: params.unit,
       roster: params.roster,
       title: params.title,
-      billableType: params.billableType,
+      billableType: params.billableType ?? null,
       bookingType: params.bookingType,
     });
   };
 
-  const handleUpdateBlock = async (
-    block: AllocationBlock,
-    patch: {
-      title?: string;
-      startDate: string;
-      endDate: string;
-      unit: ScheduleUnit;
-      roster: Roster;
-    },
-  ) => {
+  const handleUpdateBlock = async (block: AllocationBlock, patch: ScheduleEditPatch) => {
+    if (patch.applyScope === 'partial') {
+      await replaceScheduleRange.mutateAsync({
+        id: block.scheduleId,
+        rangeStart: patch.startDate,
+        rangeEnd: patch.endDate,
+        unit: patch.unit,
+        roster: patch.roster,
+        title: patch.title,
+      });
+      return;
+    }
     await upsertSchedule.mutateAsync({
       id: block.scheduleId,
       personId: block.resourceId,
       projectId: block.projectId,
       requestId: block.requestId,
-      billableType: block.billableType,
+      billableType: patch.billableType !== undefined ? patch.billableType : (block.billableType ?? null),
       bookingType: block.bookingType,
       title: patch.title,
       startDate: patch.startDate,
@@ -427,6 +417,13 @@ export default function App() {
   const handleDeleteBlock = async (block: AllocationBlock) => {
     await deleteSchedule.mutateAsync(block.scheduleId);
   };
+
+  const handleSplitBlock = useCallback(
+    async (block: AllocationBlock, splitDate: string) => {
+      await splitSchedule.mutateAsync({ id: block.scheduleId, splitDate });
+    },
+    [splitSchedule],
+  );
 
   const handleApproveVacation = async (id: string) => {
     await updateVacation.mutateAsync({ id, patch: { status: 'Approved' } });
@@ -512,19 +509,34 @@ export default function App() {
     await deleteProject.mutateAsync(id);
   };
 
-  const handleEditBlock = useCallback((block: AllocationBlock) => {
+  const handleEditBlock = useCallback((
+    block: AllocationBlock,
+    options?: {
+      applyScope?: ScheduleApplyScope;
+      partialRange?: { startDate: string; endDate: string } | null;
+    },
+  ) => {
+    setEditApplyScope(options?.applyScope ?? 'entire');
+    setEditPartialRange(options?.partialRange ?? null);
     setSelectedEditBlock(block);
   }, []);
 
   const handleCloseEditModal = useCallback(() => {
     setSelectedEditBlock(null);
+    setEditApplyScope('entire');
+    setEditPartialRange(null);
   }, []);
 
-  const handleOpenScheduleModalWithRes = useCallback((resId: string, projId?: string) => {
+  const handleOpenScheduleModalWithRes = useCallback((
+    resId: string,
+    projId?: string,
+    startDate?: string,
+    endDate?: string,
+  ) => {
     setPrefilledResourceId(resId);
     setPrefilledProjectId(projId || '');
-    setPrefilledStartDate('2026-06-01');
-    setPrefilledEndDate('2026-06-15');
+    setPrefilledStartDate(startDate || '');
+    setPrefilledEndDate(endDate || '');
     setIsScheduleModalOpen(true);
   }, []);
 
@@ -574,116 +586,127 @@ export default function App() {
               label="Schedule"
               icon={CalendarDays}
               isActive={isScheduleArea(activeTab)}
-              onClick={() => {
-                setMasterDataMenuOpen(false);
-                navigate(ROUTES.schedulePeople);
-              }}
+              onClick={() => navigate(ROUTES.schedulePeople)}
             />
             <NavMenuItem
               label="Time Off"
               icon={Palmtree}
               isActive={activeTab === 'vacation'}
-              onClick={() => {
-                setMasterDataMenuOpen(false);
-                navigate(ROUTES.timeOff);
-              }}
+              onClick={() => navigate(ROUTES.timeOff)}
             />
 
             {/* Master Data dropdown */}
-            <div className="relative" ref={masterDataMenuRef}>
-              <NavMenuItem
-                label="Master Data"
-                icon={Database}
-                isActive={activeTab === 'projects' || activeTab === 'resources' || masterDataMenuOpen}
-                showChevron
-                chevronOpen={masterDataMenuOpen}
-                onClick={() => setMasterDataMenuOpen((open) => !open)}
-              />
-
-              {masterDataMenuOpen && (
-                <div className="absolute top-full left-0 mt-2 w-72 bg-surface-raised rounded-2xl shadow-app-md border border-subtle p-3 z-50">
-                  <p className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] mb-2 px-2">
+            <Menu>
+              {({ open }) => (
+                <>
+                  <DropdownMenuButton
+                    variant="ghost"
+                    className={navMenuItemClass(
+                      activeTab === 'projects' || activeTab === 'resources' || open,
+                    )}
+                    leftIcon={
+                      <Database
+                        className={navMenuIconClass(
+                          activeTab === 'projects' || activeTab === 'resources' || open,
+                        )}
+                        strokeWidth={1.75}
+                      />
+                    }
+                    rightIcon={
+                      <ChevronDown
+                        className={cn(
+                          'w-3.5 h-3.5 text-tertiary transition-transform',
+                          open && 'rotate-180',
+                        )}
+                        strokeWidth={1.75}
+                      />
+                    }
+                  >
                     Master Data
-                  </p>
-                  <div className="space-y-0.5">
-                    {([
-                      {
-                        path: ROUTES.masterProjects,
-                        tab: 'projects' as const,
-                        label: 'Projects',
-                        description: 'Portfolio, clients, and assignments',
-                        icon: FolderKanban,
-                      },
-                      {
-                        path: ROUTES.masterPeople,
-                        tab: 'resources' as const,
-                        label: 'People',
-                        description: 'Team members, roles, and capacity',
-                        icon: Users,
-                      },
-                    ]).map((item) => {
+                  </DropdownMenuButton>
+                  <DropdownMenuItems
+                    anchor="bottom start"
+                    className="w-72 rounded-2xl p-2"
+                    id="master-data-menu"
+                  >
+                    <p className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] mb-1 px-2">
+                      Master Data
+                    </p>
+                    {(
+                      [
+                        {
+                          path: ROUTES.masterProjects,
+                          tab: 'projects' as const,
+                          label: 'Projects',
+                          description: 'Portfolio, clients, and assignments',
+                          icon: FolderKanban,
+                        },
+                        {
+                          path: ROUTES.masterPeople,
+                          tab: 'resources' as const,
+                          label: 'People',
+                          description: 'Team members, roles, and capacity',
+                          icon: Users,
+                        },
+                      ] as const
+                    ).map((item) => {
                       const Icon = item.icon;
                       const isActive = activeTab === item.tab;
                       return (
-                        <button
+                        <DropdownMenuItem
                           key={item.path}
-                          type="button"
-                          onClick={() => {
-                            navigate(item.path);
-                            setMasterDataMenuOpen(false);
-                          }}
-                          className={`w-full text-left px-3 py-2.5 rounded-xl flex items-start gap-3 transition-colors cursor-pointer ${
-                            isActive ? 'bg-surface-muted' : 'hover:bg-surface-muted'
-                          }`}
+                          onClick={() => navigate(item.path)}
+                          className={cn(
+                            'rounded-xl px-3 py-2.5 items-start gap-3',
+                            isActive && 'bg-surface-muted',
+                          )}
                         >
-                          <Icon className={`w-[15px] h-[15px] mt-0.5 shrink-0 ${isActive ? 'text-primary' : 'text-tertiary'}`} strokeWidth={1.75} />
-                          <div className="min-w-0">
-                            <div className="text-[13px] font-medium tracking-[0.02em] text-primary">{item.label}</div>
-                            <div className="text-xs text-secondary leading-snug tracking-wide mt-0.5">{item.description}</div>
-                          </div>
-                        </button>
+                          <Icon
+                            className={cn(
+                              'w-[15px] h-[15px] mt-0.5 shrink-0',
+                              isActive ? 'text-primary' : 'text-tertiary',
+                            )}
+                            strokeWidth={1.75}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-[13px] font-medium tracking-[0.02em] text-primary">
+                              {item.label}
+                            </span>
+                            <span className="block text-xs text-secondary leading-snug tracking-wide mt-0.5">
+                              {item.description}
+                            </span>
+                          </span>
+                        </DropdownMenuItem>
                       );
                     })}
-                  </div>
-                </div>
+                  </DropdownMenuItems>
+                </>
               )}
-            </div>
+            </Menu>
 
             <NavMenuItem
               label="Dashboard"
               icon={LayoutDashboard}
               isActive={activeTab === 'dashboard'}
-              onClick={() => {
-                setMasterDataMenuOpen(false);
-                navigate(ROUTES.dashboard);
-              }}
+              onClick={() => navigate(ROUTES.dashboard)}
             />
             <NavMenuItem
               label="Reports"
               icon={BarChart3}
               isActive={activeTab === 'reports'}
-              onClick={() => {
-                setMasterDataMenuOpen(false);
-                navigate(ROUTES.reports);
-              }}
+              onClick={() => navigate(ROUTES.reports)}
             />
             <NavMenuItem
               label="Lab"
               icon={FlaskConical}
               isActive={activeTab === 'lab'}
-              onClick={() => {
-                setMasterDataMenuOpen(false);
-                navigate(ROUTES.lab);
-              }}
+              onClick={() => navigate(ROUTES.lab)}
             />
             <NavMenuItem
               label="Settings"
               icon={Settings}
               isActive={activeTab === 'settings'}
-              onClick={() => {
-                setMasterDataMenuOpen(false);
-                navigate(ROUTES.settings);
-              }}
+              onClick={() => navigate(ROUTES.settings)}
             />
           </nav>
 
@@ -691,75 +714,53 @@ export default function App() {
 
         {/* Profile */}
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className="p-2 rounded-full text-tertiary hover:text-primary hover:bg-surface-hover transition-colors flex items-center justify-center cursor-pointer"
-            title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          <IconButton
+            label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             id="theme-toggle-button"
+            onClick={() => setDarkMode(!darkMode)}
+            className="rounded-full text-tertiary"
           >
             {darkMode ? (
-              <Sun className="w-4 h-4 text-amber-500" style={{ animationDuration: '6s' }} />
+              <Sun className="w-4 h-4 text-amber-500" />
             ) : (
               <Moon className="w-4 h-4" />
             )}
-          </button>
+          </IconButton>
 
-          <div className="relative flex items-center gap-2.5 pl-2 border-l border-default" ref={userMenuRef}>
+          <div className="relative flex items-center gap-2.5 pl-2 border-l border-default">
             <div className="text-right hidden sm:block">
               <span className="text-sm font-medium text-primary block leading-tight">Elizabeth Taylor</span>
               <span className="text-xs text-tertiary block">Resource Planner</span>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setMasterDataMenuOpen(false);
-                setUserMenuOpen((open) => !open);
-              }}
-              className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center hover:ring-2 hover:ring-blue-400/50 transition-shadow cursor-pointer"
-              aria-expanded={userMenuOpen}
-              aria-haspopup="menu"
-              id="user-menu-button"
-            >
-              ET
-            </button>
-
-            {userMenuOpen && (
-              <div
-                className="absolute top-full right-0 mt-2 w-52 bg-surface-raised rounded-xl shadow-app-md border border-subtle py-1 z-50"
-                role="menu"
-                id="user-menu-dropdown"
+            <Menu>
+              <DropdownMenuButton
+                variant="ghost"
+                size="icon"
+                id="user-menu-button"
+                className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 hover:ring-2 hover:ring-blue-400/50"
+                aria-label="User menu"
               >
+                ET
+              </DropdownMenuButton>
+              <DropdownMenuItems className="w-52" id="user-menu-dropdown">
                 <div className="px-3 py-2 border-b border-subtle sm:hidden">
                   <p className="text-sm font-medium text-primary">Elizabeth Taylor</p>
                   <p className="text-xs text-tertiary">Resource Planner</p>
                 </div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setUserMenuOpen(false);
-                    setMasterDataMenuOpen(false);
-                    navigate(ROUTES.settings);
-                  }}
-                  className="w-full text-left px-3 py-2.5 text-sm text-primary hover:bg-surface-muted flex items-center gap-2.5 transition-colors cursor-pointer"
-                >
+                <DropdownMenuItem onClick={() => navigate(ROUTES.settings)}>
                   <Settings className="w-4 h-4 text-tertiary shrink-0" />
                   Profile settings
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setUserMenuOpen(false);
-                    window.alert('Logged out (demo)');
-                  }}
-                  className="w-full text-left px-3 py-2.5 text-sm text-red-500 hover:bg-surface-muted flex items-center gap-2.5 transition-colors cursor-pointer border-t border-subtle"
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  destructive
+                  className="border-t border-subtle"
+                  onClick={() => window.alert('Logged out (demo)')}
                 >
                   <LogOut className="w-4 h-4 shrink-0" />
                   Log out
-                </button>
-              </div>
-            )}
+                </DropdownMenuItem>
+              </DropdownMenuItems>
+            </Menu>
           </div>
         </div>
       </header>
@@ -775,8 +776,10 @@ export default function App() {
               {/* Projects sidebar selector */}
               <button
                 onClick={() => {
-                  setActiveProjectFilterId(null);
+                  const alreadyHere = sidebarActive === 'projects' && activeTab === 'scheduler';
                   navigate(ROUTES.scheduleProjects);
+                  setIsDrawerOpen(false);
+                  setIsEntityDrawerOpen(alreadyHere ? (prev) => !prev : true);
                 }}
                 className={`p-3 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${sidebarActive === 'projects' && activeTab === 'scheduler'
                   ? 'tint-blue font-bold border'
@@ -793,8 +796,10 @@ export default function App() {
               {/* Resources sidebar selector */}
               <button
                 onClick={() => {
-                  setActivePersonFilterId(null);
+                  const alreadyHere = sidebarActive === 'resources' && activeTab === 'scheduler';
                   navigate(ROUTES.schedulePeople);
+                  setIsDrawerOpen(false);
+                  setIsEntityDrawerOpen(alreadyHere ? (prev) => !prev : true);
                 }}
                 className={`p-3 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${sidebarActive === 'resources' && activeTab === 'scheduler'
                   ? 'tint-blue font-bold border'
@@ -811,8 +816,10 @@ export default function App() {
               {/* Request sidebar selector */}
               <button
                 onClick={() => {
-                  setActiveRequestFilterId(null);
+                  const alreadyHere = activeTab === 'requests';
+                  setIsEntityDrawerOpen(false);
                   navigate(ROUTES.scheduleRequests);
+                  setIsDrawerOpen(alreadyHere ? (prev) => !prev : true);
                 }}
                 className={`p-3 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${activeTab === 'requests'
                   ? 'tint-blue font-bold border'
@@ -827,27 +834,42 @@ export default function App() {
               </button>
 
             </div>
-
-            {/* Filter — pinned to bottom of fixed rail */}
-            <div className="shrink-0 px-2 pt-2 pb-3 border-t border-subtle bg-rail">
-              <button
-                onClick={() => setIsDrawerOpen((prev) => !prev)}
-                className={`w-full py-2.5 px-2 rounded-lg flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${
-                  isDrawerOpen
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-secondary hover:text-blue-500 hover:bg-surface-muted'
-                }`}
-              >
-                <Filter className="w-4 h-4" />
-                <span className="text-[9px] font-semibold tracking-wide">Filter</span>
-              </button>
-            </div>
           </aside>
         )}
+
+        <ScheduleEntityDrawer
+          isOpen={
+            isEntityDrawerOpen &&
+            !isDrawerOpen &&
+            activeTab === 'scheduler' &&
+            (sidebarActive === 'projects' || sidebarActive === 'resources')
+          }
+          mode={sidebarActive === 'projects' ? 'projects' : 'resources'}
+          onClose={() => setIsEntityDrawerOpen(false)}
+          onManageFilters={() => {
+            setIsEntityDrawerOpen(false);
+            setIsDrawerOpen(true);
+          }}
+          projects={projects}
+          resources={resources}
+          filters={sidebarFilters}
+          activeFilterId={activeFilterId}
+          focusedEntityId={focusedEntityId}
+          onSelectFilter={handleSelectFilter}
+          onFocusEntity={setFocusedEntityId}
+        />
 
         <FilterSidebar
           isOpen={isScheduleArea(activeTab) && isDrawerOpen}
           onClose={() => setIsDrawerOpen(false)}
+          onBack={
+            activeTab === 'scheduler'
+              ? () => {
+                  setIsDrawerOpen(false);
+                  setIsEntityDrawerOpen(true);
+                }
+              : undefined
+          }
           viewContext={filterViewContext}
           filters={sidebarFilters}
           activeFilterId={activeFilterId}
@@ -874,7 +896,7 @@ export default function App() {
 
 
               {/* Calendar navigation */}
-              <div className="shrink-0 flex items-center">
+              <div className="shrink-0 flex items-center justify-between gap-3">
                 <div className="inline-flex items-center gap-0.5 bg-surface-muted/50 rounded-lg p-0.5">
                     <button
                       type="button"
@@ -934,6 +956,27 @@ export default function App() {
                       />
                     </label>
                 </div>
+
+                {activeTab === 'scheduler' && (
+                  <div className="inline-flex items-center gap-2.5">
+                    <Switch
+                      checked={hideUnbooked}
+                      onChange={setHideUnbooked}
+                      aria-label={
+                        sidebarActive === 'projects'
+                          ? 'Hide projects with no bookings'
+                          : 'Hide resources with no bookings'
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setHideUnbooked((v) => !v)}
+                      className="text-[12px] text-secondary hover:text-primary transition-colors cursor-pointer text-left"
+                    >
+                      Hide {sidebarActive === 'projects' ? 'projects' : 'resources'} with no bookings
+                    </button>
+                  </div>
+                )}
               </div>
 
 
@@ -946,9 +989,13 @@ export default function App() {
                 vacations={vacations}
                 requests={requests}
                 filterCriteria={filterCriteria}
+                focusedEntityId={focusedEntityId}
+                hideUnbooked={hideUnbooked}
                 isFilterApplying={isFilterApplying}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
                 onEditBlock={handleEditBlock}
+                onSplitBlock={handleSplitBlock}
+                onDeleteBlock={handleDeleteBlock}
                 onOpenScheduleModalWithRes={handleOpenScheduleModalWithRes}
                 onAddResourceClick={handleAddResourceClick}
                 onAddProjectClick={handleAddProjectClick}
@@ -1044,8 +1091,8 @@ export default function App() {
         onSave={handleSaveNewAllocation}
         initialResourceId={prefilledResourceId}
         initialProjectId={prefilledProjectId}
-        initialStartDate={prefilledStartDate || '2026-06-01'}
-        initialEndDate={prefilledEndDate || '2026-06-15'}
+        initialStartDate={prefilledStartDate || CURRENT_DATE_STRING}
+        initialEndDate={prefilledEndDate || CURRENT_DATE_STRING}
       />
 
       <RequestModal
@@ -1062,8 +1109,11 @@ export default function App() {
         block={selectedEditBlock}
         projects={projects}
         resources={resources}
+        assignments={scheduleAssignments}
         onUpdate={handleUpdateBlock}
         onDelete={handleDeleteBlock}
+        initialApplyScope={editApplyScope}
+        initialPartialRange={editPartialRange}
       />
 
       <AddResourceModal

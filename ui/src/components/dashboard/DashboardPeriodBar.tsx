@@ -1,5 +1,6 @@
 import React from 'react';
 import type { DashboardPeriodMode } from '../../lib/dateUtils';
+import { Button, Card, Field, Input, Label } from '../ui';
 
 type DashboardPeriodBarProps = {
   mode: DashboardPeriodMode;
@@ -26,7 +27,7 @@ export const DashboardPeriodBar: React.FC<DashboardPeriodBarProps> = ({
   onCustomStartChange,
   onCustomEndChange,
 }) => (
-  <div className="app-card p-5 flex flex-wrap items-center justify-between gap-4">
+  <Card padded className="flex flex-wrap items-center justify-between gap-4">
     <div>
       <h2 className="text-lg font-semibold text-primary tracking-tight">Dashboard</h2>
       <p className="text-xs text-secondary mt-0.5 tracking-wide">{periodLabel}</p>
@@ -35,43 +36,45 @@ export const DashboardPeriodBar: React.FC<DashboardPeriodBarProps> = ({
     <div className="flex flex-wrap items-center gap-3">
       <div className="flex items-center gap-1 p-1 bg-surface-muted rounded-lg border border-subtle">
         {MODES.map((m) => (
-          <button
+          <Button
             key={m.id}
             type="button"
+            variant={mode === m.id ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => onModeChange(m.id)}
-            className={`px-3 py-1.5 rounded-md text-[13px] font-medium tracking-[0.02em] transition-colors cursor-pointer ${
+            className={
               mode === m.id
                 ? 'bg-surface text-primary shadow-app-sm'
                 : 'text-secondary hover:text-primary'
-            }`}
+            }
           >
             {m.label}
-          </button>
+          </Button>
         ))}
       </div>
 
       {mode === 'custom' && (
-        <div className="flex items-center gap-2 text-xs">
-          <label className="flex items-center gap-1.5 text-secondary font-medium">
-            From
-            <input
+        <div className="flex items-center gap-3">
+          <Field className="flex-row items-center gap-1.5 !gap-1.5">
+            <Label className="whitespace-nowrap">From</Label>
+            <Input
               type="date"
               value={customStart}
               onChange={(e) => onCustomStartChange(e.target.value)}
-              className="bg-surface-muted border border-default rounded-lg px-2 py-1.5 text-primary text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none"
+              className="h-8 w-auto text-xs"
             />
-          </label>
-          <label className="flex items-center gap-1.5 text-secondary font-medium">
-            To
-            <input
+          </Field>
+          <Field className="flex-row items-center gap-1.5 !gap-1.5">
+            <Label className="whitespace-nowrap">To</Label>
+            <Input
               type="date"
               value={customEnd}
               onChange={(e) => onCustomEndChange(e.target.value)}
-              className="bg-surface-muted border border-default rounded-lg px-2 py-1.5 text-primary text-xs focus:ring-2 focus:ring-blue-400 focus:outline-none"
+              className="h-8 w-auto text-xs"
             />
-          </label>
+          </Field>
         </div>
       )}
     </div>
-  </div>
+  </Card>
 );

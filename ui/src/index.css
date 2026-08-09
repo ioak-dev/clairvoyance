@@ -232,10 +232,6 @@ textarea:focus {
   color: #c4b5fd;
 }
 
-.modal-overlay {
-  background-color: var(--app-overlay);
-}
-
 .dark .app-logo {
   filter: brightness(0) invert(1);
   opacity: 0.88;
@@ -264,24 +260,4 @@ textarea:focus {
 .scrollbar-thin::-webkit-scrollbar {
   width: 6px;
   height: 6px;
-}
-
-.app-card {
-  background-color: var(--app-surface);
-  border: 1px solid var(--app-border-subtle);
-  border-radius: 0.75rem;
-  box-shadow: var(--app-shadow-sm);
-}
-
-.dark .app-card {
-  border-color: var(--app-border);
-}
-
-.app-card-header {
-  background-color: var(--app-surface-muted);
-  border-bottom: 1px solid var(--app-border-subtle);
-}
-
-.dark .app-card-header {
-  border-bottom-color: var(--app-border);
 }

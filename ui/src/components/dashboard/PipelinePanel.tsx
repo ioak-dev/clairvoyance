@@ -1,6 +1,7 @@
 import React from 'react';
 import { Clock, Palmtree, UserRound } from 'lucide-react';
 import type { OpenRequestRow } from '../../lib/dashboardMetrics';
+import { Badge, Card } from '../ui';
 
 type PipelinePanelProps = {
   openRequestsTotal: number;
@@ -19,7 +20,7 @@ export const PipelinePanel: React.FC<PipelinePanelProps> = ({
   peopleOnLeave,
   pendingVacations,
 }) => (
-  <div className="app-card p-5 flex flex-col h-full">
+  <Card padded className="flex flex-col h-full">
     <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Pipeline & Leave</h3>
     <p className="text-xs text-secondary mb-4">Open requests and time-off impact</p>
 
@@ -70,10 +71,12 @@ export const PipelinePanel: React.FC<PipelinePanelProps> = ({
                 {req.unassigned ? ' · open slot' : ''}
               </p>
             </div>
-            <span className="text-xs font-semibold text-secondary shrink-0">{req.hours}h</span>
+            <Badge tone="neutral" className="shrink-0 tabular-nums">
+              {req.hours}h
+            </Badge>
           </div>
         ))
       )}
     </div>
-  </div>
+  </Card>
 );

@@ -12,6 +12,7 @@ import {
   type DashboardPeriod,
 } from './dateUtils';
 import {
+  getEffectiveBillableType,
   getProjectCategory,
   getProjectCategoryDotClass,
   type ProjectCategory,
@@ -172,7 +173,7 @@ export function buildDashboardSnapshot(
     if (hours <= 0) return;
 
     totalPlannedHours += hours;
-    const billableType = project?.billableType || assignment.billableType;
+    const billableType = getEffectiveBillableType(assignment.billableType, project);
     if (billableType === 'Billable') billableHours += hours;
 
     const category = project ? getProjectCategory(project) : 'Billable';

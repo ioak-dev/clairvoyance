@@ -85,7 +85,8 @@ export interface ScheduleAssignment {
   resourceId: string;
   projectId: string;
   requestId?: string;
-  billableType: BillableType;
+  /** Override; when omitted, use project's billable type. */
+  billableType?: BillableType;
   bookingType: BookingCommitmentType;
   startDate: string;
   endDate: string;
@@ -100,7 +101,8 @@ export interface AllocationBlock {
   resourceId: string;
   projectId: string;
   requestId?: string;
-  billableType: BillableType;
+  /** Override; when omitted, use project's billable type. */
+  billableType?: BillableType;
   bookingType: BookingCommitmentType;
   startDate: string;
   endDate: string;
@@ -123,7 +125,8 @@ export interface BookingRequest {
   referenceId: string;
   resourceId: string;
   projectId: string;
-  billableType: BillableType;
+  /** Override; when omitted, use project's billable type. */
+  billableType?: BillableType;
   bookingType: BookingCommitmentType;
   probability: number;
   status: 'Pending' | 'Approved' | 'Rejected';

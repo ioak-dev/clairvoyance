@@ -74,7 +74,8 @@ function scrollLeftForDate(
 
 export function useHorizontalTimelineWindow(initialFocusDate = CURRENT_DATE_STRING) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const pendingPrependPxRef = useRef(0);
+  // Positive when columns are prepended; negative when start is trimmed (sliding window).
+  const pendingScrollAdjustPxRef = useRef(0);
   const pendingCenterDateRef = useRef<string | null>(null);
   const scrollThrottleRef = useRef(0);
   const windowRangeRef = useRef<TimelineWindow>(clampWindow(
@@ -92,14 +93,14 @@ export function useHorizontalTimelineWindow(initialFocusDate = CURRENT_DATE_STRI
     return clamped;
   }, []);
 
-  // After window changes: fix scroll for prepended columns and/or center on a date.
+  // After window changes: keep viewport stable across prepend/trim and/or center on a date.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    if (pendingPrependPxRef.current !== 0) {
-      el.scrollLeft += pendingPrependPxRef.current;
-      pendingPrependPxRef.current = 0;
+    if (pendingScrollAdjustPxRef.current !== 0) {
+      el.scrollLeft += pendingScrollAdjustPxRef.current;
+      pendingScrollAdjustPxRef.current = 0;
     }
 
     if (pendingCenterDateRef.current) {
@@ -118,17 +119,26 @@ export function useHorizontalTimelineWindow(initialFocusDate = CURRENT_DATE_STRI
   const extendStartIfNeeded = useCallback(() => {
     const current = windowRangeRef.current;
     const nextStart = addDays(current.start, -LOAD_CHUNK_DAYS);
-    if (daysBetween(nextStart, current.end) > MAX_WINDOW_DAYS) return false;
-    pendingPrependPxRef.current = windowWidthPx(nextStart, addDays(current.start, -1));
-    updateWindow({ start: nextStart, end: current.end });
+    let nextEnd = current.end;
+    // Sliding window: drop from the end so span stays ≤ 1 year.
+    if (daysBetween(nextStart, nextEnd) > MAX_WINDOW_DAYS) {
+      nextEnd = addDays(nextStart, MAX_WINDOW_DAYS);
+    }
+    pendingScrollAdjustPxRef.current += windowWidthPx(nextStart, addDays(current.start, -1));
+    updateWindow({ start: nextStart, end: nextEnd });
     return true;
   }, [updateWindow]);
 
   const extendEndIfNeeded = useCallback(() => {
     const current = windowRangeRef.current;
     const nextEnd = addDays(current.end, LOAD_CHUNK_DAYS);
-    if (daysBetween(current.start, nextEnd) > MAX_WINDOW_DAYS) return false;
-    updateWindow({ start: current.start, end: nextEnd });
+    let nextStart = current.start;
+    // Sliding window: drop from the start so span stays ≤ 1 year.
+    if (daysBetween(nextStart, nextEnd) > MAX_WINDOW_DAYS) {
+      nextStart = addDays(nextEnd, -MAX_WINDOW_DAYS);
+      pendingScrollAdjustPxRef.current -= windowWidthPx(current.start, addDays(nextStart, -1));
+    }
+    updateWindow({ start: nextStart, end: nextEnd });
     return true;
   }, [updateWindow]);
 

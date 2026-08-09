@@ -1,4 +1,5 @@
 import React from 'react';
+import { Card } from '../ui';
 
 type UtilizationGaugeProps = {
   percent: number;
@@ -16,7 +17,7 @@ export const UtilizationGauge: React.FC<UtilizationGaugeProps> = ({
   const strokeDash = `${percent} ${100 - percent}`;
 
   return (
-    <div className="app-card p-5 flex flex-col">
+    <Card padded className="flex flex-col">
       <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Team Utilization</h3>
       <p className="text-xs text-secondary mb-4">Planned hours vs available capacity</p>
 
@@ -71,6 +72,6 @@ export const UtilizationGauge: React.FC<UtilizationGaugeProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </Card>
   );
 };

@@ -5,8 +5,9 @@
 
 import React, { useState, useRef } from 'react';
 import { Resource, Project } from '../types';
-import { Upload, FileUp, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import { Upload, FileUp, AlertCircle, CheckCircle } from 'lucide-react';
 import { env } from '../lib/shared/env';
+import { Button, Card } from './ui';
 
 interface ImportResult {
   status: 'success' | 'error';
@@ -160,47 +161,31 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
     const state = uploadStates[type];
 
     return (
-      <div className="border border-default rounded-lg p-6 bg-surface-muted hover:bg-surface-hover transition-colors">
+      <Card padded className="bg-surface-muted hover:bg-surface-hover transition-colors">
         <h3 className="text-base font-semibold text-primary mb-1">{title}</h3>
         <p className="text-sm text-secondary mb-4">{description}</p>
 
         {/* Upload Button */}
         {!state.result && (
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               onClick={() => handleBrowseClick(type)}
-              disabled={state.isLoading}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-            >
-              {state.isLoading ? (
-                <>
-                  <Loader className="w-4 h-4 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <FileUp className="w-4 h-4" />
-                  Browse & Upload
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleDownload(type)}
+              loading={state.isLoading}
               disabled={state.isDownloading}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-default bg-surface hover:bg-surface-hover text-sm font-semibold text-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              variant="primary"
+              leftIcon={<FileUp className="w-4 h-4" />}
             >
-              {state.isDownloading ? (
-                <>
-                  <Loader className="w-4 h-4 animate-spin" />
-                  Downloading...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4" />
-                  Download Current Data
-                </>
-              )}
-            </button>
+              {state.isLoading ? 'Uploading...' : 'Browse & Upload'}
+            </Button>
+            <Button
+              onClick={() => handleDownload(type)}
+              loading={state.isDownloading}
+              disabled={state.isLoading}
+              variant="outline"
+              leftIcon={<Upload className="w-4 h-4" />}
+            >
+              {state.isDownloading ? 'Downloading...' : 'Download Current Data'}
+            </Button>
           </div>
         )}
 
@@ -266,7 +251,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
           onChange={(e) => handleFileChange(type, e)}
           disabled={state.isLoading}
         />
-      </div>
+      </Card>
     );
   };
 

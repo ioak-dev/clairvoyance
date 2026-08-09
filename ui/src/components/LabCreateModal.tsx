@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
 import { DEFAULT_ROSTER, type Roster, type ScheduleUnit } from '../types';
 import { normalizeRoster, WEEKDAY_LABELS } from '../lib/rosterUtils';
 import { useLookups } from '../hooks/useLookups';
 import { useProjects } from '../hooks/useProjects';
 import { getFilteredCompetencyCenterOptions } from './labEditFieldConfig';
+import { Modal, Button, Input, Textarea, Select, Field, Label } from './ui';
 
 interface SimulationInput {
     type: string;
@@ -147,8 +147,6 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
         setIsSubmitting(false);
     }, [isOpen]);
 
-    if (!isOpen) return null;
-
     const updateFormField = <K extends keyof RequestFormState>(key: K, value: RequestFormState[K]) => {
         setForm((current) => {
             const next = { ...current, [key]: value };
@@ -270,301 +268,260 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
         }
     };
 
+    const noneOptions = (entries?: { id: string; name: string }[]) => [
+        { value: '', label: 'None' },
+        ...(entries || []).map((entry) => ({ value: entry.id, label: entry.name })),
+    ];
+
     return (
-        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-            <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-4xl w-full flex flex-col overflow-hidden max-h-[92vh]">
-                <div className="app-card-header px-5 py-4 flex justify-between items-center">
-                    <div>
-                        <h3 className="text-base font-semibold text-primary">Create Request Payload</h3>
-                        <p className="text-xs text-tertiary mt-1">Type is fixed to Request. Creating immediately publishes.</p>
+        <Modal
+            open={isOpen}
+            onClose={onClose}
+            size="xl"
+            title="Create Request Payload"
+            description="Type is fixed to Request. Creating immediately publishes."
+            footer={
+                <>
+                    <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+                        Cancel
+                    </Button>
+                    <Button variant="primary" onClick={() => void handleCreate()} loading={isSubmitting}>
+                        {isSubmitting ? 'Publishing…' : 'Publish'}
+                    </Button>
+                </>
+            }
+        >
+            <div className="space-y-4">
+                <Field>
+                    <Label>Input mode</Label>
+                    <div className="inline-flex rounded-lg border border-default bg-surface-muted p-1">
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant={inputMode === 'form' ? 'secondary' : 'ghost'}
+                            onClick={() => {
+                                const payload = toRequestPayload(form);
+                                setJsonText(toRawRequestText(payload));
+                                setInputMode('form');
+                                setError('');
+                            }}
+                            disabled={isSubmitting}
+                            className={inputMode === 'form' ? 'shadow-sm' : ''}
+                        >
+                            Form
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant={inputMode === 'json' ? 'secondary' : 'ghost'}
+                            onClick={() => {
+                                const payload = toRequestPayload(form);
+                                setJsonText(toRawRequestText(payload));
+                                setInputMode('json');
+                                setError('');
+                            }}
+                            disabled={isSubmitting}
+                            className={inputMode === 'json' ? 'shadow-sm' : ''}
+                        >
+                            JSON
+                        </Button>
                     </div>
-                    <button type="button" onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg text-tertiary">
-                        <X className="w-5 h-5" />
-                    </button>
-                </div>
+                </Field>
 
-                <div className="p-5 space-y-4 overflow-y-auto">
-                    <div>
-                        <label className="block text-sm font-medium text-secondary mb-2">Input mode</label>
-                        <div className="inline-flex rounded-lg border border-default bg-surface-muted p-1">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const payload = toRequestPayload(form);
-                                    setJsonText(toRawRequestText(payload));
-                                    setInputMode('form');
-                                    setError('');
-                                }}
-                                disabled={isSubmitting}
-                                className={`px-3 py-1.5 rounded-md text-sm font-semibold ${
-                                    inputMode === 'form' ? 'bg-surface text-primary shadow-sm' : 'text-secondary hover:bg-surface'
-                                }`}
-                            >
-                                Form
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const payload = toRequestPayload(form);
-                                    setJsonText(toRawRequestText(payload));
-                                    setInputMode('json');
-                                    setError('');
-                                }}
-                                disabled={isSubmitting}
-                                className={`px-3 py-1.5 rounded-md text-sm font-semibold ${
-                                    inputMode === 'json' ? 'bg-surface text-primary shadow-sm' : 'text-secondary hover:bg-surface'
-                                }`}
-                            >
-                                JSON
-                            </button>
-                        </div>
-                    </div>
-
-                    {inputMode === 'form' ? (
-                        <>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Request Reference ID</label>
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            value={form.id}
-                                            onChange={(e) => updateFormField('id', e.target.value)}
-                                            disabled={isSubmitting}
-                                            className="flex-1 rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={generateRequestReferenceId}
-                                            disabled={isSubmitting}
-                                            className="shrink-0 rounded-lg border border-default px-3 py-2 text-xs font-semibold text-secondary transition-colors hover:bg-surface-hover disabled:opacity-60"
-                                        >
-                                            Generate
-                                        </button>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Opportunity</label>
-                                    <select
-                                        value={form.project_id}
-                                        onChange={(e) => updateFormField('project_id', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    >
-                                        <option value="">Select opportunity</option>
-                                        {opportunityOptions.map((option) => (
-                                            <option key={option.value} value={option.value}>
-                                                {option.label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Start</label>
-                                    <input
-                                        type="date"
-                                        value={form.start}
-                                        onChange={(e) => updateFormField('start', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">End</label>
-                                    <input
-                                        type="date"
-                                        value={form.end}
-                                        onChange={(e) => updateFormField('end', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Unit</label>
-                                    <select
-                                        value={form.unit}
-                                        onChange={(e) => updateFormField('unit', e.target.value as ScheduleUnit)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    >
-                                        <option value="utilization">utilization</option>
-                                        <option value="hours">hours</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Status</label>
-                                    <select
-                                        value={form.status}
-                                        onChange={(e) => updateFormField('status', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    >
-                                        <option value="Pending">Pending</option>
-                                        <option value="Approved">Approved</option>
-                                        <option value="Rejected">Rejected</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Probability</label>
-                                    <input
-                                        type="number"
-                                        value={form.probability}
-                                        onChange={(e) => updateFormField('probability', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Request Name</label>
-                                    <input
+                {inputMode === 'form' ? (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Field>
+                                <Label>Request Reference ID</Label>
+                                <div className="flex gap-2">
+                                    <Input
                                         type="text"
-                                        value={form.request_name}
-                                        onChange={(e) => updateFormField('request_name', e.target.value)}
+                                        value={form.id}
+                                        onChange={(e) => updateFormField('id', e.target.value)}
                                         disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                        className="flex-1"
                                     />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Consulting Unit</label>
-                                    <select
-                                        value={form.consulting_unit_id}
-                                        onChange={(e) => updateFormField('consulting_unit_id', e.target.value)}
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={generateRequestReferenceId}
                                         disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                        className="shrink-0 h-9"
                                     >
-                                        <option value="">None</option>
-                                        {(lookups?.consultingUnits || []).map((entry) => (
-                                            <option key={entry.id} value={entry.id}>{entry.name}</option>
-                                        ))}
-                                    </select>
+                                        Generate
+                                    </Button>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Practice Area</label>
-                                    <select
-                                        value={form.practice_area_id}
-                                        onChange={(e) => updateFormField('practice_area_id', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    >
-                                        <option value="">None</option>
-                                        {(lookups?.practiceAreas || []).map((entry) => (
-                                            <option key={entry.id} value={entry.id}>{entry.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Competency Center</label>
-                                    <select
-                                        value={form.competency_center_id}
-                                        onChange={(e) => updateFormField('competency_center_id', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    >
-                                        <option value="">None</option>
-                                        {competencyCenterOptions.map((entry) => (
-                                            <option key={entry.value} value={entry.value}>{entry.label}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Site</label>
-                                    <select
-                                        value={form.site_id}
-                                        onChange={(e) => updateFormField('site_id', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    >
-                                        <option value="">None</option>
-                                        {(lookups?.sites || []).map((entry) => (
-                                            <option key={entry.id} value={entry.id}>{entry.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-secondary mb-1.5">Job Level</label>
-                                    <select
-                                        value={form.job_level_id}
-                                        onChange={(e) => updateFormField('job_level_id', e.target.value)}
-                                        disabled={isSubmitting}
-                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                    >
-                                        <option value="">None</option>
-                                        {(lookups?.jobLevels || []).map((entry) => (
-                                            <option key={entry.id} value={entry.id}>{entry.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <label className="block text-xs font-medium text-secondary">
-                                    Roster ({form.unit === 'hours' ? 'hours/day' : 'utilization'} Mon–Sun)
-                                </label>
-                                <div className="grid grid-cols-7 gap-2 p-3 rounded-lg border border-default bg-surface-muted">
-                                    {WEEKDAY_LABELS.map((label, index) => (
-                                        <div key={label}>
-                                            <label className="block text-[10px] font-medium text-tertiary mb-1 text-center">{label}</label>
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                step={form.unit === 'hours' ? 0.5 : 0.1}
-                                                value={form.roster[index]}
-                                                onChange={(e) => updateRosterDay(index, e.target.value)}
-                                                disabled={isSubmitting}
-                                                className="w-full rounded-md border border-default bg-surface px-1.5 py-1.5 text-sm text-primary text-center focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                            />
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-medium text-secondary mb-1.5">Notes</label>
-                                <textarea
-                                    value={form.notes}
-                                    onChange={(e) => updateFormField('notes', e.target.value)}
-                                    rows={3}
+                            </Field>
+                            <Field>
+                                <Label>Opportunity</Label>
+                                <Select
+                                    value={form.project_id || null}
+                                    onChange={(v) => updateFormField('project_id', v)}
                                     disabled={isSubmitting}
-                                    className="w-full resize-y rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                    placeholder="Select opportunity"
+                                    options={opportunityOptions}
                                 />
-                            </div>
-                        </>
-                    ) : (
-                        <div>
-                            <label className="block text-sm font-medium text-secondary mb-2">Simulation JSON</label>
-                            <textarea
-                                value={jsonText}
-                                onChange={(e) => setJsonText(e.target.value)}
-                                rows={18}
-                                disabled={isSubmitting}
-                                className="w-full resize-y rounded-lg border border-default bg-surface px-3 py-2 text-sm font-mono text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                placeholder='{"type":"Request","payload":[{"id":"NW-REQ-001","start":"2026-03-02","end":"2026-04-17","unit":"utilization","roster":[1,1,1,1,1,0,0]}]}'
-                            />
+                            </Field>
+                            <Field>
+                                <Label>Start</Label>
+                                <Input
+                                    type="date"
+                                    value={form.start}
+                                    onChange={(e) => updateFormField('start', e.target.value)}
+                                    disabled={isSubmitting}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>End</Label>
+                                <Input
+                                    type="date"
+                                    value={form.end}
+                                    onChange={(e) => updateFormField('end', e.target.value)}
+                                    disabled={isSubmitting}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Unit</Label>
+                                <Select
+                                    value={form.unit}
+                                    onChange={(v) => updateFormField('unit', v)}
+                                    disabled={isSubmitting}
+                                    options={[
+                                        { value: 'utilization', label: 'utilization' },
+                                        { value: 'hours', label: 'hours' },
+                                    ]}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Status</Label>
+                                <Select
+                                    value={form.status}
+                                    onChange={(v) => updateFormField('status', v)}
+                                    disabled={isSubmitting}
+                                    options={[
+                                        { value: 'Pending', label: 'Pending' },
+                                        { value: 'Approved', label: 'Approved' },
+                                        { value: 'Rejected', label: 'Rejected' },
+                                    ]}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Probability</Label>
+                                <Input
+                                    type="number"
+                                    value={form.probability}
+                                    onChange={(e) => updateFormField('probability', e.target.value)}
+                                    disabled={isSubmitting}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Request Name</Label>
+                                <Input
+                                    type="text"
+                                    value={form.request_name}
+                                    onChange={(e) => updateFormField('request_name', e.target.value)}
+                                    disabled={isSubmitting}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Consulting Unit</Label>
+                                <Select
+                                    value={form.consulting_unit_id}
+                                    onChange={(v) => updateFormField('consulting_unit_id', v)}
+                                    disabled={isSubmitting}
+                                    options={noneOptions(lookups?.consultingUnits)}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Practice Area</Label>
+                                <Select
+                                    value={form.practice_area_id}
+                                    onChange={(v) => updateFormField('practice_area_id', v)}
+                                    disabled={isSubmitting}
+                                    options={noneOptions(lookups?.practiceAreas)}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Competency Center</Label>
+                                <Select
+                                    value={form.competency_center_id}
+                                    onChange={(v) => updateFormField('competency_center_id', v)}
+                                    disabled={isSubmitting}
+                                    options={[
+                                        { value: '', label: 'None' },
+                                        ...competencyCenterOptions,
+                                    ]}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Site</Label>
+                                <Select
+                                    value={form.site_id}
+                                    onChange={(v) => updateFormField('site_id', v)}
+                                    disabled={isSubmitting}
+                                    options={noneOptions(lookups?.sites)}
+                                />
+                            </Field>
+                            <Field>
+                                <Label>Job Level</Label>
+                                <Select
+                                    value={form.job_level_id}
+                                    onChange={(v) => updateFormField('job_level_id', v)}
+                                    disabled={isSubmitting}
+                                    options={noneOptions(lookups?.jobLevels)}
+                                />
+                            </Field>
                         </div>
-                    )}
 
-                    {error && <p className="mt-2 text-xs font-semibold text-red-600">{error}</p>}
+                        <Field>
+                            <Label>
+                                Roster ({form.unit === 'hours' ? 'hours/day' : 'utilization'} Mon–Sun)
+                            </Label>
+                            <div className="grid grid-cols-7 gap-2 p-3 rounded-lg border border-default bg-surface-muted">
+                                {WEEKDAY_LABELS.map((label, index) => (
+                                    <div key={label}>
+                                        <label className="block text-[10px] font-medium text-tertiary mb-1 text-center">{label}</label>
+                                        <Input
+                                            type="number"
+                                            min={0}
+                                            step={form.unit === 'hours' ? 0.5 : 0.1}
+                                            value={form.roster[index]}
+                                            onChange={(e) => updateRosterDay(index, e.target.value)}
+                                            disabled={isSubmitting}
+                                            className="h-8 px-1.5 text-center"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </Field>
 
-                    <div className="flex justify-end gap-3">
-                        <button
-                            type="button"
-                            onClick={onClose}
+                        <Field>
+                            <Label>Notes</Label>
+                            <Textarea
+                                value={form.notes}
+                                onChange={(e) => updateFormField('notes', e.target.value)}
+                                rows={3}
+                                disabled={isSubmitting}
+                            />
+                        </Field>
+                    </>
+                ) : (
+                    <Field>
+                        <Label>Simulation JSON</Label>
+                        <Textarea
+                            value={jsonText}
+                            onChange={(e) => setJsonText(e.target.value)}
+                            rows={18}
                             disabled={isSubmitting}
-                            className="px-4 py-2 rounded-lg border border-default text-sm font-semibold text-secondary hover:bg-surface-hover disabled:opacity-60"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleCreate}
-                            disabled={isSubmitting}
-                            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
-                        >
-                            {isSubmitting ? 'Publishing…' : 'Publish'}
-                        </button>
-                    </div>
-                </div>
+                            className="font-mono min-h-[320px]"
+                            placeholder='{"type":"Request","payload":[{"id":"NW-REQ-001","start":"2026-03-02","end":"2026-04-17","unit":"utilization","roster":[1,1,1,1,1,0,0]}]}'
+                        />
+                    </Field>
+                )}
+
+                {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
             </div>
-        </div>
+        </Modal>
     );
 };

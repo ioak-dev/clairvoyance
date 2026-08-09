@@ -1,4 +1,5 @@
 import type { BookingRequest, Project, Resource } from '../types';
+import { getEffectiveBillableType } from './projectCategory';
 
 export type FilterCriteria = Record<string, unknown>;
 
@@ -57,8 +58,12 @@ export function matchesRequest(
   if (criteria.status && request.status !== criteria.status) {
     return false;
   }
-  if (criteria.billable_type && request.billableType !== criteria.billable_type) {
-    return false;
+  if (criteria.billable_type) {
+    const project = projectById.get(request.projectId);
+    const effective = getEffectiveBillableType(request.billableType, project);
+    if (effective !== criteria.billable_type) {
+      return false;
+    }
   }
   if (criteria.unassigned_only === true && request.resourceId) {
     return false;

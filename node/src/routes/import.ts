@@ -836,7 +836,8 @@ export async function importSchedules(req: Request, res: Response) {
           const rowBillableType = normalizeBillableType(
             getStringValue(row, ['Billable Type', 'billable_type', 'Billability']),
           );
-          const billableType = rowBillableType || project.billableType || 'Billable';
+          // Optional override only — omit to inherit project.billable_type.
+          const billableType = rowBillableType ?? null;
 
           const rowBookingType = normalizeBookingType(
             getStringValue(row, ['Booking Type', 'booking_type', 'Commitment Type']),

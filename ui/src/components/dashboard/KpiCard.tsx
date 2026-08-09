@@ -1,5 +1,6 @@
 import React from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { Card } from '../ui';
 
 type KpiCardProps = {
   label: string;
@@ -16,7 +17,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   icon: Icon,
   accentClass = 'text-blue-500',
 }) => (
-  <div className="app-card p-5 flex flex-col justify-between min-h-[120px]">
+  <Card padded className="flex flex-col justify-between min-h-[120px]">
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <span className="text-[10px] font-semibold text-tertiary uppercase tracking-[0.08em] block">
@@ -33,5 +34,5 @@ export const KpiCard: React.FC<KpiCardProps> = ({
         {subtitle}
       </p>
     )}
-  </div>
+  </Card>
 );

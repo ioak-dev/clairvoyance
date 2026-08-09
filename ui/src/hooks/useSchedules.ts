@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { schedulesService, type UpsertScheduleParams } from '../lib/services/schedules';
+import {
+  schedulesService,
+  type ReplaceScheduleRangeParams,
+  type SplitScheduleParams,
+  type UpsertScheduleParams,
+} from '../lib/services/schedules';
 
 export const scheduleQueryKeys = {
   all: ['schedules'] as const,
@@ -28,6 +33,26 @@ export function useUpsertSchedule() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (params: UpsertScheduleParams) => schedulesService.upsert(params),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
+    },
+  });
+}
+
+export function useReplaceScheduleRange() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: ReplaceScheduleRangeParams) => schedulesService.replaceRange(params),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
+    },
+  });
+}
+
+export function useSplitSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: SplitScheduleParams) => schedulesService.split(params),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
     },

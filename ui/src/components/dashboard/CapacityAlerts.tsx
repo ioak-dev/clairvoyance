@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, TrendingDown } from 'lucide-react';
 import type { PersonUtilization } from '../../lib/dashboardMetrics';
+import { Badge, Card } from '../ui';
 
 type CapacityAlertsProps = {
   overAllocated: PersonUtilization[];
@@ -36,11 +37,9 @@ function PersonChip({
           <span className="text-[10px] text-secondary block truncate">{person.practiceArea}</span>
         )}
       </div>
-      <span
-        className={`font-bold shrink-0 ml-1 ${isOver ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'}`}
-      >
+      <Badge tone={isOver ? 'amber' : 'blue'} className="shrink-0 ml-1 font-bold">
         {person.utilizationPercent}%
-      </span>
+      </Badge>
     </div>
   );
 }
@@ -55,7 +54,7 @@ export const CapacityAlerts: React.FC<CapacityAlertsProps> = ({
   const remainingUnderUtilized = Math.max(0, underUtilized.length - shownUnderUtilized.length);
 
   return (
-    <div className="app-card p-5">
+    <Card padded>
       <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Capacity Alerts</h3>
       <p className="text-xs text-secondary mb-4">People over-allocated or under-utilized</p>
 
@@ -103,6 +102,6 @@ export const CapacityAlerts: React.FC<CapacityAlertsProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 };

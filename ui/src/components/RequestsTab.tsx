@@ -6,17 +6,26 @@
 import React from 'react';
 import { Resource, Project, BookingRequest } from '../types';
 import { Check, X, ShieldAlert, BadgeInfo, FileSliders, UserCheck, Trash2, HelpCircle } from 'lucide-react';
-import { getProjectCategoryDotClassForProject } from '../lib/projectCategory';
+import { getEffectiveBillableType, getProjectCategoryDotClassForProject } from '../lib/projectCategory';
 import { rosterSummaryLabel } from '../lib/rosterUtils';
 import { requestDateBounds } from '../types/api';
+import { Badge, Button, Card, CardBody, CardHeader, IconButton } from './ui';
 
 interface RequestsTabProps {
   requests: BookingRequest[];
   resources: Resource[];
   projects: Project[];
-  onApproveRequest: (id: string) => void;
-  onRejectRequest: (id: string) => void;
-  onDeleteRequest: (id: string) => void;
+  onApproveRequest: (id: string) => void | Promise<void>;
+  onRejectRequest: (id: string) => void | Promise<void>;
+  onDeleteRequest: (id: string) => void | Promise<void>;
+}
+
+type RequestAction = 'approve' | 'reject' | 'delete';
+
+function billableTone(type: string | undefined): 'emerald' | 'amber' | 'purple' {
+  if (type === 'Billable') return 'emerald';
+  if (type === 'Non-billable') return 'amber';
+  return 'purple';
 }
 
 export const RequestsTab: React.FC<RequestsTabProps> = ({
@@ -27,15 +36,27 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
   onRejectRequest,
   onDeleteRequest,
 }) => {
+  const [busy, setBusy] = React.useState<{ id: string; action: RequestAction } | null>(null);
+
   const getResource = (id: string) => resources.find((r) => r.id === id);
   const getProject = (id: string) => projects.find((p) => p.id === id);
+
+  const runAction = async (id: string, action: RequestAction, fn: () => void | Promise<void>) => {
+    if (busy) return;
+    setBusy({ id, action });
+    try {
+      await fn();
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const pendingRequests = requests.filter((r) => r.status === 'Pending');
   const pastRequests = requests.filter((r) => r.status !== 'Pending');
 
   return (
     <div className="space-y-6" id="requests-tab-container">
-      <div className="app-card p-6">
+      <Card padded>
         <div className="flex items-center gap-3">
           <div className="p-2 tint-purple rounded-lg">
             <FileSliders className="w-6 h-6" />
@@ -47,7 +68,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
             </p>
           </div>
         </div>
-      </div>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
@@ -56,9 +77,9 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
           </h3>
 
           {pendingRequests.length === 0 ? (
-            <div className="app-card border-dashed p-12 text-center text-tertiary text-sm">
+            <Card className="border-dashed p-12 text-center text-tertiary text-sm">
               All booking allocations requests have been resolved!
-            </div>
+            </Card>
           ) : (
             <div className="space-y-4">
               {pendingRequests.map((req) => {
@@ -66,14 +87,17 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                 const proj = getProject(req.projectId);
                 const bounds = requestDateBounds(req);
                 const summary = rosterSummaryLabel(req.unit, req.roster);
+                const billableType = getEffectiveBillableType(req.billableType, proj);
+                const isRejecting = busy?.id === req.id && busy.action === 'reject';
+                const isApproving = busy?.id === req.id && busy.action === 'approve';
 
                 return (
-                  <div
+                  <Card
                     key={req.id}
-                    className="app-card hover:shadow-app-md transition-shadow duration-200 overflow-hidden flex flex-col"
+                    className="hover:shadow-app-md transition-shadow duration-200 overflow-hidden flex flex-col"
                   >
-                    <div className="px-6 py-4 bg-surface-muted/70 border-b border-subtle flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex items-center gap-3">
+                    <CardHeader className="flex-wrap gap-2">
+                      <div className="flex items-center gap-3 min-w-0">
                         {res?.avatarUrl ? (
                           <img
                             referrerPolicy="no-referrer"
@@ -86,18 +110,18 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                             {res?.name ? res.name.split(' ').map((n) => n[0]).join('') : 'R'}
                           </div>
                         )}
-                        <div>
+                        <div className="min-w-0">
                           <h4 className="text-sm font-bold text-primary">{res?.name}</h4>
                           <p className="text-xs text-tertiary capitalize">{res?.role}</p>
                         </div>
                       </div>
 
-                      <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-xs font-bold uppercase tracking-wider scale-95">
-                        PENDING APPROVAL
-                      </span>
-                    </div>
+                      <Badge tone="amber" className="uppercase tracking-wider">
+                        Pending approval
+                      </Badge>
+                    </CardHeader>
 
-                    <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold text-tertiary uppercase">Target Project</span>
                         <div className="flex items-center gap-2 mt-1">
@@ -115,18 +139,9 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
 
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold text-tertiary uppercase">Roster</span>
-                        <p className="text-sm font-bold text-primary mt-1 flex items-center gap-1.5">
+                        <p className="text-sm font-bold text-primary mt-1 flex items-center gap-1.5 flex-wrap">
                           <span>{summary}</span>
-                          <span className={`px-1.5 py-0.2 rounded text-[10px] ${
-                            (() => {
-                              const type = getProject(req.projectId)?.billableType || req.billableType;
-                              if (type === 'Billable') return 'bg-emerald-100 text-emerald-800';
-                              if (type === 'Non-billable') return 'bg-amber-100 text-amber-800';
-                              return 'bg-purple-100 text-purple-800';
-                            })()
-                          }`}>
-                            {getProject(req.projectId)?.billableType || req.billableType}
-                          </span>
+                          <Badge tone={billableTone(billableType)}>{billableType}</Badge>
                         </p>
                       </div>
 
@@ -140,23 +155,33 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                           </p>
                         </div>
                       )}
-                    </div>
+                    </CardBody>
 
-                    <div className="px-6 py-3.5 bg-surface-muted border-t border-subtle flex justify-end gap-3">
-                      <button
-                        onClick={() => onRejectRequest(req.id)}
-                        className="px-4 py-2 tint-red rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    <div className="px-5 py-3.5 bg-surface-muted border-t border-subtle flex justify-end gap-3">
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => void runAction(req.id, 'reject', () => onRejectRequest(req.id))}
+                        loading={isRejecting}
+                        disabled={Boolean(busy)}
+                        leftIcon={<X className="w-4 h-4" />}
+                        className="tint-red bg-transparent text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40 border border-red-200 dark:border-red-900"
                       >
-                        <X className="w-4 h-4" /> Reject Proposal
-                      </button>
-                      <button
-                        onClick={() => onApproveRequest(req.id)}
-                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                        {isRejecting ? 'Rejecting…' : 'Reject Proposal'}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => void runAction(req.id, 'approve', () => onApproveRequest(req.id))}
+                        loading={isApproving}
+                        disabled={Boolean(busy)}
+                        leftIcon={<Check className="w-4 h-4" />}
+                        className="bg-indigo-600 hover:bg-indigo-700"
                       >
-                        <Check className="w-4 h-4" /> Approved & Publish
-                      </button>
+                        {isApproving ? 'Publishing…' : 'Approved & Publish'}
+                      </Button>
                     </div>
-                  </div>
+                  </Card>
                 );
               })}
             </div>
@@ -168,33 +193,30 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
             Historical Requests Log
           </h3>
 
-          <div className="app-card p-6 space-y-4">
+          <Card padded className="space-y-4">
             {pastRequests.length === 0 ? (
               <div className="text-center py-12 text-sm text-tertiary">
                 No past resolved request records yet in this workspace session.
               </div>
             ) : (
-              <div className="divide-y divide-gray-100 max-h-[480px] overflow-y-auto pr-1">
+              <div className="divide-y divide-[var(--app-border-subtle)] max-h-[480px] overflow-y-auto pr-1">
                 {pastRequests.map((req) => {
                   const res = getResource(req.resourceId);
                   const proj = getProject(req.projectId);
                   const isApproved = req.status === 'Approved';
                   const bounds = requestDateBounds(req);
                   const summary = rosterSummaryLabel(req.unit, req.roster);
+                  const isDeleting = busy?.id === req.id && busy.action === 'delete';
 
                   return (
                     <div key={req.id} className="py-3 first:pt-0 last:pb-0 text-left">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-bold text-primary truncate max-w-[140px]">
                           {res?.name || 'Staff member'}
                         </span>
-                        <span
-                          className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
-                            isApproved ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
-                          }`}
-                        >
+                        <Badge tone={isApproved ? 'emerald' : 'red'} className="uppercase">
                           {req.status}
-                        </span>
+                        </Badge>
                       </div>
                       <p className="text-[11px] text-secondary mt-1 font-medium">
                         Project: <span className="text-primary font-semibold">{proj?.name || 'TMS'}</span> ({summary})
@@ -204,13 +226,16 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                       </p>
 
                       <div className="mt-2 flex justify-end">
-                        <button
-                          onClick={() => onDeleteRequest(req.id)}
-                          className="text-tertiary hover:text-red-500 p-1 rounded hover:bg-red-50 transition-colors cursor-pointer"
-                          title="Delete request log entry"
+                        <IconButton
+                          label="Delete request log entry"
+                          size="sm"
+                          loading={isDeleting}
+                          disabled={Boolean(busy)}
+                          onClick={() => void runAction(req.id, 'delete', () => onDeleteRequest(req.id))}
+                          className="text-tertiary hover:text-red-500"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        </IconButton>
                       </div>
                     </div>
                   );
@@ -232,7 +257,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
               <UserCheck className="w-3.5 h-3.5" />
               <span>Assigned resources appear on the timeline after approval.</span>
             </div>
-          </div>
+          </Card>
         </div>
       </div>
     </div>

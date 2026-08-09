@@ -21,10 +21,26 @@ export interface UpsertScheduleParams {
   endDate: string;
   unit: ScheduleUnit;
   roster: Roster;
-  billableType?: BillableType;
+  billableType?: BillableType | null;
   bookingType?: BookingCommitmentType;
   requestId?: string | null;
 }
+
+export interface ReplaceScheduleRangeParams {
+  id: string;
+  rangeStart: string;
+  rangeEnd: string;
+  unit: ScheduleUnit;
+  roster: Roster;
+  title?: string | null;
+}
+
+export interface SplitScheduleParams {
+  id: string;
+  splitDate: string;
+}
+
+export type ScheduleRangeResult = { ids: string[] };
 
 export const schedulesService = {
   async list(): Promise<ScheduleAssignment[]> {
@@ -48,9 +64,31 @@ export const schedulesService = {
         end: params.endDate,
         unit: params.unit,
         roster: params.roster,
-        billable_type: params.billableType ?? 'Billable',
+        billable_type: params.billableType ?? null,
         booking_type: params.bookingType ?? 'hard',
         request_id: params.requestId ?? null,
+      },
+    });
+  },
+
+  async replaceRange(params: ReplaceScheduleRangeParams): Promise<ScheduleRangeResult> {
+    return http.post<ScheduleRangeResult>(`${env.postgrestUrl}/rpc/replace_schedule_range`, {
+      p_payload: {
+        id: params.id,
+        range_start: params.rangeStart,
+        range_end: params.rangeEnd,
+        unit: params.unit,
+        roster: params.roster,
+        title: params.title ?? null,
+      },
+    });
+  },
+
+  async split(params: SplitScheduleParams): Promise<ScheduleRangeResult> {
+    return http.post<ScheduleRangeResult>(`${env.postgrestUrl}/rpc/split_schedule`, {
+      p_payload: {
+        id: params.id,
+        split_date: params.splitDate,
       },
     });
   },

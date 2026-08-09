@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ProjectHoursRow } from '../../lib/dashboardMetrics';
+import { Card } from '../ui';
 
 type TopProjectsChartProps = {
   projects: ProjectHoursRow[];
@@ -9,7 +10,7 @@ export const TopProjectsChart: React.FC<TopProjectsChartProps> = ({ projects }) 
   const maxHours = Math.max(...projects.map((p) => p.hours), 1);
 
   return (
-    <div className="app-card p-5">
+    <Card padded>
       <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Top Projects</h3>
       <p className="text-xs text-secondary mb-4">Ranked by planned hours in period</p>
 
@@ -42,6 +43,6 @@ export const TopProjectsChart: React.FC<TopProjectsChartProps> = ({ projects }) 
           })}
         </div>
       )}
-    </div>
+    </Card>
   );
 };

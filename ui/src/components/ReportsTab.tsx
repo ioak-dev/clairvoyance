@@ -5,10 +5,12 @@
 
 import React from 'react';
 import { BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
-import { Download, Loader2 } from 'lucide-react';
+import { Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { scheduleAuditService } from '../lib/services/scheduleAudit';
 import type { ScheduleAuditReportRow } from '../types/api';
+import { Button, Card, ErrorMessage, Field, Input, Label, Select } from './ui';
+import { getEffectiveBillableType } from '../lib/projectCategory';
 
 interface ReportsTabProps {
   resources?: Resource[];
@@ -161,20 +163,23 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
         filePrefix: 'schedules',
         buildRows: () =>
           assignments
-            .map((assignment) => ({
+            .map((assignment) => {
+              const project = projects.find((p) => p.id === assignment.projectId);
+              return {
               schedule_id: assignment.id,
               resource_id: assignment.resourceId,
               resource_name: resourceNameById.get(assignment.resourceId) || assignment.resourceId,
               project_id: assignment.projectId,
               project_name: projectNameById.get(assignment.projectId) || assignment.projectId,
               request_id: assignment.requestId || '',
-              billable_type: assignment.billableType,
+              billable_type: getEffectiveBillableType(assignment.billableType, project),
               booking_type: assignment.bookingType,
               start: assignment.startDate,
               end: assignment.endDate,
               unit: assignment.unit,
               roster: rosterExportValue(assignment.roster),
-            }))
+            };
+            })
             .sort((a, b) => {
               if (a.start !== b.start) return String(a.start).localeCompare(String(b.start));
               if (a.end !== b.end) return String(a.end).localeCompare(String(b.end));
@@ -187,7 +192,9 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
         filePrefix: 'requests',
         buildRows: () =>
           requests
-            .map((request) => ({
+            .map((request) => {
+              const project = projects.find((p) => p.id === request.projectId);
+              return {
               request_id: request.id,
               reference_id: request.referenceId,
               request_name: request.requestName || '',
@@ -199,14 +206,15 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
                 : '',
               project_id: request.projectId,
               project_name: projectNameById.get(request.projectId) || request.projectId,
-              billable_type: request.billableType,
+              billable_type: getEffectiveBillableType(request.billableType, project),
               booking_type: request.bookingType,
               start: request.startDate,
               end: request.endDate,
               unit: request.unit,
               roster: rosterExportValue(request.roster),
               notes: request.notes || '',
-            }))
+            };
+            })
             .sort((a, b) => {
               if (a.start !== b.start) return String(a.start).localeCompare(String(b.start));
               if (a.end !== b.end) return String(a.end).localeCompare(String(b.end));
@@ -284,7 +292,7 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
   };
 
   return (
-    <div className="app-card p-6 flex flex-col gap-4" id="reports-downloads">
+    <Card padded className="flex flex-col gap-4" id="reports-downloads">
       <h2 className="text-xl font-bold text-primary tracking-tight">Reports</h2>
 
       <div className="rounded-lg border border-subtle bg-surface px-4 py-4 flex flex-col gap-4">
@@ -295,86 +303,69 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
               Export schedule change history by project or resource, with optional changed-date bounds.
             </p>
           </div>
-          <button
+          <Button
             type="button"
+            variant="primary"
+            size="sm"
             onClick={handleAuditDownload}
+            loading={downloading === 'scheduleAuditLog'}
             disabled={Boolean(downloading) || auditOptions.length === 0}
-            className="inline-flex items-center justify-center gap-1.5 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            leftIcon={<Download className="w-3.5 h-3.5" />}
           >
-            {downloading === 'scheduleAuditLog' ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Downloading...
-              </>
-            ) : (
-              <>
-                <Download className="w-3.5 h-3.5" />
-                Download Audit Log
-              </>
-            )}
-          </button>
+            {downloading === 'scheduleAuditLog' ? 'Downloading...' : 'Download Audit Log'}
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
-              Filter Mode
-            </label>
-            <select
+          <Field>
+            <Label>Filter Mode</Label>
+            <Select<AuditFilterMode>
               value={auditFilterMode}
-              onChange={(event) => setAuditFilterMode(event.target.value as AuditFilterMode)}
-              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="project">Projects</option>
-              <option value="resource">Resources</option>
-            </select>
-          </div>
+              onChange={setAuditFilterMode}
+              options={[
+                { value: 'project', label: 'Projects' },
+                { value: 'resource', label: 'Resources' },
+              ]}
+              aria-label="Filter Mode"
+            />
+          </Field>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
-              Changed From
-            </label>
-            <input
+          <Field>
+            <Label>Changed From</Label>
+            <Input
               type="date"
               value={auditChangedFrom}
               onChange={(event) => setAuditChangedFrom(event.target.value)}
-              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-          </div>
+          </Field>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
-              Changed To
-            </label>
-            <input
+          <Field>
+            <Label>Changed To</Label>
+            <Input
               type="date"
               value={auditChangedTo}
               onChange={(event) => setAuditChangedTo(event.target.value)}
-              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-          </div>
+          </Field>
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
-            {auditFilterMode === 'project' ? 'Projects' : 'Resources'}
-          </label>
+        <Field>
+          <Label>{auditFilterMode === 'project' ? 'Projects' : 'Resources'}</Label>
+          {/* Multi-select is not supported by Select primitive; keep native control */}
           <select
             multiple
             size={Math.min(Math.max(auditOptions.length, 4), 8)}
             value={selectedAuditIds}
             onChange={handleAuditSelectionChange}
-            className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-lg border border-default bg-input px-3 py-2 text-[13px] text-primary focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25"
           >
             {auditOptions.map((option) => (
               <option key={option.id} value={option.id}>{option.label}</option>
             ))}
           </select>
-        </div>
+        </Field>
 
-        {auditError && (
-          <p className="text-xs text-red-600">{auditError}</p>
-        )}
+        {auditError && <ErrorMessage>{auditError}</ErrorMessage>}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -386,29 +377,21 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
               className="rounded-lg border border-subtle bg-surface px-3 py-2.5 flex items-center justify-between gap-3"
             >
               <h3 className="text-sm font-medium text-primary">{report.title}</h3>
-              <button
+              <Button
                 type="button"
+                variant="primary"
+                size="sm"
                 onClick={() => handleDownload(report)}
+                loading={isDownloading}
                 disabled={Boolean(downloading)}
-                className="inline-flex items-center justify-center gap-1.5 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                leftIcon={<Download className="w-3.5 h-3.5" />}
               >
-                {isDownloading ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Downloading...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-3.5 h-3.5" />
-                    Download
-                  </>
-                )}
-              </button>
+                {isDownloading ? 'Downloading...' : 'Download'}
+              </Button>
             </div>
           );
         })}
       </div>
-    </div>
+    </Card>
   );
 };
-

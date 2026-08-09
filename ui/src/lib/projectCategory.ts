@@ -63,7 +63,7 @@ export function getProjectCategoryIconClass(category: ProjectCategory): string {
 export function getProjectCategoryBadgeClass(category: ProjectCategory): string {
   switch (category) {
     case 'Opportunity':
-      return 'bg-[rgb(78,130,194)] text-white border-[rgb(56,100,155)]';
+      return 'bg-[rgb(142,124,195)] text-white border-[rgb(112,96,165)]';
     case 'Non-billable':
       return 'bg-[rgb(217,150,148)] text-white border-[rgb(197,130,128)]';
     case 'Billable':
@@ -81,8 +81,8 @@ export function getProjectCategoryBlockStyle(category: ProjectCategory): {
   switch (category) {
     case 'Opportunity':
       return {
-        colorClass: 'bg-blue-600',
-        borderClass: 'border border-blue-700',
+        colorClass: 'bg-[rgb(142,124,195)]',
+        borderClass: 'border border-[rgb(112,96,165)]',
         textClass: 'text-white',
       };
     case 'Non-billable':
@@ -141,9 +141,10 @@ function getProjectCategoryBlockRgb(category: ProjectCategory): {
 } {
   switch (category) {
     case 'Opportunity':
+      // Muted purple — not blue (pipeline / opportunity signal).
       return {
-        fill: { r: 78, g: 130, b: 194 },
-        border: { r: 56, g: 100, b: 155 },
+        fill: { r: 142, g: 124, b: 195 },
+        border: { r: 112, g: 96, b: 165 },
       };
     case 'Non-billable':
       return {
@@ -160,8 +161,22 @@ function getProjectCategoryBlockRgb(category: ProjectCategory): {
 }
 
 /** Opaque category fill + single subtle stripe tint. */
-export function getAllocationBlockChrome(category: ProjectCategory): AllocationBlockChrome {
+export function getAllocationBlockChrome(
+  category: ProjectCategory,
+  options?: { translucent?: boolean },
+): AllocationBlockChrome {
   const { fill, border } = getProjectCategoryBlockRgb(category);
+  if (options?.translucent) {
+    return {
+      // Semi-transparent tint over the app surface (opportunity / pipeline look).
+      fillColor: `color-mix(in srgb, ${rgb(fill)} 32%, transparent)`,
+      borderColor: `color-mix(in srgb, ${rgb(border)} 40%, transparent)`,
+      stripeColor: 'transparent',
+      textClass: 'text-primary',
+      badgeClass:
+        'bg-black/8 text-primary border border-black/10 dark:bg-white/10 dark:text-primary dark:border-white/15',
+    };
+  }
   return {
     fillColor: rgb(fill),
     borderColor: rgb(border),
@@ -226,4 +241,16 @@ export function getBillableTypeFromProject(project: Project): BillableType {
     return project.billableType;
   }
   return getProjectCategory(project) === 'Opportunity' ? 'Opportunity' : 'Billable';
+}
+
+/**
+ * Effective billable type: schedule/request override when present, else project.
+ */
+export function getEffectiveBillableType(
+  override: BillableType | null | undefined,
+  project: Project | null | undefined,
+): BillableType {
+  if (override) return override;
+  if (project) return getBillableTypeFromProject(project);
+  return 'Billable';
 }

@@ -74,7 +74,7 @@ export interface ScheduleRow {
   project_id: string;
   person_id: string;
   request_id: string | null;
-  billable_type: BillableType;
+  billable_type: BillableType | null;
   booking_type: BookingCommitmentType;
   start_date: string;
   end_date: string;
@@ -87,7 +87,7 @@ export interface RequestRow {
   reference_id: string;
   project_id: string;
   person_id: string | null;
-  billable_type: BillableType;
+  billable_type: BillableType | null;
   booking_type: BookingCommitmentType;
   probability: number;
   status: ApprovalStatus;
@@ -260,7 +260,7 @@ export function toScheduleAssignment(row: ScheduleRow): ScheduleAssignment {
     resourceId: row.person_id,
     projectId: row.project_id,
     requestId: row.request_id || undefined,
-    billableType: row.billable_type,
+    billableType: row.billable_type ?? undefined,
     bookingType: row.booking_type ?? 'hard',
     startDate: row.start_date,
     endDate: row.end_date,
@@ -275,7 +275,7 @@ export function toBookingRequest(row: RequestRow): BookingRequest {
     referenceId: row.reference_id,
     resourceId: row.person_id || '',
     projectId: row.project_id,
-    billableType: row.billable_type,
+    billableType: row.billable_type ?? undefined,
     bookingType: row.booking_type ?? 'hard',
     probability: row.probability ?? 100,
     status: row.status,
@@ -456,7 +456,7 @@ export function createRequestPayload(
     reference_id: request.referenceId || crypto.randomUUID(),
     project_id: request.projectId,
     person_id: request.resourceId || null,
-    billable_type: request.billableType,
+    billable_type: request.billableType ?? null,
     booking_type: request.bookingType ?? 'hard',
     probability: request.probability ?? 100,
     status,
@@ -479,7 +479,7 @@ export function updateRequestPayload(request: Partial<BookingRequest> & { status
     ...(request.referenceId !== undefined ? { reference_id: request.referenceId } : {}),
     ...(request.resourceId !== undefined ? { person_id: request.resourceId || null } : {}),
     ...(request.projectId !== undefined ? { project_id: request.projectId } : {}),
-    ...(request.billableType !== undefined ? { billable_type: request.billableType } : {}),
+    ...(request.billableType !== undefined ? { billable_type: request.billableType ?? null } : {}),
     ...(request.bookingType !== undefined ? { booking_type: request.bookingType } : {}),
     ...(request.probability !== undefined ? { probability: request.probability } : {}),
     ...(request.status !== undefined ? { status: request.status } : {}),
@@ -502,7 +502,7 @@ export function toLabRequestPayloadItem(request: BookingRequest): Record<string,
     id: request.referenceId,
     project_id: request.projectId,
     person_id: request.resourceId || null,
-    billable_type: request.billableType,
+    billable_type: request.billableType ?? null,
     status: request.status,
     booking_type: request.bookingType,
     probability: request.probability,

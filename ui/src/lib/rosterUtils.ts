@@ -217,3 +217,44 @@ export function weekSegmentLabel(unit: ScheduleUnit, roster: Roster, activeDays:
   const summary = rosterSummaryLabel(unit, roster);
   return `${summary} · ${activeDays} day${activeDays === 1 ? '' : 's'}`;
 }
+
+/**
+ * Inclusive date bounds for resizing a schedule without overlapping another
+ * allocation for the same person + project. Adjacent (touching) siblings are OK.
+ */
+export function scheduleSiblingDateBounds(
+  block: Pick<AllocationBlock, 'scheduleId' | 'resourceId' | 'projectId' | 'startDate' | 'endDate'>,
+  assignments: Array<Pick<ScheduleAssignment, 'id' | 'resourceId' | 'projectId' | 'startDate' | 'endDate'>>,
+): { minStart: string | null; maxEnd: string | null } {
+  let minStart: string | null = null;
+  let maxEnd: string | null = null;
+
+  for (const s of assignments) {
+    if (s.id === block.scheduleId) continue;
+    if (s.resourceId !== block.resourceId || s.projectId !== block.projectId) continue;
+
+    // Sibling completely before this block (or ending on/after our start → treat as previous edge).
+    if (s.endDate < block.startDate) {
+      const candidate = addDays(s.endDate, 1);
+      if (!minStart || candidate > minStart) minStart = candidate;
+      continue;
+    }
+    // Sibling completely after this block.
+    if (s.startDate > block.endDate) {
+      const candidate = addDays(s.startDate, -1);
+      if (!maxEnd || candidate < maxEnd) maxEnd = candidate;
+      continue;
+    }
+    // Overlapping sibling (should be rare after DB guard): clamp away from it.
+    if (s.startDate > block.startDate) {
+      const candidate = addDays(s.startDate, -1);
+      if (!maxEnd || candidate < maxEnd) maxEnd = candidate;
+    }
+    if (s.endDate < block.endDate) {
+      const candidate = addDays(s.endDate, 1);
+      if (!minStart || candidate > minStart) minStart = candidate;
+    }
+  }
+
+  return { minStart, maxEnd };
+}

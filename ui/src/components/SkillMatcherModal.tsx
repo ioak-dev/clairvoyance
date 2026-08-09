@@ -17,6 +17,7 @@ import {
   rosterSummaryLabel,
 } from '../lib/rosterUtils';
 import { requestDateBounds } from '../types/api';
+import { Modal, Button, IconButton, Input, Select, Field, Label, Badge } from './ui';
 
 interface SkillMatcherModalProps {
   isOpen: boolean;
@@ -251,70 +252,61 @@ const ResourceAvailabilityDetailsModal: React.FC<{
   resource: UtilizationDetailsResource | null;
   onClose: () => void;
 }> = ({ resource, onClose }) => {
-  if (!resource) {
-    return null;
-  }
-
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center modal-overlay p-4">
-      <div className="bg-surface border border-subtle rounded-xl shadow-app-md w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh]">
-        <div className="app-card-header px-6 py-4 border-b border-subtle">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <List className="w-5 h-5 text-blue-600 shrink-0" />
-                <h3 className="text-lg font-semibold text-primary">Availability vs Request</h3>
+    <Modal
+      open={!!resource}
+      onClose={onClose}
+      size="lg"
+      title={
+        <span className="flex items-center gap-2">
+          <List className="w-5 h-5 text-blue-600 shrink-0" />
+          Availability vs Request
+        </span>
+      }
+      description={
+        resource ? (
+          <>
+            <span className="block truncate">{resource.name} · {resource.role}</span>
+            <span className="block mt-1">
+              Avg shortfall across request days:{' '}
+              {resource.avgShortfallHours === 0
+                ? '0h (covers request)'
+                : `${resource.avgShortfallHours.toFixed(1)}h/day`}
+            </span>
+          </>
+        ) : undefined
+      }
+    >
+      {!resource || resource.gaps.length === 0 ? (
+        <div className="rounded-lg border border-subtle bg-surface-muted/30 px-4 py-8 text-sm text-tertiary text-center">
+          No request days to compare.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-subtle">
+          <div className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 bg-surface-muted/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-secondary">
+            <span>Date</span>
+            <span className="text-right">Required</span>
+            <span className="text-right">Available</span>
+            <span className="text-right">Shortfall</span>
+          </div>
+          <div>
+            {resource.gaps.map((gap) => (
+              <div
+                key={gap.date}
+                className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 px-4 py-3 text-sm text-primary"
+              >
+                <span>{gap.date}</span>
+                <span className="text-right">{formatHours(gap.requiredHours)}</span>
+                <span className="text-right">{formatHours(gap.availableHours)}</span>
+                <span className="text-right font-semibold">
+                  {formatHours(gap.shortfallHours)}
+                </span>
               </div>
-              <p className="mt-1 text-sm text-secondary truncate">{resource.name} · {resource.role}</p>
-              <p className="mt-1 text-xs text-tertiary">
-                Avg shortfall across request days:{' '}
-                {resource.avgShortfallHours === 0
-                  ? '0h (covers request)'
-                  : `${resource.avgShortfallHours.toFixed(1)}h/day`}
-              </p>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-tertiary hover:text-primary hover:bg-surface-hover transition-colors shrink-0"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            ))}
           </div>
         </div>
-
-        <div className="p-5 overflow-y-auto">
-          {resource.gaps.length === 0 ? (
-            <div className="rounded-lg border border-subtle bg-surface-muted/30 px-4 py-8 text-sm text-tertiary text-center">
-              No request days to compare.
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-xl border border-subtle">
-              <div className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 bg-surface-muted/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-secondary">
-                <span>Date</span>
-                <span className="text-right">Required</span>
-                <span className="text-right">Available</span>
-                <span className="text-right">Shortfall</span>
-              </div>
-              <div>
-                {resource.gaps.map((gap) => (
-                  <div
-                    key={gap.date}
-                    className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 px-4 py-3 text-sm text-primary"
-                  >
-                    <span>{gap.date}</span>
-                    <span className="text-right">{formatHours(gap.requiredHours)}</span>
-                    <span className="text-right">{formatHours(gap.availableHours)}</span>
-                    <span className="text-right font-semibold">
-                      {formatHours(gap.shortfallHours)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 };
 
@@ -342,10 +334,12 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
   const [nameQuery, setNameQuery] = useState('');
   const [results, setResults] = useState<PersonUtilizationResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [assigningResourceId, setAssigningResourceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [detailsResource, setDetailsResource] = useState<UtilizationDetailsResource | null>(null);
   const { data: lookups } = useLookups();
+  const isAssigning = assigningResourceId !== null;
 
   const runSearch = useCallback(
     async (filters: FilterState, availabilityMode: AvailabilityMode) => {
@@ -406,6 +400,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
       setError(null);
       setHasSearched(false);
       setIsLoading(false);
+      setAssigningResourceId(null);
       setDetailsResource(null);
       return;
     }
@@ -449,314 +444,315 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
     }
   }, [filterOptions.cc, selectedFilters.cc]);
 
-  if (!isOpen || !request) {
-    return null;
-  }
-
-  const requestBounds = requestDateBounds(request);
-  const capacityLabel = rosterSummaryLabel(request.unit, request.roster);
+  const requestBounds = request ? requestDateBounds(request) : null;
+  const capacityLabel = request ? rosterSummaryLabel(request.unit, request.roster) : '';
 
   const updateFilter = (key: keyof FilterState, value: string) => {
     setSelectedFilters((current) => ({ ...current, [key]: value }));
   };
+
+  const toSelectOptions = (options: { id: string; name: string }[]) => [
+    { value: 'all', label: 'Any' },
+    ...options.map((option) => ({ value: option.id, label: option.name })),
+  ];
 
   const renderIdFilter = (
     key: keyof Omit<FilterState, 'level'>,
     label: string,
     options: { id: string; name: string }[],
   ) => (
-    <div>
-      <label className="block text-xs font-medium text-secondary mb-1.5">{label}</label>
-      <select
+    <Field>
+      <Label>{label}</Label>
+      <Select
         value={selectedFilters[key]}
-        onChange={(e) => updateFilter(key, e.target.value)}
-        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-      >
-        <option value="all">Any</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.name}
-          </option>
-        ))}
-      </select>
-    </div>
+        onChange={(v) => updateFilter(key, v)}
+        options={toSelectOptions(options)}
+      />
+    </Field>
   );
 
-  const selectClassName =
-    'w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400';
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 overflow-y-auto animate-fade-in" id="resources-skills-popup">
-      <div className="bg-surface border border-subtle rounded-xl shadow-app-md w-full max-w-5xl overflow-hidden flex flex-col h-[650px] transform transition-all animate-scale-up">
-        <div className="app-card-header px-6 py-3.5 border-b border-subtle">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <Award className="w-5 h-5 text-blue-600 shrink-0" />
-                <h3 className="text-lg font-semibold text-primary shrink-0">Skill Matcher</h3>
-                <span className="text-tertiary shrink-0">·</span>
-                <span className="text-sm text-secondary truncate">
-                  {requestProject?.name || 'Unknown project'}
-                </span>
-              </div>
-              <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
-                <span className="font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
-                  {request.requestName || 'General request'}
-                </span>
-                <span className="text-secondary">{capacityLabel} required</span>
+    <>
+      <Modal
+        open={isOpen && !!request}
+        onClose={onClose}
+        size="2xl"
+        id="resources-skills-popup"
+        panelClassName="h-[650px] max-h-[650px]"
+        title={
+          <span className="flex items-center gap-2 min-w-0">
+            <Award className="w-5 h-5 text-blue-600 shrink-0" />
+            <span className="shrink-0">Skill Matcher</span>
+            <span className="text-tertiary shrink-0">·</span>
+            <span className="text-sm font-normal text-secondary truncate">
+              {requestProject?.name || 'Unknown project'}
+            </span>
+          </span>
+        }
+        description={
+          request ? (
+            <>
+              <span className="flex items-center gap-2 flex-wrap">
+                <Badge tone="blue">{request.requestName || 'General request'}</Badge>
+                <span>{capacityLabel} required</span>
                 <span className="text-tertiary">·</span>
-                <span className="text-secondary">
+                <span>
                   {requestBounds ? `${requestBounds.startDate} – ${requestBounds.endDate}` : 'No dates'}
                 </span>
-              </div>
+              </span>
               {request.notes && (
-                <p className="mt-1.5 text-xs text-tertiary leading-snug line-clamp-1" title={request.notes}>
+                <span className="block mt-1 line-clamp-1" title={request.notes}>
                   {request.notes}
-                </p>
+                </span>
               )}
-            </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-tertiary hover:text-primary hover:bg-surface-hover transition-colors shrink-0"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-1 min-h-0">
-          <aside className="w-80 shrink-0 border-r border-subtle bg-surface flex flex-col">
-            <div className="p-5 flex-1 overflow-y-auto space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1.5">Availability</label>
-                  <select
+            </>
+          ) : undefined
+        }
+      >
+        {request && (
+          <div className="-mx-5 -my-4 flex h-full min-h-0">
+            <aside className="w-80 shrink-0 border-r border-subtle bg-surface flex flex-col">
+              <div className="p-5 flex-1 overflow-y-auto space-y-4">
+                <Field>
+                  <Label>Availability</Label>
+                  <Select
                     value={availability}
-                    onChange={(e) => setAvailability(e.target.value as AvailabilityMode)}
-                    className={selectClassName}
-                  >
-                    <option value="complete">Completely available</option>
-                    <option value="partial">Partially available</option>
-                    <option value="everyone">Everyone</option>
-                  </select>
-                </div>
+                    onChange={(v) => setAvailability(v)}
+                    options={[
+                      { value: 'complete', label: 'Completely available' },
+                      { value: 'partial', label: 'Partially available' },
+                      { value: 'everyone', label: 'Everyone' },
+                    ]}
+                  />
+                </Field>
 
                 {renderIdFilter('cu', 'Consulting unit', filterOptions.cu)}
                 {renderIdFilter('practice', 'Practice area', filterOptions.practice)}
                 {renderIdFilter('cc', 'Competency center', filterOptions.cc)}
                 {renderIdFilter('site', 'Site', filterOptions.site)}
 
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1.5">Job level</label>
-                  <select
+                <Field>
+                  <Label>Job level</Label>
+                  <Select
                     value={selectedFilters.level}
-                    onChange={(e) => updateFilter('level', e.target.value)}
-                    className={selectClassName}
-                  >
-                    <option value="all">Any</option>
-                    {filterOptions.level.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-            </div>
-
-            <div className="p-5 border-t border-subtle bg-surface flex gap-2">
-              <button
-                type="button"
-                onClick={() => void runSearch(selectedFilters, availability)}
-                disabled={isLoading}
-                className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
-              >
-                {isLoading ? 'Searching…' : 'Search'}
-              </button>
-
-              <button
-                type="button"
-                title="Clear all filters"
-                aria-label="Clear all filters"
-                onClick={() => {
-                  setSelectedFilters(defaultFilters);
-                  setAvailability('everyone');
-                  setNameQuery('');
-                }}
-                className="shrink-0 inline-flex items-center justify-center rounded-lg border border-default px-3 py-2.5 text-xs font-semibold text-secondary transition-colors hover:bg-surface-hover"
-              >
-                Clear all
-              </button>
-
-              <button
-                type="button"
-                title="Reset filters"
-                aria-label="Reset filters"
-                onClick={() => {
-                  const reset = filtersFromRequest(request);
-                  setSelectedFilters(reset);
-                  setAvailability('complete');
-                  setNameQuery('');
-                }}
-                className="shrink-0 inline-flex items-center justify-center rounded-lg border border-default p-2.5 text-secondary transition-colors hover:bg-surface-hover"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </button>
-            </div>
-          </aside>
-
-          <div className="flex-1 flex flex-col min-h-0 bg-surface-muted/20">
-            <div className="border-b border-subtle bg-surface px-4 py-3">
-              <label className="block text-xs font-medium text-secondary mb-1.5">Filter by name</label>
-              <div className="relative">
-                <Search className="w-4 h-4 text-tertiary absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  placeholder="Type to narrow results…"
-                  value={nameQuery}
-                  onChange={(e) => setNameQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 border border-default rounded-lg text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none bg-input"
-                />
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              <div className="mb-1 text-xs font-medium text-tertiary">
-                {isLoading
-                  ? 'Searching…'
-                  : hasSearched
-                    ? nameQuery.trim()
-                      ? `Showing ${filteredResults.length} of ${results.length} resource${results.length === 1 ? '' : 's'}`
-                      : `Showing ${results.length} resource${results.length === 1 ? '' : 's'}`
-                    : 'Set filters on the left and click Search'}
+                    onChange={(v) => updateFilter('level', v)}
+                    options={toSelectOptions(filterOptions.level)}
+                  />
+                </Field>
               </div>
 
-              {error && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
-                  {error}
-                </div>
-              )}
+              <div className="p-5 border-t border-subtle bg-surface flex gap-2">
+                <Button
+                  variant="primary"
+                  className="flex-1"
+                  loading={isLoading}
+                  disabled={isAssigning}
+                  onClick={() => void runSearch(selectedFilters, availability)}
+                >
+                  {isLoading ? 'Searching…' : 'Search'}
+                </Button>
 
-              {!isLoading && hasSearched && filteredResults.length === 0 && !error ? (
-                <div className="flex flex-col items-center justify-center py-12 text-tertiary text-xs">
-                  <User className="w-8 h-8 text-tertiary mb-2 opacity-50" />
-                  {nameQuery.trim() && results.length > 0
-                    ? 'No resources match the name filter.'
-                    : 'No resources matched the selected filters.'}
-                </div>
-              ) : (
-                filteredResults.map((res) => {
-                  const gaps = matchRequestDayGaps(request, res.utilization);
-                  const avgShort = avgShortfallHours(gaps);
+                <Button
+                  variant="outline"
+                  title="Clear all filters"
+                  aria-label="Clear all filters"
+                  disabled={isLoading || isAssigning}
+                  onClick={() => {
+                    setSelectedFilters(defaultFilters);
+                    setAvailability('everyone');
+                    setNameQuery('');
+                  }}
+                >
+                  Clear all
+                </Button>
 
-                  return (
-                  <div
-                    key={res.id}
-                    className="relative overflow-hidden p-4 rounded-xl border transition-all flex items-start gap-3 bg-surface border-subtle hover:border-default hover:shadow-app-sm"
-                  >
-                    <ResourceAvailabilityOverlay gaps={gaps} />
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-surface/85 via-surface/45 to-surface/10" />
-                    <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">
-                      {(res.name || '').split(' ').map((n) => n[0] || '').join('')}
-                    </div>
+                <IconButton
+                  label="Reset filters"
+                  variant="outline"
+                  disabled={isLoading || isAssigning}
+                  onClick={() => {
+                    const reset = filtersFromRequest(request);
+                    setSelectedFilters(reset);
+                    setAvailability('complete');
+                    setNameQuery('');
+                  }}
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </IconButton>
+              </div>
+            </aside>
 
-                    <div className="relative z-10 flex-1 min-w-0 text-left">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="text-sm font-semibold text-primary truncate">{res.name}</h4>
-                        <span className="text-xs text-tertiary">·</span>
-                        <span className="text-xs text-secondary truncate">{res.role}</span>
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface/60 text-secondary border border-subtle backdrop-blur-[1px]">
-                          {formatShortfallLabel(avgShort)}
-                        </span>
-                      </div>
-
-                      <div className="mt-2 text-[11px] text-tertiary">
-                        Green = fulfillable request hours, amber = unfulfillable request hours
-                      </div>
-
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-tertiary">
-                        {res.group && (
-                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
-                            Consulting unit · {res.group}
-                          </span>
-                        )}
-                        {res.practiceArea && (
-                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
-                            Practice · {res.practiceArea}
-                          </span>
-                        )}
-                        {res.competencyCenter && (
-                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
-                            Competency center · {res.competencyCenter}
-                          </span>
-                        )}
-                        {res.site && (
-                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
-                            Site · {res.site}
-                          </span>
-                        )}
-                        {res.jobLevelId && (
-                          <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
-                            Level · {(levelNameById.get(res.jobLevelId) || res.jobLevelId)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="relative z-10 flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        title="View availability details"
-                        aria-label={`View availability details for ${res.name}`}
-                        onClick={() =>
-                          setDetailsResource({
-                            name: res.name,
-                            role: res.role,
-                            gaps,
-                            avgShortfallHours: avgShort,
-                          })
-                        }
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-default bg-surface text-secondary transition-all hover:bg-surface-hover"
-                      >
-                        <List className="w-3.5 h-3.5" />
-                      </button>
-
-                      {request.resourceId === res.id ? (
-                        <button
-                          onClick={async () => {
-                            if (onUnassignRequest) {
-                              await onUnassignRequest(request.id);
-                            }
-                            onClose();
-                          }}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer tint-red shrink-0"
-                        >
-                          Unassign <X className="w-3.5 h-3.5" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={async () => {
-                            if (onApproveRequestWithResource) {
-                              await onApproveRequestWithResource(request.id, res.id);
-                            }
-                            onClose();
-                          }}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer bg-blue-600 text-white hover:bg-blue-700 shrink-0"
-                        >
-                          Assign <Check className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+            <div className="flex-1 flex flex-col min-h-0 bg-surface-muted/20">
+              <div className="border-b border-subtle bg-surface px-4 py-3">
+                <Field>
+                  <Label>Filter by name</Label>
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-tertiary absolute left-3 top-2.5" />
+                    <Input
+                      type="text"
+                      placeholder="Type to narrow results…"
+                      value={nameQuery}
+                      onChange={(e) => setNameQuery(e.target.value)}
+                      className="pl-9"
+                    />
                   </div>
-                  );
-                })
-              )}
+                </Field>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                <div className="mb-1 text-xs font-medium text-tertiary">
+                  {isLoading
+                    ? 'Searching…'
+                    : hasSearched
+                      ? nameQuery.trim()
+                        ? `Showing ${filteredResults.length} of ${results.length} resource${results.length === 1 ? '' : 's'}`
+                        : `Showing ${results.length} resource${results.length === 1 ? '' : 's'}`
+                      : 'Set filters on the left and click Search'}
+                </div>
+
+                {error && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
+                    {error}
+                  </div>
+                )}
+
+                {!isLoading && hasSearched && filteredResults.length === 0 && !error ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-tertiary text-xs">
+                    <User className="w-8 h-8 text-tertiary mb-2 opacity-50" />
+                    {nameQuery.trim() && results.length > 0
+                      ? 'No resources match the name filter.'
+                      : 'No resources matched the selected filters.'}
+                  </div>
+                ) : (
+                  filteredResults.map((res) => {
+                    const gaps = matchRequestDayGaps(request, res.utilization);
+                    const avgShort = avgShortfallHours(gaps);
+
+                    return (
+                      <div
+                        key={res.id}
+                        className="relative overflow-hidden p-4 rounded-xl border transition-all flex items-start gap-3 bg-surface border-subtle hover:border-default hover:shadow-app-sm"
+                      >
+                        <ResourceAvailabilityOverlay gaps={gaps} />
+                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-surface/85 via-surface/45 to-surface/10" />
+                        <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">
+                          {(res.name || '').split(' ').map((n) => n[0] || '').join('')}
+                        </div>
+
+                        <div className="relative z-10 flex-1 min-w-0 text-left">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-sm font-semibold text-primary truncate">{res.name}</h4>
+                            <span className="text-xs text-tertiary">·</span>
+                            <span className="text-xs text-secondary truncate">{res.role}</span>
+                            <Badge>{formatShortfallLabel(avgShort)}</Badge>
+                          </div>
+
+                          <div className="mt-2 text-[11px] text-tertiary">
+                            Green = fulfillable request hours, amber = unfulfillable request hours
+                          </div>
+
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-tertiary">
+                            {res.group && (
+                              <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
+                                Consulting unit · {res.group}
+                              </span>
+                            )}
+                            {res.practiceArea && (
+                              <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
+                                Practice · {res.practiceArea}
+                              </span>
+                            )}
+                            {res.competencyCenter && (
+                              <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
+                                Competency center · {res.competencyCenter}
+                              </span>
+                            )}
+                            {res.site && (
+                              <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
+                                Site · {res.site}
+                              </span>
+                            )}
+                            {res.jobLevelId && (
+                              <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
+                                Level · {(levelNameById.get(res.jobLevelId) || res.jobLevelId)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="relative z-10 flex items-center gap-2 shrink-0">
+                          <IconButton
+                            label={`View availability details for ${res.name}`}
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setDetailsResource({
+                                name: res.name,
+                                role: res.role,
+                                gaps,
+                                avgShortfallHours: avgShort,
+                              })
+                            }
+                          >
+                            <List className="w-3.5 h-3.5" />
+                          </IconButton>
+
+                          {request.resourceId === res.id ? (
+                            <Button
+                              size="sm"
+                              className="tint-red"
+                              rightIcon={<X className="w-3.5 h-3.5" />}
+                              loading={assigningResourceId === res.id}
+                              disabled={isLoading || (isAssigning && assigningResourceId !== res.id)}
+                              onClick={async () => {
+                                if (!onUnassignRequest || isAssigning || isLoading) return;
+                                setAssigningResourceId(res.id);
+                                try {
+                                  await onUnassignRequest(request.id);
+                                  onClose();
+                                } finally {
+                                  setAssigningResourceId(null);
+                                }
+                              }}
+                            >
+                              {assigningResourceId === res.id ? 'Unassigning…' : 'Unassign'}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              rightIcon={<Check className="w-3.5 h-3.5" />}
+                              loading={assigningResourceId === res.id}
+                              disabled={isLoading || (isAssigning && assigningResourceId !== res.id)}
+                              onClick={async () => {
+                                if (!onApproveRequestWithResource || isAssigning || isLoading) return;
+                                setAssigningResourceId(res.id);
+                                try {
+                                  await onApproveRequestWithResource(request.id, res.id);
+                                  onClose();
+                                } finally {
+                                  setAssigningResourceId(null);
+                                }
+                              }}
+                            >
+                              {assigningResourceId === res.id ? 'Assigning…' : 'Assign'}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
-        </div>
-        <ResourceAvailabilityDetailsModal
-          resource={detailsResource}
-          onClose={() => setDetailsResource(null)}
-        />
-      </div>
-    </div>
+        )}
+      </Modal>
+
+      <ResourceAvailabilityDetailsModal
+        resource={detailsResource}
+        onClose={() => setDetailsResource(null)}
+      />
+    </>
   );
 };

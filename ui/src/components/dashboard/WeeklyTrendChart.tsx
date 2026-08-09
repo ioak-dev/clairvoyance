@@ -1,5 +1,6 @@
 import React from 'react';
 import type { WeeklyBucket } from '../../lib/dashboardMetrics';
+import { Card } from '../ui';
 
 type WeeklyTrendChartProps = {
   weeks: WeeklyBucket[];
@@ -10,7 +11,7 @@ export const WeeklyTrendChart: React.FC<WeeklyTrendChartProps> = ({ weeks }) => 
   const chartHeight = 120;
 
   return (
-    <div className="app-card p-5 flex flex-col h-full">
+    <Card padded className="flex flex-col h-full">
       <h3 className="text-sm font-semibold text-primary tracking-[0.02em] mb-1">Weekly Trend</h3>
       <p className="text-xs text-secondary mb-4">Planned hours per week</p>
 
@@ -41,6 +42,6 @@ export const WeeklyTrendChart: React.FC<WeeklyTrendChartProps> = ({ weeks }) => 
           })}
         </div>
       )}
-    </div>
+    </Card>
   );
 };

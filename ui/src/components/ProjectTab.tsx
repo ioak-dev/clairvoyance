@@ -7,6 +7,23 @@ import React, { useMemo, useState } from 'react';
 import { Project } from '../types';
 import { Search, RefreshCw, TrendingUp, Circle, CircleDollarSign } from 'lucide-react';
 import { getProjectCategory, getProjectCategoryBadgeClass } from '../lib/projectCategory';
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Field,
+  Input,
+  Label,
+  Modal,
+  Select,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+} from './ui';
 
 interface ProjectTabProps {
   projects: Project[];
@@ -25,11 +42,14 @@ type SyncHistoryRow = {
   archived: number;
 };
 
+function statusTone(status: string): 'emerald' | 'blue' | 'neutral' {
+  if (status === 'Active') return 'emerald';
+  if (status === 'Pipeline') return 'blue';
+  return 'neutral';
+}
+
 export const ProjectTab: React.FC<ProjectTabProps> = ({
   projects,
-  onAddProject,
-  onUpdateProject,
-  onDeleteProject,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -145,6 +165,14 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
     return sortDirection === 'asc' ? '^' : 'v';
   };
 
+  const categoryOptions = [
+    { value: 'all', label: 'All Categories' },
+    { value: 'Billable', label: 'Billable' },
+    { value: 'Non-billable', label: 'Non-billable' },
+    { value: 'Internal', label: 'Internal' },
+    { value: 'Opportunity', label: 'Opportunity' },
+  ];
+
   return (
     <div className="space-y-6" id="project-tab-container">
       <div className="flex items-center justify-between gap-4">
@@ -156,16 +184,14 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
         </div>
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsHistoryModalOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-surface-muted hover:bg-surface-hover text-secondary rounded-lg text-sm font-medium"
-            >
+            <Button type="button" variant="secondary" onClick={() => setIsHistoryModalOpen(true)}>
               History
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="primary"
               disabled={isSyncInProgress}
+              leftIcon={<RefreshCw className="w-4 h-4" />}
               onClick={() => {
                 if (!isSyncInProgress) {
                   setSyncProjectsFromSap(false);
@@ -173,11 +199,9 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
                 }
                 setIsSyncModalOpen(true);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium"
             >
-              <RefreshCw className="w-4 h-4" />
               Synchronize
-            </button>
+            </Button>
           </div>
           {isSyncInProgress && (
             <p className="text-xs text-tertiary mt-1">Synchronization is already in progress.</p>
@@ -185,254 +209,225 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
         </div>
       </div>
 
-      <div className="app-card p-5" id="project-filter-section">
+      <Card padded id="project-filter-section">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="relative">
-            <label className="block text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1.5">Search Projects</label>
+          <Field>
+            <Label>Search Projects</Label>
             <div className="relative">
-              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-3" />
-              <input
+              <Search className="w-3.5 h-3.5 text-tertiary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Input
                 id="project-search-input"
                 type="text"
                 placeholder="Search by name or project ID..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-xs bg-input border border-default rounded-lg pl-9 pr-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400 transition text-primary"
+                className="pl-9"
               />
             </div>
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1.5">Filter by Category</label>
-            <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="w-full text-xs bg-input border border-default rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400 transition cursor-pointer font-medium text-primary">
-              <option value="all">All Categories</option>
-              <option value="Billable">Billable</option>
-              <option value="Non-billable">Non-billable</option>
-              <option value="Internal">Internal</option>
-              <option value="Opportunity">Opportunity</option>
-            </select>
-          </div>
+          </Field>
+          <Field>
+            <Label>Filter by Category</Label>
+            <Select<string>
+              value={selectedCategory}
+              onChange={setSelectedCategory}
+              options={categoryOptions}
+              aria-label="Filter by Category"
+            />
+          </Field>
         </div>
-      </div>
+      </Card>
 
-      <div className="app-card overflow-hidden" id="project-list-wrapper">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse table-auto" id="project-details-table">
-            <thead>
-              <tr className="bg-surface-muted border-b border-subtle text-[10px] font-bold text-tertiary uppercase tracking-wider">
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('name')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Project Name <span className="text-[10px]">{sortIndicator('name')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('marketUnit')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Market Unit <span className="text-[10px]">{sortIndicator('marketUnit')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('probability')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Probability <span className="text-[10px]">{sortIndicator('probability')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('category')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Category <span className="text-[10px]">{sortIndicator('category')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('status')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Status <span className="text-[10px]">{sortIndicator('status')}</span>
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-slate-800/60 text-sm">
-              {sortedProjects.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="text-center py-16 text-tertiary text-sm" id="project-empty-state">
-                    No projects found matching the specified filter criteria.
-                  </td>
-                </tr>
-              ) : (
-                sortedProjects.map((proj) => {
-                  const category = getProjectCategory(proj);
-                  const status = getProjectStatus(proj);
-                  const CategoryIcon = getCategoryIcon(category);
-
-                  return (
-                    <tr key={proj.id} className="hover:bg-surface-muted/50 transition-colors" id={`project-row-${proj.id}`}>
-                      <td className="px-6 py-4">
-                        <div>
-                          <p className="font-bold text-primary text-sm leading-tight">{proj.name}</p>
-                          <p className="text-[11px] text-tertiary mt-0.5 font-mono">{proj.projectId || '—'}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-xs text-secondary">{proj.client || '—'}</td>
-                      <td className="px-6 py-4 text-xs font-semibold text-primary">{proj.winProbability ?? 100}%</td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-semibold border whitespace-nowrap ${getProjectCategoryBadgeClass(category)}`}>
-                          <CategoryIcon className="w-3.5 h-3.5 opacity-90" />
-                          {category}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${
-                          status === 'Active'
-                            ? 'text-emerald-700 dark:text-emerald-400'
-                            : status === 'Pipeline'
-                            ? 'text-blue-700 dark:text-blue-400'
-                            : 'text-secondary'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${status === 'Active' ? 'bg-emerald-500' : status === 'Pipeline' ? 'bg-blue-500' : 'bg-gray-500'}`} />
-                          {status}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {isSyncModalOpen && (
-        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="app-card w-full max-w-md p-5">
-            <h3 className="text-base font-bold text-primary">Synchronize Projects</h3>
-            <p className="text-sm text-secondary mt-2">Projects (SAP) last synchronized: {projectsSyncAgeHours} hours ago</p>
-            <p className="text-sm text-secondary mt-1">Opportunities (CRM) last synchronized: {opportunitiesSyncAgeHours} hours ago</p>
-
-            {!isSyncInProgress ? (
-              <>
-                <label className="mt-4 flex items-start gap-2 text-sm text-secondary">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4"
-                    checked={syncProjectsFromSap}
-                    onChange={(e) => setSyncProjectsFromSap(e.target.checked)}
-                  />
-                  <span>Synchronize latest Projects data from SAP.</span>
-                </label>
-
-                <label className="mt-3 flex items-start gap-2 text-sm text-secondary">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4"
-                    checked={syncOpportunitiesFromCrm}
-                    onChange={(e) => setSyncOpportunitiesFromCrm(e.target.checked)}
-                  />
-                  <span>Synchronize latest Opportunities data from CRM.</span>
-                </label>
-
-                <div className="mt-5 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsSyncModalOpen(false)}
-                    className="px-4 py-2 rounded-lg bg-surface-muted hover:bg-surface-hover text-secondary text-sm font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!syncProjectsFromSap && !syncOpportunitiesFromCrm}
-                    onClick={() => setIsSyncInProgress(true)}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium"
-                  >
-                    Proceed
-                  </button>
-                </div>
-              </>
+      <Card className="overflow-hidden" id="project-list-wrapper">
+        <Table id="project-details-table" className="table-auto">
+          <THead>
+            <TR className="hover:bg-transparent">
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('name')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Project Name <span className="text-[10px]">{sortIndicator('name')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('marketUnit')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Market Unit <span className="text-[10px]">{sortIndicator('marketUnit')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('probability')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Probability <span className="text-[10px]">{sortIndicator('probability')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('category')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Category <span className="text-[10px]">{sortIndicator('category')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('status')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Status <span className="text-[10px]">{sortIndicator('status')}</span>
+                </button>
+              </TH>
+            </TR>
+          </THead>
+          <TBody>
+            {sortedProjects.length === 0 ? (
+              <TR className="hover:bg-transparent">
+                <TD colSpan={5} className="text-center py-16 text-tertiary text-sm" id="project-empty-state">
+                  No projects found matching the specified filter criteria.
+                </TD>
+              </TR>
             ) : (
-              <>
-                <p className="text-sm text-secondary mt-4">
-                  Synchronization is in progress and will finish in the next 15 minutes.
-                </p>
-                <div className="mt-5 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setIsSyncModalOpen(false)}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
-                  >
-                    Close
-                  </button>
-                </div>
-              </>
+              sortedProjects.map((proj) => {
+                const category = getProjectCategory(proj);
+                const status = getProjectStatus(proj);
+                const CategoryIcon = getCategoryIcon(category);
+
+                return (
+                  <TR key={proj.id} id={`project-row-${proj.id}`}>
+                    <TD className="px-6 py-4">
+                      <div>
+                        <p className="font-bold text-primary text-sm leading-tight">{proj.name}</p>
+                        <p className="text-[11px] text-tertiary mt-0.5 font-mono">{proj.projectId || '—'}</p>
+                      </div>
+                    </TD>
+                    <TD className="px-6 py-4 text-xs text-secondary">{proj.client || '—'}</TD>
+                    <TD className="px-6 py-4 text-xs font-semibold text-primary">{proj.winProbability ?? 100}%</TD>
+                    <TD className="px-6 py-4">
+                      <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-semibold border whitespace-nowrap ${getProjectCategoryBadgeClass(category)}`}>
+                        <CategoryIcon className="w-3.5 h-3.5 opacity-90" />
+                        {category}
+                      </span>
+                    </TD>
+                    <TD className="px-6 py-4">
+                      <Badge tone={statusTone(status)}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${status === 'Active' ? 'bg-emerald-500' : status === 'Pipeline' ? 'bg-blue-500' : 'bg-gray-500'}`} />
+                        {status}
+                      </Badge>
+                    </TD>
+                  </TR>
+                );
+              })
             )}
-          </div>
-        </div>
-      )}
+          </TBody>
+        </Table>
+      </Card>
 
-      {isHistoryModalOpen && (
-        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="app-card w-full max-w-2xl p-5">
-            <h3 className="text-base font-bold text-primary">Last 10 Synchronization Runs</h3>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left border-collapse table-auto">
-                <thead>
-                  <tr className="bg-surface-muted border-b border-subtle text-[10px] font-bold text-tertiary uppercase tracking-wider">
-                    <th className="px-4 py-3">Run</th>
-                    <th className="px-4 py-3">Created</th>
-                    <th className="px-4 py-3">Updated</th>
-                    <th className="px-4 py-3">Archived</th>
-                    <th className="px-4 py-3 text-right">Download</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-slate-800/60 text-sm">
-                  {syncHistoryRows.map((row, index) => (
-                    <tr key={`project-sync-run-${index}`}>
-                      <td className="px-4 py-3 text-secondary">{row.runAt}</td>
-                      <td className="px-4 py-3 text-primary font-medium">{row.created}</td>
-                      <td className="px-4 py-3 text-primary font-medium">{row.updated}</td>
-                      <td className="px-4 py-3 text-primary font-medium">{row.archived}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedHistoryRunLabel(row.runAt);
-                            setIsDownloadModalOpen(true);
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-surface-muted hover:bg-surface-hover text-secondary text-xs font-medium"
-                        >
-                          Download
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsHistoryModalOpen(false)}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
+      <Modal
+        open={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        title="Synchronize Projects"
+        size="sm"
+        footer={
+          !isSyncInProgress ? (
+            <>
+              <Button variant="secondary" onClick={() => setIsSyncModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!syncProjectsFromSap && !syncOpportunitiesFromCrm}
+                onClick={() => setIsSyncInProgress(true)}
               >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                Proceed
+              </Button>
+            </>
+          ) : (
+            <Button variant="primary" onClick={() => setIsSyncModalOpen(false)}>
+              Close
+            </Button>
+          )
+        }
+      >
+        <p className="text-sm text-secondary">Projects (SAP) last synchronized: {projectsSyncAgeHours} hours ago</p>
+        <p className="text-sm text-secondary mt-1">Opportunities (CRM) last synchronized: {opportunitiesSyncAgeHours} hours ago</p>
 
-      {isDownloadModalOpen && (
-        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <div className="app-card w-full max-w-md p-5">
-            <h3 className="text-base font-bold text-primary">Download Change Log</h3>
-            <p className="text-sm text-secondary mt-2">Selected run: {selectedHistoryRunLabel}</p>
-            <p className="text-sm text-secondary mt-2">An Excel file with full change log will be downloaded here.</p>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsDownloadModalOpen(false)}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
-              >
-                Close
-              </button>
-            </div>
+        {!isSyncInProgress ? (
+          <div className="mt-4 space-y-3">
+            <label className="flex items-start gap-2 text-sm text-secondary cursor-pointer">
+              <Checkbox
+                checked={syncProjectsFromSap}
+                onChange={setSyncProjectsFromSap}
+                className="mt-0.5"
+              />
+              <span>Synchronize latest Projects data from SAP.</span>
+            </label>
+            <label className="flex items-start gap-2 text-sm text-secondary cursor-pointer">
+              <Checkbox
+                checked={syncOpportunitiesFromCrm}
+                onChange={setSyncOpportunitiesFromCrm}
+                className="mt-0.5"
+              />
+              <span>Synchronize latest Opportunities data from CRM.</span>
+            </label>
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-sm text-secondary mt-4">
+            Synchronization is in progress and will finish in the next 15 minutes.
+          </p>
+        )}
+      </Modal>
+
+      <Modal
+        open={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        title="Last 10 Synchronization Runs"
+        size="xl"
+        footer={
+          <Button variant="primary" onClick={() => setIsHistoryModalOpen(false)}>
+            Close
+          </Button>
+        }
+      >
+        <Table>
+          <THead>
+            <TR className="hover:bg-transparent">
+              <TH>Run</TH>
+              <TH>Created</TH>
+              <TH>Updated</TH>
+              <TH>Archived</TH>
+              <TH className="text-right">Download</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {syncHistoryRows.map((row, index) => (
+              <TR key={`project-sync-run-${index}`}>
+                <TD className="text-secondary">{row.runAt}</TD>
+                <TD className="font-medium">{row.created}</TD>
+                <TD className="font-medium">{row.updated}</TD>
+                <TD className="font-medium">{row.archived}</TD>
+                <TD className="text-right">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedHistoryRunLabel(row.runAt);
+                      setIsDownloadModalOpen(true);
+                    }}
+                  >
+                    Download
+                  </Button>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </Modal>
+
+      <Modal
+        open={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        title="Download Change Log"
+        size="sm"
+        className="z-[60]"
+        footer={
+          <Button variant="primary" onClick={() => setIsDownloadModalOpen(false)}>
+            Close
+          </Button>
+        }
+      >
+        <p className="text-sm text-secondary">Selected run: {selectedHistoryRunLabel}</p>
+        <p className="text-sm text-secondary mt-2">An Excel file with full change log will be downloaded here.</p>
+      </Modal>
     </div>
   );
 };

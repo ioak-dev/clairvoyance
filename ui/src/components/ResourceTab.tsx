@@ -7,6 +7,23 @@ import React, { useMemo, useState } from 'react';
 import { Resource } from '../types';
 import { Search, RefreshCw } from 'lucide-react';
 import { useLookups } from '../hooks/useLookups';
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Field,
+  Input,
+  Label,
+  Modal,
+  Select,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+} from './ui';
 
 interface ResourceTabProps {
   resources: Resource[];
@@ -27,9 +44,6 @@ type SyncHistoryRow = {
 
 export const ResourceTab: React.FC<ResourceTabProps> = ({
   resources,
-  onAddResource,
-  onUpdateResource,
-  onDeleteResource,
 }) => {
   const { data: lookups } = useLookups();
   const [searchQuery, setSearchQuery] = useState('');
@@ -144,6 +158,20 @@ export const ResourceTab: React.FC<ResourceTabProps> = ({
     return sortDirection === 'asc' ? '^' : 'v';
   };
 
+  const practiceAreaOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All Practice Areas' },
+      ...practiceAreas.map((area) => ({ value: area, label: area })),
+    ],
+    [practiceAreas],
+  );
+
+  const statusOptions = [
+    { value: 'all', label: 'All Statuses' },
+    { value: 'Active', label: 'Active' },
+    { value: 'Inactive', label: 'Inactive' },
+  ];
+
   return (
     <div className="space-y-6" id="resource-tab-container">
       <div className="flex items-center justify-between gap-4">
@@ -155,27 +183,23 @@ export const ResourceTab: React.FC<ResourceTabProps> = ({
         </div>
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsHistoryModalOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-surface-muted hover:bg-surface-hover text-secondary rounded-lg text-sm font-medium"
-            >
+            <Button type="button" variant="secondary" onClick={() => setIsHistoryModalOpen(true)}>
               History
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="primary"
               disabled={isSyncInProgress}
+              leftIcon={<RefreshCw className="w-4 h-4" />}
               onClick={() => {
                 if (!isSyncInProgress) {
                   setConfirmSyncToLatest(false);
                 }
                 setIsSyncModalOpen(true);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium"
             >
-              <RefreshCw className="w-4 h-4" />
               Synchronize
-            </button>
+            </Button>
           </div>
           {isSyncInProgress && (
             <p className="text-xs text-tertiary mt-1">Synchronization is already in progress.</p>
@@ -183,250 +207,223 @@ export const ResourceTab: React.FC<ResourceTabProps> = ({
         </div>
       </div>
 
-      <div className="app-card p-5" id="resource-filter-section">
+      <Card padded id="resource-filter-section">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="relative">
-            <label className="block text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1.5">Search Resources</label>
+          <Field>
+            <Label>Search Resources</Label>
             <div className="relative">
-              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-3" />
-              <input
+              <Search className="w-3.5 h-3.5 text-tertiary absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Input
                 id="resource-tab-search-input"
                 type="text"
                 placeholder="Search by name, email, or role..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-xs bg-input border border-default rounded-lg pl-9 pr-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400 transition text-primary"
+                className="pl-9"
               />
             </div>
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1.5">Filter by Practice Area</label>
-            <select value={selectedPracticeArea} onChange={(e) => setSelectedPracticeArea(e.target.value)} className="w-full text-xs bg-input border border-default rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400 transition cursor-pointer font-medium text-primary">
-              <option value="all">All Practice Areas</option>
-              {practiceAreas.map((area) => (
-                <option key={area} value={area}>{area}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1.5">Filter by Status</label>
-            <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className="w-full text-xs bg-input border border-default rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400 transition cursor-pointer font-medium text-primary">
-              <option value="all">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
-          </div>
+          </Field>
+          <Field>
+            <Label>Filter by Practice Area</Label>
+            <Select<string>
+              value={selectedPracticeArea}
+              onChange={setSelectedPracticeArea}
+              options={practiceAreaOptions}
+              aria-label="Filter by Practice Area"
+            />
+          </Field>
+          <Field>
+            <Label>Filter by Status</Label>
+            <Select<string>
+              value={selectedStatus}
+              onChange={setSelectedStatus}
+              options={statusOptions}
+              aria-label="Filter by Status"
+            />
+          </Field>
         </div>
-      </div>
+      </Card>
 
-      <div className="app-card overflow-hidden" id="resource-tab-list-wrapper">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse table-auto" id="resource-tab-details-table">
-            <thead>
-              <tr className="bg-surface-muted border-b border-subtle text-[10px] font-bold text-tertiary uppercase tracking-wider">
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('name')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Resource Name <span className="text-[10px]">{sortIndicator('name')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('employeeId')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Employee ID <span className="text-[10px]">{sortIndicator('employeeId')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('practiceArea')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Practice Area <span className="text-[10px]">{sortIndicator('practiceArea')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('jobLevel')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Job Level <span className="text-[10px]">{sortIndicator('jobLevel')}</span>
-                  </button>
-                </th>
-                <th className="px-6 py-4">
-                  <button type="button" onClick={() => handleSort('status')} className="inline-flex items-center gap-1 hover:text-primary transition-colors">
-                    Status <span className="text-[10px]">{sortIndicator('status')}</span>
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-slate-800/60 text-sm">
-              {sortedResources.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="text-center py-16 text-tertiary text-sm" id="resource-tab-empty-state">
-                    No resources found matching the specified filter criteria.
-                  </td>
-                </tr>
-              ) : (
-                sortedResources.map((res) => (
-                  <tr key={res.id} className="hover:bg-surface-muted/50 transition-colors" id={`resource-tab-row-${res.id}`}>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-surface-muted text-primary font-bold flex items-center justify-center shrink-0 text-xs">
-                          {res.name.split(' ').map((n) => n[0]).join('')}
-                        </div>
-                        <div>
-                          <p className="font-bold text-primary text-sm leading-tight">{res.name}</p>
-                          <p className="text-[11px] text-tertiary mt-0.5">{res.email || '—'}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-xs font-mono text-secondary">{res.employeeId || '—'}</td>
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center text-xs font-medium text-secondary bg-surface-muted px-2.5 py-1 rounded-md">
-                        {res.practiceArea || '—'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center text-xs font-semibold text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-950/40 px-2.5 py-1 rounded-md border border-blue-100 dark:border-blue-900/50">
-                        {res.jobLevelId ? (jobLevelNameById.get(res.jobLevelId) || res.jobLevelId) : '—'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${
-                        res.status === 'Inactive'
-                          ? 'text-secondary'
-                          : 'text-emerald-700 dark:text-emerald-400'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${res.status === 'Inactive' ? 'bg-gray-500' : 'bg-emerald-500'}`} />
-                        {res.status || 'Active'}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {isSyncModalOpen && (
-        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="app-card w-full max-w-md p-5">
-            <h3 className="text-base font-bold text-primary">Synchronize Resources</h3>
-            <p className="text-sm text-secondary mt-2">Last synchronized: {syncAgeHours} hours ago</p>
-
-            {!isSyncInProgress ? (
-              <>
-                <label className="mt-4 flex items-start gap-2 text-sm text-secondary">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4"
-                    checked={confirmSyncToLatest}
-                    onChange={(e) => setConfirmSyncToLatest(e.target.checked)}
-                  />
-                  <span>Confirm synchronization to the latest data from Hibob.</span>
-                </label>
-
-                <div className="mt-5 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsSyncModalOpen(false)}
-                    className="px-4 py-2 rounded-lg bg-surface-muted hover:bg-surface-hover text-secondary text-sm font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!confirmSyncToLatest}
-                    onClick={() => setIsSyncInProgress(true)}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium"
-                  >
-                    Proceed
-                  </button>
-                </div>
-              </>
+      <Card className="overflow-hidden" id="resource-tab-list-wrapper">
+        <Table id="resource-tab-details-table" className="table-auto">
+          <THead>
+            <TR className="hover:bg-transparent">
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('name')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Resource Name <span className="text-[10px]">{sortIndicator('name')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('employeeId')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Employee ID <span className="text-[10px]">{sortIndicator('employeeId')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('practiceArea')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Practice Area <span className="text-[10px]">{sortIndicator('practiceArea')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('jobLevel')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Job Level <span className="text-[10px]">{sortIndicator('jobLevel')}</span>
+                </button>
+              </TH>
+              <TH className="px-6 py-4">
+                <button type="button" onClick={() => handleSort('status')} className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer">
+                  Status <span className="text-[10px]">{sortIndicator('status')}</span>
+                </button>
+              </TH>
+            </TR>
+          </THead>
+          <TBody>
+            {sortedResources.length === 0 ? (
+              <TR className="hover:bg-transparent">
+                <TD colSpan={5} className="text-center py-16 text-tertiary text-sm" id="resource-tab-empty-state">
+                  No resources found matching the specified filter criteria.
+                </TD>
+              </TR>
             ) : (
-              <>
-                <p className="text-sm text-secondary mt-4">
-                  Synchronization is in progress and will finish in the next 5 minutes.
-                </p>
-                <div className="mt-5 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setIsSyncModalOpen(false)}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
-                  >
-                    Close
-                  </button>
-                </div>
-              </>
+              sortedResources.map((res) => (
+                <TR key={res.id} id={`resource-tab-row-${res.id}`}>
+                  <TD className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-surface-muted text-primary font-bold flex items-center justify-center shrink-0 text-xs">
+                        {res.name.split(' ').map((n) => n[0]).join('')}
+                      </div>
+                      <div>
+                        <p className="font-bold text-primary text-sm leading-tight">{res.name}</p>
+                        <p className="text-[11px] text-tertiary mt-0.5">{res.email || '—'}</p>
+                      </div>
+                    </div>
+                  </TD>
+                  <TD className="px-6 py-4 text-xs font-mono text-secondary">{res.employeeId || '—'}</TD>
+                  <TD className="px-6 py-4">
+                    <Badge tone="neutral">{res.practiceArea || '—'}</Badge>
+                  </TD>
+                  <TD className="px-6 py-4">
+                    <Badge tone="blue">
+                      {res.jobLevelId ? (jobLevelNameById.get(res.jobLevelId) || res.jobLevelId) : '—'}
+                    </Badge>
+                  </TD>
+                  <TD className="px-6 py-4">
+                    <Badge tone={res.status === 'Inactive' ? 'neutral' : 'emerald'}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${res.status === 'Inactive' ? 'bg-gray-500' : 'bg-emerald-500'}`} />
+                      {res.status || 'Active'}
+                    </Badge>
+                  </TD>
+                </TR>
+              ))
             )}
-          </div>
-        </div>
-      )}
+          </TBody>
+        </Table>
+      </Card>
 
-      {isHistoryModalOpen && (
-        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="app-card w-full max-w-2xl p-5">
-            <h3 className="text-base font-bold text-primary">Last 10 Synchronization Runs</h3>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left border-collapse table-auto">
-                <thead>
-                  <tr className="bg-surface-muted border-b border-subtle text-[10px] font-bold text-tertiary uppercase tracking-wider">
-                    <th className="px-4 py-3">Run</th>
-                    <th className="px-4 py-3">Created</th>
-                    <th className="px-4 py-3">Updated</th>
-                    <th className="px-4 py-3">Archived</th>
-                    <th className="px-4 py-3 text-right">Download</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-slate-800/60 text-sm">
-                  {syncHistoryRows.map((row, index) => (
-                    <tr key={`resource-sync-run-${index}`}>
-                      <td className="px-4 py-3 text-secondary">{row.runAt}</td>
-                      <td className="px-4 py-3 text-primary font-medium">{row.created}</td>
-                      <td className="px-4 py-3 text-primary font-medium">{row.updated}</td>
-                      <td className="px-4 py-3 text-primary font-medium">{row.archived}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedHistoryRunLabel(row.runAt);
-                            setIsDownloadModalOpen(true);
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-surface-muted hover:bg-surface-hover text-secondary text-xs font-medium"
-                        >
-                          Download
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsHistoryModalOpen(false)}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
+      <Modal
+        open={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        title="Synchronize Resources"
+        size="sm"
+        footer={
+          !isSyncInProgress ? (
+            <>
+              <Button variant="secondary" onClick={() => setIsSyncModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!confirmSyncToLatest}
+                onClick={() => setIsSyncInProgress(true)}
               >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                Proceed
+              </Button>
+            </>
+          ) : (
+            <Button variant="primary" onClick={() => setIsSyncModalOpen(false)}>
+              Close
+            </Button>
+          )
+        }
+      >
+        <p className="text-sm text-secondary">Last synchronized: {syncAgeHours} hours ago</p>
 
-      {isDownloadModalOpen && (
-        <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <div className="app-card w-full max-w-md p-5">
-            <h3 className="text-base font-bold text-primary">Download Change Log</h3>
-            <p className="text-sm text-secondary mt-2">Selected run: {selectedHistoryRunLabel}</p>
-            <p className="text-sm text-secondary mt-2">An Excel file with full change log will be downloaded here.</p>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsDownloadModalOpen(false)}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        {!isSyncInProgress ? (
+          <label className="mt-4 flex items-start gap-2 text-sm text-secondary cursor-pointer">
+            <Checkbox
+              checked={confirmSyncToLatest}
+              onChange={setConfirmSyncToLatest}
+              className="mt-0.5"
+            />
+            <span>Confirm synchronization to the latest data from Hibob.</span>
+          </label>
+        ) : (
+          <p className="text-sm text-secondary mt-2">
+            Synchronization is in progress and will finish in the next 5 minutes.
+          </p>
+        )}
+      </Modal>
+
+      <Modal
+        open={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        title="Last 10 Synchronization Runs"
+        size="xl"
+        footer={
+          <Button variant="primary" onClick={() => setIsHistoryModalOpen(false)}>
+            Close
+          </Button>
+        }
+      >
+        <Table>
+          <THead>
+            <TR className="hover:bg-transparent">
+              <TH>Run</TH>
+              <TH>Created</TH>
+              <TH>Updated</TH>
+              <TH>Archived</TH>
+              <TH className="text-right">Download</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {syncHistoryRows.map((row, index) => (
+              <TR key={`resource-sync-run-${index}`}>
+                <TD className="text-secondary">{row.runAt}</TD>
+                <TD className="font-medium">{row.created}</TD>
+                <TD className="font-medium">{row.updated}</TD>
+                <TD className="font-medium">{row.archived}</TD>
+                <TD className="text-right">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedHistoryRunLabel(row.runAt);
+                      setIsDownloadModalOpen(true);
+                    }}
+                  >
+                    Download
+                  </Button>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </Modal>
+
+      <Modal
+        open={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        title="Download Change Log"
+        size="sm"
+        className="z-[60]"
+        footer={
+          <Button variant="primary" onClick={() => setIsDownloadModalOpen(false)}>
+            Close
+          </Button>
+        }
+      >
+        <p className="text-sm text-secondary">Selected run: {selectedHistoryRunLabel}</p>
+        <p className="text-sm text-secondary mt-2">An Excel file with full change log will be downloaded here.</p>
+      </Modal>
     </div>
   );
 };

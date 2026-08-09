@@ -4,18 +4,11 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { X, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import type { FilterKind, SavedFilter } from '../types';
 import type { Lookups } from '../lib/services/lookups';
 import type { LifecycleStatus, PersonStatus } from '../types';
-
-const safeConfirm = (msg: string): boolean => {
-  try {
-    return window.confirm(msg);
-  } catch {
-    return true;
-  }
-};
+import { Modal, Button, Input, Select, Field, Label, Checkbox } from './ui';
 
 export interface FilterFormValues {
   name: string;
@@ -37,6 +30,17 @@ interface FilterFormModalProps {
 
 const emptyCriteria = (): Record<string, unknown> => ({});
 
+const LIFECYCLE_STATUSES: LifecycleStatus[] = [
+  'Hired',
+  'Employed',
+  'Terminated',
+  'Garden Leave',
+  'Leave',
+  'Parental Leave',
+];
+
+const PERSON_STATUSES: PersonStatus[] = ['Active', 'Inactive'];
+
 export const FilterFormModal: React.FC<FilterFormModalProps> = ({
   isOpen,
   onClose,
@@ -51,6 +55,9 @@ export const FilterFormModal: React.FC<FilterFormModalProps> = ({
   const [sortOrder, setSortOrder] = useState(0);
   const [isActive, setIsActive] = useState(true);
   const [criteria, setCriteria] = useState<Record<string, unknown>>(emptyCriteria());
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -59,10 +66,10 @@ export const FilterFormModal: React.FC<FilterFormModalProps> = ({
       setSortOrder(filter?.sortOrder ?? 0);
       setIsActive(filter?.isActive ?? true);
       setCriteria(filter?.criteria ? { ...filter.criteria } : emptyCriteria());
+      setConfirmDeleteOpen(false);
+      setIsDeleting(false);
     }
   }, [isOpen, filter]);
-
-  if (!isOpen) return null;
 
   const setCriterion = (key: string, value: unknown) => {
     setCriteria((prev) => {
@@ -76,69 +83,106 @@ export const FilterFormModal: React.FC<FilterFormModalProps> = ({
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     if (!name.trim()) return;
-    await onSave({ name: name.trim(), description: description.trim(), sortOrder, isActive, criteria });
-    onClose();
+    setSaving(true);
+    try {
+      await onSave({ name: name.trim(), description: description.trim(), sortOrder, isActive, criteria });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!filter || !onDelete || saving || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await onDelete(filter.id);
+      setConfirmDeleteOpen(false);
+      onClose();
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const kindLabel =
     filterKind === 'project' ? 'Project' : filterKind === 'person' ? 'Person' : 'Request';
 
-  return (
-    <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden max-h-[90vh]">
-        <div className="app-card-header px-5 py-4 flex justify-between items-center">
-          <h3 className="text-base font-semibold text-primary">
-            {filter ? `Edit ${kindLabel} Filter` : `New ${kindLabel} Filter`}
-          </h3>
-          <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg text-tertiary">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  const anyOptions = (entries?: { id: string; name: string }[]) => [
+    { value: '', label: 'Any' },
+    ...(entries || []).map((u) => ({ value: u.id, label: u.name })),
+  ];
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-          <div>
-            <label className="block text-sm font-medium text-secondary mb-1">Name</label>
-            <input
+  return (
+    <>
+      <Modal
+        open={isOpen}
+        onClose={onClose}
+        size="sm"
+        title={filter ? `Edit ${kindLabel} Filter` : `New ${kindLabel} Filter`}
+        footer={
+          <div className="flex w-full items-center justify-between">
+            {filter && onDelete ? (
+              <Button
+                variant="ghost"
+                className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                leftIcon={<Trash2 className="w-4 h-4" />}
+                disabled={saving || isDeleting}
+                onClick={() => setConfirmDeleteOpen(true)}
+              >
+                Delete
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onClose} disabled={saving || isDeleting}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={saving}
+                disabled={isDeleting}
+                onClick={() => void handleSubmit()}
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Field>
+            <Label>Name</Label>
+            <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
               required
             />
-          </div>
+          </Field>
 
-          <div>
-            <label className="block text-sm font-medium text-secondary mb-1">Description</label>
-            <input
+          <Field>
+            <Label>Description</Label>
+            <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
             />
-          </div>
+          </Field>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-secondary mb-1">Sort order</label>
-              <input
+            <Field>
+              <Label>Sort order</Label>
+              <Input
                 type="number"
                 value={sortOrder}
                 onChange={(e) => setSortOrder(Number(e.target.value))}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
               />
-            </div>
-            <div className="flex items-end pb-2">
-              <label className="flex items-center gap-2 text-sm text-secondary cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
-                  className="rounded border-gray-300"
-                />
-                Active
-              </label>
-            </div>
+            </Field>
+            <Field className="flex-row items-end gap-2 pb-2">
+              <Checkbox checked={isActive} onChange={setIsActive} />
+              <Label className="cursor-pointer">Active</Label>
+            </Field>
           </div>
 
           <div className="border-t border-subtle pt-4 space-y-3">
@@ -146,35 +190,25 @@ export const FilterFormModal: React.FC<FilterFormModalProps> = ({
 
             {filterKind === 'project' && (
               <>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Consulting unit</label>
-                  <select
+                <Field>
+                  <Label>Consulting unit</Label>
+                  <Select
                     value={(criteria.consulting_unit_id as string) || ''}
-                    onChange={(e) => setCriterion('consulting_unit_id', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {lookups?.consultingUnits.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Market unit</label>
-                  <select
+                    onChange={(v) => setCriterion('consulting_unit_id', v)}
+                    options={anyOptions(lookups?.consultingUnits)}
+                  />
+                </Field>
+                <Field>
+                  <Label>Market unit</Label>
+                  <Select
                     value={(criteria.market_unit_id as string) || ''}
-                    onChange={(e) => setCriterion('market_unit_id', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {lookups?.marketUnits.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Win probability below</label>
-                  <input
+                    onChange={(v) => setCriterion('market_unit_id', v)}
+                    options={anyOptions(lookups?.marketUnits)}
+                  />
+                </Field>
+                <Field>
+                  <Label>Win probability below</Label>
+                  <Input
                     type="number"
                     min={0}
                     max={100}
@@ -183,170 +217,130 @@ export const FilterFormModal: React.FC<FilterFormModalProps> = ({
                       setCriterion('win_probability_lt', e.target.value ? Number(e.target.value) : undefined)
                     }
                     placeholder="e.g. 100 for opportunities"
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
                   />
-                </div>
+                </Field>
               </>
             )}
 
             {filterKind === 'person' && (
               <>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Site</label>
-                  <select
+                <Field>
+                  <Label>Site</Label>
+                  <Select
                     value={(criteria.site_id as string) || ''}
-                    onChange={(e) => setCriterion('site_id', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {lookups?.sites.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Consulting unit</label>
-                  <select
+                    onChange={(v) => setCriterion('site_id', v)}
+                    options={anyOptions(lookups?.sites)}
+                  />
+                </Field>
+                <Field>
+                  <Label>Consulting unit</Label>
+                  <Select
                     value={(criteria.consulting_unit_id as string) || ''}
-                    onChange={(e) => setCriterion('consulting_unit_id', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {lookups?.consultingUnits.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Practice area</label>
-                  <select
+                    onChange={(v) => setCriterion('consulting_unit_id', v)}
+                    options={anyOptions(lookups?.consultingUnits)}
+                  />
+                </Field>
+                <Field>
+                  <Label>Practice area</Label>
+                  <Select
                     value={(criteria.practice_area_id as string) || ''}
-                    onChange={(e) => setCriterion('practice_area_id', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {lookups?.practiceAreas.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Lifecycle status</label>
-                  <select
+                    onChange={(v) => setCriterion('practice_area_id', v)}
+                    options={anyOptions(lookups?.practiceAreas)}
+                  />
+                </Field>
+                <Field>
+                  <Label>Lifecycle status</Label>
+                  <Select
                     value={(criteria.lifecycle_status as string) || ''}
-                    onChange={(e) => setCriterion('lifecycle_status', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {(['Hired', 'Employed', 'Terminated', 'Garden Leave', 'Leave', 'Parental Leave'] as LifecycleStatus[]).map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Status</label>
-                  <select
+                    onChange={(v) => setCriterion('lifecycle_status', v)}
+                    options={[
+                      { value: '', label: 'Any' },
+                      ...LIFECYCLE_STATUSES.map((s) => ({ value: s, label: s })),
+                    ]}
+                  />
+                </Field>
+                <Field>
+                  <Label>Status</Label>
+                  <Select
                     value={(criteria.status as string) || ''}
-                    onChange={(e) => setCriterion('status', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {(['Active', 'Inactive'] as PersonStatus[]).map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
+                    onChange={(v) => setCriterion('status', v)}
+                    options={[
+                      { value: '', label: 'Any' },
+                      ...PERSON_STATUSES.map((s) => ({ value: s, label: s })),
+                    ]}
+                  />
+                </Field>
               </>
             )}
 
             {filterKind === 'request' && (
               <>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Status</label>
-                  <select
+                <Field>
+                  <Label>Status</Label>
+                  <Select
                     value={(criteria.status as string) || ''}
-                    onChange={(e) => setCriterion('status', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    <option value="Pending">Pending</option>
-                    <option value="Approved">Approved</option>
-                    <option value="Rejected">Rejected</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Billable type</label>
-                  <select
-                    value={(criteria.billable_type as string) || ''}
-                    onChange={(e) => setCriterion('billable_type', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    <option value="Billable">Billable</option>
-                    <option value="Opportunity">Opportunity</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">Project consulting unit</label>
-                  <select
-                    value={(criteria.project_consulting_unit_id as string) || ''}
-                    onChange={(e) => setCriterion('project_consulting_unit_id', e.target.value)}
-                    className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  >
-                    <option value="">Any</option>
-                    {lookups?.consultingUnits.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <label className="flex items-center gap-2 text-sm text-secondary cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={criteria.unassigned_only === true}
-                    onChange={(e) => setCriterion('unassigned_only', e.target.checked ? true : undefined)}
-                    className="rounded border-gray-300"
+                    onChange={(v) => setCriterion('status', v)}
+                    options={[
+                      { value: '', label: 'Any' },
+                      { value: 'Pending', label: 'Pending' },
+                      { value: 'Approved', label: 'Approved' },
+                      { value: 'Rejected', label: 'Rejected' },
+                    ]}
                   />
-                  Unassigned only
-                </label>
+                </Field>
+                <Field>
+                  <Label>Billable type</Label>
+                  <Select
+                    value={(criteria.billable_type as string) || ''}
+                    onChange={(v) => setCriterion('billable_type', v)}
+                    options={[
+                      { value: '', label: 'Any' },
+                      { value: 'Billable', label: 'Billable' },
+                      { value: 'Opportunity', label: 'Opportunity' },
+                    ]}
+                  />
+                </Field>
+                <Field>
+                  <Label>Project consulting unit</Label>
+                  <Select
+                    value={(criteria.project_consulting_unit_id as string) || ''}
+                    onChange={(v) => setCriterion('project_consulting_unit_id', v)}
+                    options={anyOptions(lookups?.consultingUnits)}
+                  />
+                </Field>
+                <Field className="flex-row items-center gap-2">
+                  <Checkbox
+                    checked={criteria.unassigned_only === true}
+                    onChange={(checked) => setCriterion('unassigned_only', checked ? true : undefined)}
+                  />
+                  <Label className="cursor-pointer">Unassigned only</Label>
+                </Field>
               </>
             )}
           </div>
+        </div>
+      </Modal>
 
-          <div className="pt-2 flex justify-between items-center border-t border-subtle">
-            {filter && onDelete ? (
-              <button
-                type="button"
-                onClick={async () => {
-                  if (safeConfirm(`Delete filter "${filter.name}"?`)) {
-                    await onDelete(filter.id);
-                    onClose();
-                  }
-                }}
-                className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium flex items-center gap-1"
-              >
-                <Trash2 className="w-4 h-4" /> Delete
-              </button>
-            ) : (
-              <span />
-            )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 border border-default text-secondary hover:bg-surface-muted rounded-lg text-sm font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
+      <Modal
+        open={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        size="sm"
+        title="Delete filter?"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setConfirmDeleteOpen(false)} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => void handleConfirmDelete()} loading={isDeleting}>
+              {isDeleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-secondary">
+          Delete filter &quot;{filter?.name}&quot;? This cannot be undone.
+        </p>
+      </Modal>
+    </>
   );
 };
