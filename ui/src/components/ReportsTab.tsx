@@ -8,6 +8,8 @@ import { BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from 
 import { Download, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { isoWeekToDateRange } from '../lib/weekUtils';
+import { scheduleAuditService } from '../lib/services/scheduleAudit';
+import type { ScheduleAuditReportRow } from '../types/api';
 
 interface ReportsTabProps {
   resources?: Resource[];
@@ -18,11 +20,14 @@ interface ReportsTabProps {
 }
 
 type ReportKey =
+  | 'scheduleAuditLog'
   | 'resources'
   | 'projects'
   | 'scheduleByWeek'
   | 'requestsByWeek'
   | 'vacations';
+
+type AuditFilterMode = 'project' | 'resource';
 
 type ReportConfig = {
   key: ReportKey;
@@ -40,6 +45,21 @@ function downloadRowsAsWorkbook(filePrefix: string, rows: Record<string, unknown
   XLSX.writeFile(workbook, `${filePrefix}_${today}.xlsx`);
 }
 
+function toScheduleAuditWorkbookRow(row: ScheduleAuditReportRow): Record<string, unknown> {
+  return {
+    entity_type: row.entity_type,
+    change_action: row.change_action,
+    project_reference_id: row.project_reference_id || '',
+    project_name: row.project_name || '',
+    person_employee_id: row.person_employee_id || '',
+    person_name: row.person_name || '',
+    iso_year: row.iso_year ?? '',
+    iso_week: row.iso_week ?? '',
+    days_per_week_before: row.days_per_week_before ?? '',
+    days_per_week_after: row.days_per_week_after ?? '',
+  };
+}
+
 export const ReportsTab: React.FC<ReportsTabProps> = ({
   resources = [],
   projects = [],
@@ -48,6 +68,11 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
   vacations = [],
 }) => {
   const [downloading, setDownloading] = React.useState<ReportKey | null>(null);
+  const [auditFilterMode, setAuditFilterMode] = React.useState<AuditFilterMode>('project');
+  const [selectedAuditIds, setSelectedAuditIds] = React.useState<string[]>([]);
+  const [auditChangedFrom, setAuditChangedFrom] = React.useState('');
+  const [auditChangedTo, setAuditChangedTo] = React.useState('');
+  const [auditError, setAuditError] = React.useState<string | null>(null);
 
   const resourceNameById = React.useMemo(() => {
     return new Map(resources.map((resource) => [resource.id, resource.name]));
@@ -56,6 +81,25 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
   const projectNameById = React.useMemo(() => {
     return new Map(projects.map((project) => [project.id, project.name]));
   }, [projects]);
+
+  const auditOptions = React.useMemo(() => {
+    if (auditFilterMode === 'project') {
+      return projects.map((project) => ({
+        id: project.id,
+        label: `${project.name} (${project.referenceId || project.projectId || project.id})`,
+      }));
+    }
+
+    return resources.map((resource) => ({
+      id: resource.id,
+      label: `${resource.name} (${resource.employeeId || resource.id})`,
+    }));
+  }, [auditFilterMode, projects, resources]);
+
+  React.useEffect(() => {
+    setSelectedAuditIds([]);
+    setAuditError(null);
+  }, [auditFilterMode]);
 
   const reports = React.useMemo<ReportConfig[]>(() => {
     return [
@@ -208,9 +252,134 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
     }
   };
 
+  const handleAuditSelectionChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const values = Array.from(event.target.selectedOptions, (option) => option.value);
+    setSelectedAuditIds(values);
+  };
+
+  const handleAuditDownload = async () => {
+    if (selectedAuditIds.length === 0) {
+      setAuditError(`Select at least one ${auditFilterMode === 'project' ? 'project' : 'resource'} to export.`);
+      return;
+    }
+
+    if (auditChangedFrom && auditChangedTo && auditChangedTo < auditChangedFrom) {
+      setAuditError('Changed To must be on or after Changed From.');
+      return;
+    }
+
+    setAuditError(null);
+    setDownloading('scheduleAuditLog');
+
+    try {
+      const rows = await scheduleAuditService.list({
+        projectIds: auditFilterMode === 'project' ? selectedAuditIds : undefined,
+        personIds: auditFilterMode === 'resource' ? selectedAuditIds : undefined,
+        changedFrom: auditChangedFrom || undefined,
+        changedTo: auditChangedTo || undefined,
+      });
+
+      downloadRowsAsWorkbook('schedule_audit_log', rows.map(toScheduleAuditWorkbookRow));
+    } catch (error) {
+      setAuditError(error instanceof Error ? error.message : 'Failed to download schedule audit log.');
+    } finally {
+      setDownloading(null);
+    }
+  };
+
   return (
     <div className="app-card p-6 flex flex-col gap-4" id="reports-downloads">
       <h2 className="text-xl font-bold text-primary tracking-tight">Reports</h2>
+
+      <div className="rounded-lg border border-subtle bg-surface px-4 py-4 flex flex-col gap-4">
+        <div className="flex flex-col gap-1 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-primary">Schedule Audit Log</h3>
+            <p className="text-xs text-secondary mt-1">
+              Export schedule change history by project or resource, with optional changed-date bounds.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleAuditDownload}
+            disabled={Boolean(downloading) || auditOptions.length === 0}
+            className="inline-flex items-center justify-center gap-1.5 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {downloading === 'scheduleAuditLog' ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Downloading...
+              </>
+            ) : (
+              <>
+                <Download className="w-3.5 h-3.5" />
+                Download Audit Log
+              </>
+            )}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+              Filter Mode
+            </label>
+            <select
+              value={auditFilterMode}
+              onChange={(event) => setAuditFilterMode(event.target.value as AuditFilterMode)}
+              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="project">Projects</option>
+              <option value="resource">Resources</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+              Changed From
+            </label>
+            <input
+              type="date"
+              value={auditChangedFrom}
+              onChange={(event) => setAuditChangedFrom(event.target.value)}
+              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+              Changed To
+            </label>
+            <input
+              type="date"
+              value={auditChangedTo}
+              onChange={(event) => setAuditChangedTo(event.target.value)}
+              className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-secondary uppercase tracking-wide">
+            {auditFilterMode === 'project' ? 'Projects' : 'Resources'}
+          </label>
+          <select
+            multiple
+            size={Math.min(Math.max(auditOptions.length, 4), 8)}
+            value={selectedAuditIds}
+            onChange={handleAuditSelectionChange}
+            className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {auditOptions.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {auditError && (
+          <p className="text-xs text-red-600">{auditError}</p>
+        )}
+      </div>
 
       <div className="flex flex-col gap-2">
         {reports.map((report) => {

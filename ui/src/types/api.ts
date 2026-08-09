@@ -122,6 +122,34 @@ export interface SimulationLogRow {
   updated_at: string;
 }
 
+export interface ScheduleAuditReportRow {
+  audit_id: string;
+  changed_at: string;
+  transaction_id: number;
+  entity_type: 'schedule' | 'schedule_week';
+  change_action: 'INSERT' | 'UPDATE' | 'DELETE';
+  schedule_id: string | null;
+  schedule_week_id: string | null;
+  project_id: string | null;
+  project_reference_id: string | null;
+  project_name: string | null;
+  person_id: string | null;
+  person_employee_id: string | null;
+  person_name: string | null;
+  request_id: string | null;
+  request_reference_id: string | null;
+  iso_year: number | null;
+  iso_week: number | null;
+  days_per_week_before: number | null;
+  days_per_week_after: number | null;
+  billable_type_before: BillableType | null;
+  billable_type_after: BillableType | null;
+  booking_type_before: BookingCommitmentType | null;
+  booking_type_after: BookingCommitmentType | null;
+  old_row: Record<string, unknown> | null;
+  new_row: Record<string, unknown> | null;
+}
+
 export interface PersonUtilizationSearchRow {
   id: string;
   employee_id: string;
