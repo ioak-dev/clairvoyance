@@ -10,10 +10,36 @@ import {
 
 const baseUrl = `${env.postgrestUrl}/project`;
 const projectSelect = '*,market_unit(name),consulting_unit(name)';
+const PAGE_SIZE = 1000;
+
+async function listAllProjectRows(): Promise<ProjectRow[]> {
+  const allRows: ProjectRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const rows = await http.get<ProjectRow[]>(
+      `${baseUrl}?select=${encodeURIComponent(projectSelect)}&order=name.asc&limit=${PAGE_SIZE}&offset=${offset}`,
+    );
+
+    if (rows.length === 0) {
+      break;
+    }
+
+    allRows.push(...rows);
+
+    if (rows.length < PAGE_SIZE) {
+      break;
+    }
+
+    offset += PAGE_SIZE;
+  }
+
+  return allRows;
+}
 
 export const projectsService = {
   async list(): Promise<Project[]> {
-    const rows = await http.get<ProjectRow[]>(`${baseUrl}?select=${encodeURIComponent(projectSelect)}&order=name.asc`);
+    const rows = await listAllProjectRows();
     return rows.map(toProject);
   },
 

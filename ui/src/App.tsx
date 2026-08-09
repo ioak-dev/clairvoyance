@@ -5,10 +5,10 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Resource, Project, Allocation, Vacation, BookingRequest } from './types';
+import { Resource, Project, AllocationBlock, Vacation, BookingRequest, ScheduleAssignment } from './types';
 
 // Components
-import { SchedulerGrid } from './components/SchedulerGrid';
+import { SchedulerGrid, type SchedulerGridHandle } from './components/SchedulerGrid';
 import { VacationTab } from './components/VacationTab';
 import { ProjectTab } from './components/ProjectTab';
 import { ResourceTab } from './components/ResourceTab';
@@ -40,6 +40,9 @@ import {
   Sun,
   Moon,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
   Settings,
   LogOut,
   CalendarDays,
@@ -53,7 +56,16 @@ import {
 import { useCreatePerson, useDeletePerson, usePeople, useUpdatePerson } from './hooks/usePeople';
 import { useCreateProject, useDeleteProject, useProjects, useUpdateProject } from './hooks/useProjects';
 import { useCreateRequest, useDeleteRequest, useRequests, useUpdateRequest, requestQueryKeys } from './hooks/useRequests';
-import { useCreateSchedule, useDeleteSchedule, useDeleteSchedulesByRequest, useSchedules, useUpdateSchedule, scheduleQueryKeys } from './hooks/useSchedules';
+import {
+  useCopyRequestToSchedule,
+  useDeleteSchedule,
+  useDeleteScheduleWeeksInRange,
+  useDeleteSchedulesByRequest,
+  useSchedules,
+  useUpsertScheduleRange,
+  useUpsertScheduleWeeks,
+  scheduleQueryKeys,
+} from './hooks/useSchedules';
 import { useCreateVacation, useDeleteVacation, useUpdateVacation, useVacations } from './hooks/useVacations';
 import { usePersonFilters, useProjectFilters, useRequestFilters } from './hooks/useFilters';
 import { useLookups } from './hooks/useLookups';
@@ -65,10 +77,10 @@ import {
   parsePathname,
   isScheduleArea,
 } from './lib/routes';
-import { CURRENT_DATE_STRING, countWeekdays } from './lib/dateUtils';
+import { CURRENT_DATE_STRING } from './lib/dateUtils';
+import { dateRangeToWeeks, isoWeekToDateRange } from './lib/weekUtils';
 
-// Helper to compute weekdays (excluding Sat/Sun) — re-exported via dateUtils
-const calculateWeekdays = countWeekdays;
+const DYNAMIC_HAS_SCHEDULE_FILTER_ID = '__dynamic_has_schedule__';
 
 function navMenuItemClass(isActive: boolean): string {
   return `inline-flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-medium tracking-[0.02em] leading-none transition-colors cursor-pointer whitespace-nowrap ${
@@ -169,7 +181,7 @@ export default function App() {
 
   const { data: resources = [] } = usePeople();
   const { data: projects = [] } = useProjects();
-  const { data: allocations = [] } = useSchedules();
+  const { data: scheduleAssignments = [] } = useSchedules();
   const { data: vacations = [] } = useVacations();
   const { data: requests = [] } = useRequests();
   const {
@@ -201,8 +213,10 @@ export default function App() {
   const createRequest = useCreateRequest();
   const updateRequest = useUpdateRequest();
   const deleteRequest = useDeleteRequest();
-  const createSchedule = useCreateSchedule();
-  const updateSchedule = useUpdateSchedule();
+  const upsertScheduleRange = useUpsertScheduleRange();
+  const upsertScheduleWeeks = useUpsertScheduleWeeks();
+  const deleteScheduleWeeksInRange = useDeleteScheduleWeeksInRange();
+  const copyRequestToSchedule = useCopyRequestToSchedule();
   const deleteSchedule = useDeleteSchedule();
   const deleteSchedulesByRequest = useDeleteSchedulesByRequest();
   const createVacation = useCreateVacation();
@@ -218,9 +232,11 @@ export default function App() {
   }, [queryClient]);
 
   // Filter state
-  const [timelineStartDate, setTimelineStartDate] = useState('2026-06-01');
-  const [timelineEndDate, setTimelineEndDate] = useState('2027-12-31');
+  const schedulerGridRef = useRef<SchedulerGridHandle>(null);
+  const timelineDateInputRef = useRef<HTMLInputElement>(null);
+  const timelineCommittedDateRef = useRef(CURRENT_DATE_STRING);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isFilterApplying, setIsFilterApplying] = useState(false);
   const [activeProjectFilterId, setActiveProjectFilterId] = useState<string | null>(null);
   const [activePersonFilterId, setActivePersonFilterId] = useState<string | null>(null);
   const [activeRequestFilterId, setActiveRequestFilterId] = useState<string | null>(null);
@@ -231,8 +247,28 @@ export default function App() {
   }, [activeTab, sidebarActive]);
 
   const sidebarFilters = useMemo(() => {
-    if (filterViewContext === 'projects') return projectFilters;
-    if (filterViewContext === 'resources') return personFilters;
+    if (filterViewContext === 'projects') {
+      const dynamicProjectFilter: SavedFilter = {
+        id: DYNAMIC_HAS_SCHEDULE_FILTER_ID,
+        name: 'Scheduled Projects',
+        description: 'Show only projects with schedule entries in the current timeline window.',
+        criteria: { has_schedule: true },
+        isActive: true,
+        sortOrder: -9999,
+      };
+      return [dynamicProjectFilter, ...projectFilters];
+    }
+    if (filterViewContext === 'resources') {
+      const dynamicResourceFilter: SavedFilter = {
+        id: DYNAMIC_HAS_SCHEDULE_FILTER_ID,
+        name: 'Scheduled Resources',
+        description: 'Show only resources with schedule entries in the current timeline window.',
+        criteria: { has_schedule: true },
+        isActive: true,
+        sortOrder: -9999,
+      };
+      return [dynamicResourceFilter, ...personFilters];
+    }
     return requestFilters;
   }, [filterViewContext, projectFilters, personFilters, requestFilters]);
 
@@ -249,11 +285,27 @@ export default function App() {
   }, [activeFilterId, sidebarFilters]);
 
   const handleSelectFilter = useCallback((filter: SavedFilter | null) => {
+    setIsFilterApplying(true);
     const id = filter?.id ?? null;
     if (filterViewContext === 'projects') setActiveProjectFilterId(id);
     else if (filterViewContext === 'resources') setActivePersonFilterId(id);
     else setActiveRequestFilterId(id);
   }, [filterViewContext]);
+
+  useEffect(() => {
+    if (!isFilterApplying) return;
+    const timer = window.setTimeout(() => {
+      setIsFilterApplying(false);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [isFilterApplying, activeFilterId, filterViewContext]);
+
+  // Auto-select first available filter when entering a tab with no active filter
+  useEffect(() => {
+    if (!activeFilterId && sidebarFilters.length > 0) {
+      handleSelectFilter(sidebarFilters[0]);
+    }
+  }, [filterViewContext, sidebarFilters, activeFilterId, handleSelectFilter]);
 
   const handleCreateFilter = useCallback(async (values: FilterFormValues) => {
     const payload = {
@@ -293,7 +345,7 @@ export default function App() {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isAddResourceModalOpen, setIsAddResourceModalOpen] = useState(false);
   const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
-  const [selectedEditAllocation, setSelectedEditAllocation] = useState<Allocation | null>(null);
+  const [selectedEditBlock, setSelectedEditBlock] = useState<AllocationBlock | null>(null);
 
   // Pre-fill states for quick scheduling
   const [prefilledResourceId, setPrefilledResourceId] = useState('');
@@ -307,31 +359,25 @@ export default function App() {
     let toDateHoursSum = 0;
     let futureHoursSum = 0;
 
-    allocations.forEach((alloc) => {
-      // 1. Total Planned ALL Hours
-      const totalWeekdays = calculateWeekdays(alloc.startDate, alloc.endDate);
-      const allocHours = totalWeekdays * 8 * (alloc.billablePercent / 100);
-      allHoursSum += allocHours;
+    scheduleAssignments.forEach((assignment: ScheduleAssignment) => {
+      const resource = resources.find((r) => r.id === assignment.resourceId);
+      const weeklyHours = resource?.weeklyHours ?? 40;
+      const fte = resource?.fte ?? 1;
 
-      // 2. TO DATE Hours (Up to and including CURRENT_DATE_STRING: June 22, 2026)
-      if (alloc.endDate <= CURRENT_DATE_STRING) {
-        toDateHoursSum += allocHours;
-      } else if (alloc.startDate <= CURRENT_DATE_STRING) {
-        // Overlap split
-        const partialWeekdaysToDate = calculateWeekdays(alloc.startDate, CURRENT_DATE_STRING);
-        const partialHours = partialWeekdaysToDate * 8 * (alloc.billablePercent / 100);
-        toDateHoursSum += partialHours;
+      assignment.weeks.forEach((w) => {
+        const { start, end } = isoWeekToDateRange(w.isoYear, w.isoWeek);
+        const hours = w.daysPerWeek * (weeklyHours / 5) * fte;
+        allHoursSum += hours;
 
-        // Balance left represents future
-        const remainingWeekdays = calculateWeekdays(
-          new Date(new Date(CURRENT_DATE_STRING).getTime() + 86400000).toISOString().split('T')[0], // Day after June 22
-          alloc.endDate
-        );
-        futureHoursSum += remainingWeekdays * 8 * (alloc.billablePercent / 100);
-      } else {
-        // Completely in future
-        futureHoursSum += allocHours;
-      }
+        if (end <= CURRENT_DATE_STRING) {
+          toDateHoursSum += hours;
+        } else if (start <= CURRENT_DATE_STRING) {
+          toDateHoursSum += hours * 0.5;
+          futureHoursSum += hours * 0.5;
+        } else {
+          futureHoursSum += hours;
+        }
+      });
     });
 
     return {
@@ -339,19 +385,52 @@ export default function App() {
       toDate: Math.round(toDateHoursSum),
       future: Math.round(futureHoursSum),
     };
-  }, [allocations]);
+  }, [scheduleAssignments, resources]);
 
   // Operational State Mutators
-  const handleSaveNewAllocation = async (newAlloc: Omit<Allocation, 'id'>) => {
-    await createSchedule.mutateAsync(newAlloc);
+  const handleSaveNewAllocation = async (params: {
+    resourceId: string;
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    daysPerWeek: number;
+    billableType: import('./types').BillableType;
+    bookingType: import('./types').BookingCommitmentType;
+  }) => {
+    await upsertScheduleRange.mutateAsync({
+      personId: params.resourceId,
+      projectId: params.projectId,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      daysPerWeek: params.daysPerWeek,
+      billableType: params.billableType,
+      bookingType: params.bookingType,
+    });
   };
 
-  const handleUpdateAllocation = async (updatedAlloc: Allocation) => {
-    await updateSchedule.mutateAsync(updatedAlloc);
+  const handleUpdateBlock = async (
+    block: AllocationBlock,
+    applyStartDate: string,
+    applyEndDate: string,
+    daysPerWeek: number,
+  ) => {
+    const weeks = dateRangeToWeeks(applyStartDate, applyEndDate).map((w) => ({
+      ...w,
+      daysPerWeek,
+    }));
+    await upsertScheduleWeeks.mutateAsync({ scheduleId: block.scheduleId, weeks });
   };
 
-  const handleDeleteAllocation = async (id: string) => {
-    await deleteSchedule.mutateAsync(id);
+  const handleDeleteBlockRange = async (
+    block: AllocationBlock,
+    applyStartDate: string,
+    applyEndDate: string,
+  ) => {
+    await deleteScheduleWeeksInRange.mutateAsync({
+      scheduleId: block.scheduleId,
+      startDate: applyStartDate,
+      endDate: applyEndDate,
+    });
   };
 
   const handleApproveVacation = async (id: string) => {
@@ -373,59 +452,12 @@ export default function App() {
   const handleApproveRequest = async (id: string) => {
     const proposal = requests.find((r) => r.id === id);
     if (!proposal || !proposal.resourceId) return;
-
-    await deleteSchedulesByRequest.mutateAsync(id);
-
-    await createSchedule.mutateAsync({
-      resourceId: proposal.resourceId,
-      projectId: proposal.projectId,
-      startDate: proposal.startDate,
-      endDate: proposal.endDate,
-      billablePercent: proposal.billablePercent,
-      billableType: proposal.billableType,
-      bookingType: proposal.bookingType,
-      requestId: proposal.id,
-    });
-
-    const updatedRequest = await updateRequest.mutateAsync({
-      id,
-      patch: { resourceId: proposal.resourceId, status: 'Approved' },
-    });
-
-    queryClient.setQueryData<BookingRequest[]>(requestQueryKeys.list(), (current) =>
-      current?.map((r) => (r.id === updatedRequest.id ? updatedRequest : r)),
-    );
-
+    await copyRequestToSchedule.mutateAsync({ requestId: id, personId: proposal.resourceId });
     await refreshSchedulingData();
   };
 
   const handleApproveRequestWithResource = async (requestId: string, resourceId: string) => {
-    const proposal = requests.find((r) => r.id === requestId);
-    if (!proposal) return;
-
-    // Replace any existing schedule for this request (reassignment support).
-    await deleteSchedulesByRequest.mutateAsync(requestId);
-
-    await createSchedule.mutateAsync({
-      resourceId,
-      projectId: proposal.projectId,
-      startDate: proposal.startDate,
-      endDate: proposal.endDate,
-      billablePercent: proposal.billablePercent,
-      billableType: proposal.billableType,
-      bookingType: proposal.bookingType,
-      requestId,
-    });
-
-    const updatedRequest = await updateRequest.mutateAsync({
-      id: requestId,
-      patch: { resourceId, status: 'Approved' },
-    });
-
-    queryClient.setQueryData<BookingRequest[]>(requestQueryKeys.list(), (current) =>
-      current?.map((r) => (r.id === updatedRequest.id ? updatedRequest : r)),
-    );
-
+    await copyRequestToSchedule.mutateAsync({ requestId, personId: resourceId });
     await refreshSchedulingData();
   };
 
@@ -458,7 +490,8 @@ export default function App() {
   };
 
   const handleSaveBookingRequest = async (newReq: Omit<BookingRequest, 'id' | 'status'>) => {
-    await createRequest.mutateAsync(newReq);
+    const { weeks, ...header } = newReq;
+    await createRequest.mutateAsync({ request: header, weeks });
   };
 
   const handleAddResource = async (newRes: Omit<Resource, 'id'>) => {
@@ -818,35 +851,70 @@ export default function App() {
 
           {/* Main content tabs dispatching router routing */}
           {isScheduleArea(activeTab) && (
-            <div className="flex flex-col flex-1 min-h-0 gap-6">
+            <div className="flex flex-col flex-1 min-h-0 gap-2">
 
 
 
-              {/* Grid interactive Filters Toolbar exactly like visual mockup */}
-              <div className="app-card p-2 shrink-0 flex items-center justify-between flex-wrap gap-4">
-
-                <div className="flex items-center gap-1 flex-wrap flex-1 max-w-xl">
-                  {/* Interactive Date Range Selector with From and To date pickers */}
-                  <div className="flex items-center gap-2 bg-surface-muted p-2 border border-default rounded-lg text-xs font-bold text-primary">
-                    <span className="flex items-center gap-1">
-                      🗓️ <span className="text-tertiary">From:</span>
-                    </span>
-                    <input
-                      type="date"
-                      value={timelineStartDate}
-                      onChange={(e) => setTimelineStartDate(e.target.value)}
-                      className="border-0 bg-transparent text-primary font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
-                    />
-                    <span className="text-tertiary mx-1">→</span>
-                    <span className="text-tertiary">To:</span>
-                    <input
-                      type="date"
-                      value={timelineEndDate}
-                      onChange={(e) => setTimelineEndDate(e.target.value)}
-                      className="border-0 bg-transparent text-primary font-bold p-0 focus:ring-0 focus:outline-none cursor-pointer text-xs w-[110px]"
-                      title="Maximum scroll range"
-                    />
-                  </div>
+              {/* Calendar navigation */}
+              <div className="shrink-0 flex items-center">
+                <div className="inline-flex items-center gap-0.5 bg-surface-muted/50 rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      title="Previous week"
+                      aria-label="Previous week"
+                      onClick={() => schedulerGridRef.current?.scrollByWeeks(-1)}
+                      className="p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Today"
+                      aria-label="Jump to today"
+                      onClick={() => {
+                        timelineCommittedDateRef.current = CURRENT_DATE_STRING;
+                        if (timelineDateInputRef.current) {
+                          timelineDateInputRef.current.value = CURRENT_DATE_STRING;
+                        }
+                        schedulerGridRef.current?.focusToday();
+                      }}
+                      className="p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <Circle className="w-2.5 h-2.5 fill-current" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Next week"
+                      aria-label="Next week"
+                      onClick={() => schedulerGridRef.current?.scrollByWeeks(1)}
+                      className="p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <div className="w-px h-5 bg-[var(--app-border)] mx-1" />
+                    <label
+                      title="Jump to date"
+                      aria-label="Jump to date"
+                      className="relative p-1.5 rounded-md text-secondary hover:text-primary hover:bg-surface-hover transition-colors cursor-pointer"
+                    >
+                      <CalendarDays className="w-3.5 h-3.5" />
+                      <input
+                        ref={timelineDateInputRef}
+                        type="date"
+                        defaultValue={CURRENT_DATE_STRING}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          // Native date inputs fire change only when a full day is chosen
+                          // (not while browsing months).
+                          if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) return;
+                          if (next === timelineCommittedDateRef.current) return;
+                          timelineCommittedDateRef.current = next;
+                          schedulerGridRef.current?.focusOnDate(next);
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        aria-label="Choose date"
+                      />
+                    </label>
                 </div>
               </div>
 
@@ -854,16 +922,15 @@ export default function App() {
               {/* Main Timeline Allocation Grid Board */}
               <div className="flex-1 min-h-0">
               <SchedulerGrid
+                ref={schedulerGridRef}
                 resources={resources}
                 projects={projects}
-                allocations={allocations}
                 vacations={vacations}
                 requests={requests}
                 filterCriteria={filterCriteria}
-                timelineStartDate={timelineStartDate}
-                timelineEndDate={timelineEndDate}
+                isFilterApplying={isFilterApplying}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
-                onEditAllocation={(alloc) => setSelectedEditAllocation(alloc)}
+                onEditBlock={(block) => setSelectedEditBlock(block)}
                 onOpenScheduleModalWithRes={(resId, projId) => {
                   setPrefilledResourceId(resId);
                   setPrefilledProjectId(projId || '');
@@ -914,7 +981,7 @@ export default function App() {
             <DashboardTab
               resources={resources}
               projects={projects}
-              allocations={allocations}
+              assignments={scheduleAssignments}
               requests={requests}
               vacations={vacations}
               referenceDate={CURRENT_DATE_STRING}
@@ -925,7 +992,9 @@ export default function App() {
             <ReportsTab
               resources={resources}
               projects={projects}
-              allocations={allocations}
+              assignments={scheduleAssignments}
+              requests={requests}
+              vacations={vacations}
             />
           )}
 
@@ -951,7 +1020,7 @@ export default function App() {
         onClose={() => setIsCapacityFinderOpen(false)}
         resources={resources}
         projects={projects}
-        allocations={allocations}
+        assignments={scheduleAssignments}
         onBookResource={handleBookFromCapacityFinder}
       />
 
@@ -976,13 +1045,13 @@ export default function App() {
       />
 
       <EditAllocationModal
-        isOpen={selectedEditAllocation !== null}
-        onClose={() => setSelectedEditAllocation(null)}
-        allocation={selectedEditAllocation}
+        isOpen={selectedEditBlock !== null}
+        onClose={() => setSelectedEditBlock(null)}
+        block={selectedEditBlock}
         projects={projects}
         resources={resources}
-        onUpdate={handleUpdateAllocation}
-        onDelete={handleDeleteAllocation}
+        onUpdate={handleUpdateBlock}
+        onDelete={handleDeleteBlockRange}
       />
 
       <AddResourceModal

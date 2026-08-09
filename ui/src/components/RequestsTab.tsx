@@ -7,6 +7,8 @@ import React from 'react';
 import { Resource, Project, BookingRequest } from '../types';
 import { Check, X, ShieldAlert, BadgeInfo, FileSliders, UserCheck, Trash2, HelpCircle } from 'lucide-react';
 import { getProjectCategoryDotClassForProject } from '../lib/projectCategory';
+import { avgDaysPerWeek, maxDaysPerWeek } from '../lib/weekUtils';
+import { requestDateBounds } from '../types/api';
 
 interface RequestsTabProps {
   requests: BookingRequest[];
@@ -65,6 +67,8 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
               {pendingRequests.map((req) => {
                 const res = getResource(req.resourceId);
                 const proj = getProject(req.projectId);
+                const bounds = requestDateBounds(req);
+                const avgDays = avgDaysPerWeek(req.weeks);
 
                 return (
                   <div
@@ -111,16 +115,23 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold text-tertiary uppercase">Proposal Period</span>
                         <p className="text-sm font-medium text-secondary mt-1">
-                          {req.startDate} to {req.endDate}
+                          {bounds ? `${bounds.startDate} to ${bounds.endDate}` : 'No weeks'}
                         </p>
                       </div>
 
                       <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-tertiary uppercase">Allocation Ratio</span>
+                        <span className="text-[10px] font-bold text-tertiary uppercase">Days per Week</span>
                         <p className="text-sm font-bold text-primary mt-1 flex items-center gap-1.5">
-                          <span>{req.billablePercent}% Rate</span>
-                          <span className={`px-1.5 py-0.2 rounded text-[10px] ${req.billableType === 'Billable' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
-                            {req.billableType}
+                          <span>{avgDays}d/wk avg</span>
+                          <span className={`px-1.5 py-0.2 rounded text-[10px] ${
+                            (() => {
+                              const type = getProject(req.projectId)?.billableType || req.billableType;
+                              if (type === 'Billable') return 'bg-emerald-100 text-emerald-800';
+                              if (type === 'Non-billable') return 'bg-amber-100 text-amber-800';
+                              return 'bg-purple-100 text-purple-800';
+                            })()
+                          }`}>
+                            {getProject(req.projectId)?.billableType || req.billableType}
                           </span>
                         </p>
                       </div>
@@ -176,6 +187,8 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                   const res = getResource(req.resourceId);
                   const proj = getProject(req.projectId);
                   const isApproved = req.status === 'Approved';
+                  const bounds = requestDateBounds(req);
+                  const peakDays = maxDaysPerWeek(req.weeks);
 
                   return (
                     <div key={req.id} className="py-3 first:pt-0 last:pb-0 text-left">
@@ -192,10 +205,10 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                         </span>
                       </div>
                       <p className="text-[11px] text-secondary mt-1 font-medium">
-                        Project: <span className="text-primary font-semibold">{proj?.name || 'TMS'}</span> ({req.billablePercent}%)
+                        Project: <span className="text-primary font-semibold">{proj?.name || 'TMS'}</span> ({peakDays}d/wk peak)
                       </p>
                       <p className="text-[10px] text-tertiary mt-0.5">
-                        Dates: {req.startDate} to {req.endDate}
+                        Dates: {bounds ? `${bounds.startDate} to ${bounds.endDate}` : '—'}
                       </p>
 
                       <div className="mt-2 flex justify-end">

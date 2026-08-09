@@ -7,13 +7,13 @@ export interface PersonUtilizationSearchParams {
   from: string;
   to: string;
   availability?: AvailabilityMode;
-  /** Request billable % — availability filters scale against this. */
-  requiredPercent?: number;
+  /** Required days per week from request weeks. */
+  requiredDays?: number;
   consultingUnitId?: string | null;
   practiceAreaId?: string | null;
   competencyCenterId?: string | null;
   siteId?: string | null;
-  jobCategory?: string | null;
+  jobLevelId?: string | null;
   name?: string | null;
 }
 
@@ -25,12 +25,12 @@ export const personUtilizationService = {
         p_from: params.from,
         p_to: params.to,
         p_availability: params.availability || 'everyone',
-        p_required_percent: params.requiredPercent ?? 100,
+        p_required_days: params.requiredDays ?? 5,
         p_consulting_unit_id: params.consultingUnitId || null,
         p_practice_area_id: params.practiceAreaId || null,
         p_competency_center_id: params.competencyCenterId || null,
         p_site_id: params.siteId || null,
-        p_job_category: params.jobCategory || null,
+        p_job_level_id: params.jobLevelId || null,
         p_name: params.name || null,
       },
     );

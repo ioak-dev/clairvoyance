@@ -1,14 +1,16 @@
-import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Award, Check, List, RotateCcw, Search, User, X } from 'lucide-react';
 import type {
   AvailabilityMode,
   BookingRequest,
-  JobCategory,
   PersonUtilizationResult,
   Project,
+  WeekAllocation,
 } from '../types';
 import { useLookups } from '../hooks/useLookups';
 import { personUtilizationService } from '../lib/services/personUtilization';
+import { maxDaysPerWeek } from '../lib/weekUtils';
+import { requestDateBounds } from '../types/api';
 
 interface SkillMatcherModalProps {
   isOpen: boolean;
@@ -35,240 +37,173 @@ const defaultFilters: FilterState = {
   level: 'all',
 };
 
-const JOB_CATEGORY_OPTIONS: JobCategory[] = [
-  'B0- Fresher',
-  'L0', 'L1', 'L2', 'L3', 'L4', 'L5',
-  'D0', 'D1', 'D2', 'D3', 'D4', 'D5',
-];
-
-type UtilizationChartProps = {
-  utilization: PersonUtilizationResult['utilization'];
-  requestStart: string;
-  requestEnd: string;
+type WeekGap = {
+  isoYear: number;
+  isoWeek: number;
+  requiredDays: number;
+  allocatedDays: number;
+  availableDays: number;
+  /** Days short vs request; 0 when available >= required. */
+  shortfallDays: number;
 };
 
-type UtilizationDetailsResource = Pick<PersonUtilizationResult, 'name' | 'role' | 'avgUtilization' | 'utilization'>;
+type UtilizationChartProps = {
+  gaps: WeekGap[];
+};
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
+type UtilizationDetailsResource = {
+  name: string;
+  role: string;
+  gaps: WeekGap[];
+  avgShortfallDays: number;
+};
+
+function availableDaysFromAllocated(allocatedDays: number): number {
+  return Math.max(0, 5 - (Number(allocatedDays) || 0));
 }
 
-function toUtcDay(value: string) {
-  return new Date(`${value}T00:00:00Z`).getTime();
+/** Remaining shortfall vs request; 0 when availability covers the request. */
+function shortfallDays(requiredDays: number, allocatedDays: number): number {
+  const available = availableDaysFromAllocated(allocatedDays);
+  return available >= requiredDays ? 0 : requiredDays - available;
 }
 
-const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
-  day: 'numeric',
-  month: 'short',
-});
+function matchRequestWeekGaps(
+  requestWeeks: WeekAllocation[],
+  personWeeks: PersonUtilizationResult['utilization'],
+): WeekGap[] {
+  const byKey = new Map(
+    personWeeks.map((w) => [`${w.isoYear}-${w.isoWeek}`, Number(w.utilization) || 0]),
+  );
 
-function formatShortDate(value: string) {
-  return shortDateFormatter.format(new Date(`${value}T00:00:00Z`));
+  return [...requestWeeks]
+    .sort((a, b) => a.isoYear - b.isoYear || a.isoWeek - b.isoWeek)
+    .map((rw) => {
+      const allocatedDays = byKey.get(`${rw.isoYear}-${rw.isoWeek}`) ?? 0;
+      const availableDays = availableDaysFromAllocated(allocatedDays);
+      return {
+        isoYear: rw.isoYear,
+        isoWeek: rw.isoWeek,
+        requiredDays: rw.daysPerWeek,
+        allocatedDays,
+        availableDays,
+        shortfallDays: shortfallDays(rw.daysPerWeek, allocatedDays),
+      };
+    });
 }
 
-function mixChannel(start: number, end: number, ratio: number) {
-  return Math.round(start + (end - start) * ratio);
+function avgShortfallDays(gaps: WeekGap[]): number {
+  if (gaps.length === 0) return 0;
+  return gaps.reduce((sum, g) => sum + g.shortfallDays, 0) / gaps.length;
 }
 
-function utilizationToColor(utilization: number) {
-  const green = { r: 34, g: 197, b: 94 };
-  const yellow = { r: 234, g: 179, b: 8 };
-  const red = { r: 239, g: 68, b: 68 };
-
-  if (utilization <= 20) {
-    return `rgb(${green.r}, ${green.g}, ${green.b})`;
-  }
-
-  if (utilization >= 100) {
-    return `rgb(${red.r}, ${red.g}, ${red.b})`;
-  }
-
-  if (utilization <= 60) {
-    const ratio = (utilization - 20) / 40;
-    return `rgb(${mixChannel(green.r, yellow.r, ratio)}, ${mixChannel(green.g, yellow.g, ratio)}, ${mixChannel(green.b, yellow.b, ratio)})`;
-  }
-
-  const ratio = (utilization - 60) / 40;
-  return `rgb(${mixChannel(yellow.r, red.r, ratio)}, ${mixChannel(yellow.g, red.g, ratio)}, ${mixChannel(yellow.b, red.b, ratio)})`;
+function formatWeekLabel(isoYear: number, isoWeek: number): string {
+  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
 }
 
-function buildSmoothPath(points: Array<{ x: number; y: number }>) {
-  if (points.length === 0) return '';
-  if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
-
-  const path = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
-
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index];
-    const next = points[index + 1];
-    const midX = (current.x + next.x) / 2;
-    const midY = (current.y + next.y) / 2;
-    path.push(`Q ${current.x.toFixed(2)} ${current.y.toFixed(2)} ${midX.toFixed(2)} ${midY.toFixed(2)}`);
-  }
-
-  const penultimate = points[points.length - 2];
-  const last = points[points.length - 1];
-  path.push(`Q ${penultimate.x.toFixed(2)} ${penultimate.y.toFixed(2)} ${last.x.toFixed(2)} ${last.y.toFixed(2)}`);
-
-  return path.join(' ');
+function formatDays(value: number): string {
+  const normalized = Number(value) || 0;
+  return `${normalized} day${Math.abs(normalized) === 1 ? '' : 's'}`;
 }
 
-const ResourceUtilizationOverlay: React.FC<UtilizationChartProps> = ({
-  utilization,
-  requestStart,
-  requestEnd,
-}) => {
-  const [hoveredSegmentIndex, setHoveredSegmentIndex] = useState<number | null>(null);
-  const gradientId = useId();
+const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) => {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const chart = useMemo(() => {
+    if (!gaps.length) return null;
+
     const width = 320;
     const height = 100;
-    const start = toUtcDay(requestStart);
-    const endExclusive = toUtcDay(requestEnd) + 24 * 60 * 60 * 1000;
-    const totalSpan = Math.max(endExclusive - start, 24 * 60 * 60 * 1000);
+    const maxDays = 5;
+    const slot = width / gaps.length;
 
-    if (!utilization.length) {
-      return null;
-    }
+    const segments = gaps.map((gap, index) => {
+      const x = index * slot;
+      const segmentWidth = slot;
+      const requestedDays = Math.max(0, Math.min(maxDays, gap.requiredDays));
+      const fulfillableDays = Math.max(0, Math.min(requestedDays, gap.availableDays));
+      const unfulfillableDays = Math.max(0, requestedDays - fulfillableDays);
+      const fulfillableTopY = height - (fulfillableDays / maxDays) * height;
+      const requestedTopY = height - (requestedDays / maxDays) * height;
+      const fulfillableHeight = (fulfillableDays / maxDays) * height;
+      const unfulfillableHeight = (unfulfillableDays / maxDays) * height;
+      return {
+        gap,
+        x,
+        width: segmentWidth,
+        requestedDays,
+        fulfillableDays,
+        unfulfillableDays,
+        fulfillableTopY,
+        requestedTopY,
+        fulfillableHeight,
+        unfulfillableHeight,
+      };
+    });
 
-    const maxUtilization = Math.max(
-      100,
-      ...utilization.map((segment) => Number(segment.utilization) || 0),
-    );
+    return { width, height, segments };
+  }, [gaps]);
 
-    const points: Array<{ x: number; y: number }> = [];
-    const segments: Array<{
-      x: number;
-      width: number;
-      y: number;
-      utilization: number;
-      from: string;
-      to: string;
-    }> = [];
+  if (!chart) return null;
 
-    for (const segment of utilization) {
-      const rawStart = toUtcDay(segment.from);
-      const rawEndExclusive = toUtcDay(segment.to) + 24 * 60 * 60 * 1000;
-
-      if (rawEndExclusive <= start || rawStart >= endExclusive) {
-        continue;
-      }
-
-      const segmentStart = clamp(rawStart, start, endExclusive);
-      const segmentEnd = clamp(rawEndExclusive, start, endExclusive);
-      const normalizedValue = clamp(Number(segment.utilization) || 0, 0, maxUtilization);
-      const x1 = ((segmentStart - start) / totalSpan) * width;
-      const x2 = ((Math.max(segmentEnd, segmentStart) - start) / totalSpan) * width;
-      const y = height - (normalizedValue / maxUtilization) * height;
-
-      if (!points.length || points[points.length - 1].x !== x1) {
-        points.push({ x: x1, y });
-      }
-      points.push({ x: x2, y });
-
-      segments.push({
-        x: x1,
-        width: Math.max(x2 - x1, 2),
-        y,
-        utilization: normalizedValue,
-        from: segment.from,
-        to: segment.to,
-      });
-    }
-
-    if (!points.length) {
-      return null;
-    }
-
-    const smoothPoints = segments.map((segment) => ({
-      x: segment.x + segment.width / 2,
-      y: segment.y,
-    }));
-
-    if (!smoothPoints.length) {
-      return null;
-    }
-
-    const linePath = buildSmoothPath([
-      { x: segments[0].x, y: segments[0].y },
-      ...smoothPoints,
-      {
-        x: segments[segments.length - 1].x + segments[segments.length - 1].width,
-        y: segments[segments.length - 1].y,
-      },
-    ]);
-    const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${height} L ${points[0].x.toFixed(2)} ${height} Z`;
-
-    const gradientStops = segments.map((segment) => ({
-      offset: `${((segment.x + segment.width / 2) / width) * 100}%`,
-      color: utilizationToColor(segment.utilization),
-    }));
-
-    if (gradientStops.length > 0) {
-      gradientStops.unshift({
-        offset: '0%',
-        color: utilizationToColor(segments[0].utilization),
-      });
-      gradientStops.push({
-        offset: '100%',
-        color: utilizationToColor(segments[segments.length - 1].utilization),
-      });
-    }
-
-    return { width, height, linePath, areaPath, segments, gradientStops };
-  }, [requestEnd, requestStart, utilization]);
-
-  if (!chart) {
-    return null;
-  }
-
-  const hoveredSegment = hoveredSegmentIndex === null ? null : chart.segments[hoveredSegmentIndex] ?? null;
+  const hovered = hoveredIndex === null ? null : chart.segments[hoveredIndex] ?? null;
 
   return (
     <div className="absolute inset-0 overflow-hidden rounded-xl">
       <svg
         viewBox={`0 0 ${chart.width} ${chart.height}`}
-        className="h-full w-full text-blue-500"
+        className="h-full w-full"
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <defs>
-          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
-            {chart.gradientStops.map((stop, index) => (
-              <stop
-                key={`${stop.offset}-${index}`}
-                offset={stop.offset}
-                stopColor={stop.color}
-                stopOpacity="0.16"
-              />
-            ))}
-          </linearGradient>
-        </defs>
-        <path d={chart.areaPath} fill={`url(#${gradientId})`} />
+        {chart.segments.map((segment) => (
+          <rect
+            key={`amber-${segment.gap.isoYear}-${segment.gap.isoWeek}`}
+            x={segment.x}
+            y={segment.requestedTopY}
+            width={segment.width}
+            height={segment.unfulfillableHeight}
+            fill="#f59e0b"
+            fillOpacity="0.07"
+          />
+        ))}
+        {chart.segments.map((segment) => (
+          <rect
+            key={`green-${segment.gap.isoYear}-${segment.gap.isoWeek}`}
+            x={segment.x}
+            y={segment.fulfillableTopY}
+            width={segment.width}
+            height={segment.fulfillableHeight}
+            fill="#22c55e"
+            fillOpacity="0.09"
+          />
+        ))}
         {chart.segments.map((segment, index) => (
           <rect
-            key={`${segment.from}-${segment.to}-${index}`}
+            key={`${segment.gap.isoYear}-${segment.gap.isoWeek}`}
             x={segment.x}
-            y="0"
+            y={0}
             width={segment.width}
             height={chart.height}
             fill="transparent"
-            onMouseEnter={() => setHoveredSegmentIndex(index)}
-            onMouseLeave={() => setHoveredSegmentIndex((current) => (current === index ? null : current))}
+            onMouseEnter={() => setHoveredIndex(index)}
+            onMouseLeave={() => setHoveredIndex((current) => (current === index ? null : current))}
           />
         ))}
       </svg>
-      {hoveredSegment && (
+      {hovered && (
         <div
           className="pointer-events-none absolute top-2 z-20 rounded-md border border-default bg-surface px-2 py-1 text-[10px] font-medium text-primary shadow-xl"
           style={{
-            left: `calc(${((hoveredSegment.x + hoveredSegment.width / 2) / chart.width) * 100}% - 28px)`,
+            left: `calc(${((hovered.x + hovered.width / 2) / chart.width) * 100}% - 36px)`,
           }}
         >
-          <div>{Math.round(hoveredSegment.utilization)}% util</div>
+          <div>{formatWeekLabel(hovered.gap.isoYear, hovered.gap.isoWeek)}</div>
           <div className="text-tertiary">
-            {formatShortDate(hoveredSegment.from)} - {formatShortDate(hoveredSegment.to)}
+            Fulfillable {formatDays(hovered.fulfillableDays)} · Unfulfillable {formatDays(hovered.unfulfillableDays)}
+          </div>
+          <div className="text-tertiary">
+            Requested {formatDays(hovered.requestedDays)} on a 5 days/week scale
           </div>
         </div>
       )}
@@ -276,7 +211,7 @@ const ResourceUtilizationOverlay: React.FC<UtilizationChartProps> = ({
   );
 };
 
-const ResourceUtilizationDetailsModal: React.FC<{
+const ResourceAvailabilityDetailsModal: React.FC<{
   resource: UtilizationDetailsResource | null;
   onClose: () => void;
 }> = ({ resource, onClose }) => {
@@ -292,11 +227,14 @@ const ResourceUtilizationDetailsModal: React.FC<{
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <List className="w-5 h-5 text-blue-600 shrink-0" />
-                <h3 className="text-lg font-semibold text-primary">Utilization Details</h3>
+                <h3 className="text-lg font-semibold text-primary">Availability vs Request</h3>
               </div>
               <p className="mt-1 text-sm text-secondary truncate">{resource.name} · {resource.role}</p>
               <p className="mt-1 text-xs text-tertiary">
-                Average utilization for the request period: {Math.round(resource.avgUtilization)}%
+                Avg shortfall across request weeks:{' '}
+                {resource.avgShortfallDays === 0
+                  ? '0 days/wk (covers request)'
+                  : `${resource.avgShortfallDays.toFixed(1)} days/wk`}
               </p>
             </div>
             <button
@@ -309,26 +247,30 @@ const ResourceUtilizationDetailsModal: React.FC<{
         </div>
 
         <div className="p-5 overflow-y-auto">
-          {resource.utilization.length === 0 ? (
+          {resource.gaps.length === 0 ? (
             <div className="rounded-lg border border-subtle bg-surface-muted/30 px-4 py-8 text-sm text-tertiary text-center">
-              No utilization segments available for this resource.
+              No request weeks to compare.
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-subtle">
-              <div className="grid grid-cols-[1.1fr_1.1fr_0.8fr] gap-4 bg-surface-muted/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-secondary">
-                <span>From</span>
-                <span>To</span>
-                <span className="text-right">Utilization</span>
+              <div className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 bg-surface-muted/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-secondary">
+                <span>Week</span>
+                <span className="text-right">Required</span>
+                <span className="text-right">Available</span>
+                <span className="text-right">Shortfall</span>
               </div>
               <div>
-                {resource.utilization.map((segment, index) => (
+                {resource.gaps.map((gap) => (
                   <div
-                    key={`${segment.from}-${segment.to}-${index}`}
-                    className="grid grid-cols-[1.1fr_1.1fr_0.8fr] gap-4 px-4 py-3 text-sm text-primary"
+                    key={`${gap.isoYear}-${gap.isoWeek}`}
+                    className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 px-4 py-3 text-sm text-primary"
                   >
-                    <span>{formatShortDate(segment.from)}</span>
-                    <span>{formatShortDate(segment.to)}</span>
-                    <span className="text-right font-semibold">{Math.round(segment.utilization)}%</span>
+                    <span>{formatWeekLabel(gap.isoYear, gap.isoWeek)}</span>
+                    <span className="text-right">{formatDays(gap.requiredDays)}</span>
+                    <span className="text-right">{formatDays(gap.availableDays)}</span>
+                    <span className="text-right font-semibold">
+                      {formatDays(gap.shortfallDays)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -347,7 +289,7 @@ function filtersFromRequest(request: BookingRequest | null): FilterState {
     practice: request.practiceAreaId || 'all',
     cc: request.competencyCenterId || 'all',
     site: request.siteId || 'all',
-    level: request.jobCategory || 'all',
+    level: request.jobLevelId || 'all',
   };
 }
 
@@ -376,16 +318,24 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
       setIsLoading(true);
       setError(null);
       try {
+        const bounds = requestDateBounds(request);
+        if (!bounds) {
+          setResults([]);
+          setHasSearched(true);
+          setError('Request has no week allocations.');
+          return;
+        }
+
         const rows = await personUtilizationService.search({
-          from: request.startDate,
-          to: request.endDate,
+          from: bounds.startDate,
+          to: bounds.endDate,
           availability: availabilityMode,
-          requiredPercent: request.billablePercent,
+          requiredDays: maxDaysPerWeek(request.weeks),
           consultingUnitId: filters.cu === 'all' ? null : filters.cu,
           practiceAreaId: filters.practice === 'all' ? null : filters.practice,
           competencyCenterId: filters.cc === 'all' ? null : filters.cc,
           siteId: filters.site === 'all' ? null : filters.site,
-          jobCategory: filters.level === 'all' ? null : filters.level,
+          jobLevelId: filters.level === 'all' ? null : filters.level,
           name: null,
         });
 
@@ -446,9 +396,13 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
       practice: lookups?.practiceAreas || [],
       cc: filteredCompetencyCenters,
       site: lookups?.sites || [],
-      level: JOB_CATEGORY_OPTIONS,
+      level: lookups?.jobLevels || [],
     };
   }, [lookups, selectedFilters.practice]);
+
+  const levelNameById = useMemo(() => {
+    return new Map((lookups?.jobLevels || []).map((entry) => [entry.id, entry.name]));
+  }, [lookups]);
 
   useEffect(() => {
     if (selectedFilters.cc === 'all') return;
@@ -461,6 +415,9 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
   if (!isOpen || !request) {
     return null;
   }
+
+  const requestBounds = requestDateBounds(request);
+  const requiredDays = maxDaysPerWeek(request.weeks);
 
   const updateFilter = (key: keyof FilterState, value: string) => {
     setSelectedFilters((current) => ({ ...current, [key]: value }));
@@ -507,12 +464,12 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
               </div>
               <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
                 <span className="font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
-                  {request.requiredSkill || 'General skill'}
+                  {request.requestName || 'General request'}
                 </span>
-                <span className="text-secondary">{request.billablePercent}% allocation</span>
+                <span className="text-secondary">{requiredDays}d/wk required</span>
                 <span className="text-tertiary">·</span>
                 <span className="text-secondary">
-                  {request.startDate} – {request.endDate}
+                  {requestBounds ? `${requestBounds.startDate} – ${requestBounds.endDate}` : 'No weeks'}
                 </span>
               </div>
               {request.notes && (
@@ -560,8 +517,8 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                   >
                     <option value="all">Any</option>
                     {filterOptions.level.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
+                      <option key={option.id} value={option.id}>
+                        {option.name}
                       </option>
                     ))}
                   </select>
@@ -649,16 +606,16 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                     : 'No resources matched the selected filters.'}
                 </div>
               ) : (
-                filteredResults.map((res) => (
+                filteredResults.map((res) => {
+                  const gaps = matchRequestWeekGaps(request.weeks, res.utilization);
+                  const avgShort = avgShortfallDays(gaps);
+
+                  return (
                   <div
                     key={res.id}
                     className="relative overflow-hidden p-4 rounded-xl border transition-all flex items-start gap-3 bg-surface border-subtle hover:border-default hover:shadow-app-sm"
                   >
-                    <ResourceUtilizationOverlay
-                      utilization={res.utilization}
-                      requestStart={request.startDate}
-                      requestEnd={request.endDate}
-                    />
+                    <ResourceAvailabilityOverlay gaps={gaps} />
                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-surface/85 via-surface/45 to-surface/10" />
                     <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">
                       {(res.name || '').split(' ').map((n) => n[0] || '').join('')}
@@ -670,12 +627,14 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                         <span className="text-xs text-tertiary">·</span>
                         <span className="text-xs text-secondary truncate">{res.role}</span>
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface/60 text-secondary border border-subtle backdrop-blur-[1px]">
-                          {Math.round(res.avgUtilization)}% utilized
+                          {avgShort === 0
+                            ? '0d/wk short'
+                            : `${avgShort % 1 === 0 ? avgShort : avgShort.toFixed(1)}d/wk short`}
                         </span>
                       </div>
 
                       <div className="mt-2 text-[11px] text-tertiary">
-                        Request-period utilization profile
+                        Green = fulfillable request days, amber = unfulfillable request days (5d/week scale)
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-tertiary">
@@ -699,9 +658,9 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                             Site · {res.site}
                           </span>
                         )}
-                        {res.jobCategory && (
+                        {res.jobLevelId && (
                           <span className="rounded-md bg-surface/55 px-2 py-0.5 border border-subtle backdrop-blur-[1px]">
-                            Level · {res.jobCategory}
+                            Level · {(levelNameById.get(res.jobLevelId) || res.jobLevelId)}
                           </span>
                         )}
                       </div>
@@ -710,9 +669,16 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                     <div className="relative z-10 flex items-center gap-2 shrink-0">
                       <button
                         type="button"
-                        title="View utilization details"
-                        aria-label={`View utilization details for ${res.name}`}
-                        onClick={() => setDetailsResource(res)}
+                        title="View availability details"
+                        aria-label={`View availability details for ${res.name}`}
+                        onClick={() =>
+                          setDetailsResource({
+                            name: res.name,
+                            role: res.role,
+                            gaps,
+                            avgShortfallDays: avgShort,
+                          })
+                        }
                         className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-default bg-surface text-secondary transition-all hover:bg-surface-hover"
                       >
                         <List className="w-3.5 h-3.5" />
@@ -745,12 +711,13 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                       )}
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
         </div>
-        <ResourceUtilizationDetailsModal
+        <ResourceAvailabilityDetailsModal
           resource={detailsResource}
           onClose={() => setDetailsResource(null)}
         />

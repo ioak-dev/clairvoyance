@@ -10,12 +10,36 @@ import {
 
 const peopleUrl = `${env.postgrestUrl}/person`;
 const personSelect = '*,practice_area(name),consulting_unit(name),site(name),competency_center(name)';
+const PAGE_SIZE = 1000;
+
+async function listAllPeopleRows(): Promise<PersonRow[]> {
+  const allRows: PersonRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const rows = await http.get<PersonRow[]>(
+      `${peopleUrl}?select=${encodeURIComponent(personSelect)}&order=first_name.asc,last_name.asc&limit=${PAGE_SIZE}&offset=${offset}`,
+    );
+
+    if (rows.length === 0) {
+      break;
+    }
+
+    allRows.push(...rows);
+
+    if (rows.length < PAGE_SIZE) {
+      break;
+    }
+
+    offset += PAGE_SIZE;
+  }
+
+  return allRows;
+}
 
 export const peopleService = {
   async list(): Promise<Resource[]> {
-    const people = await http.get<PersonRow[]>(
-      `${peopleUrl}?select=${encodeURIComponent(personSelect)}&order=first_name.asc,last_name.asc`,
-    );
+    const people = await listAllPeopleRows();
     return people.map(toResource);
   },
 

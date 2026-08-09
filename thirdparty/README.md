@@ -1,13 +1,15 @@
-# Thirdparty: Postgres + PostgREST
+# Thirdparty: Clairvoyance Docker stack
 
-Local data layer for Clairvoyance, adapted from the nocode reference stack (Postgres + PostgREST only).
+Local stack for Clairvoyance: Postgres, PostgREST, Express API, and UI.
 
 ## Services
 
 | Service | Port | Description |
 |---------|------|-------------|
 | `clairvoyance-postgres` | 5433 | PostgreSQL 17 (host port; avoids conflict with local Postgres on 5432) |
-| `clairvoyance-postgrest` | 4001 | PostgREST v12.2.3 (host port; avoids conflict with other local PostgREST instances) |
+| `clairvoyance-postgrest` | 4001 | PostgREST v12.2.3 |
+| `clairvoyance-api` | 4000 | Express API (`node/`) |
+| `clairvoyance-ui` | 3000 | Vite/React UI served by nginx (`ui/`) |
 
 ## Quick start
 
@@ -15,7 +17,16 @@ Local data layer for Clairvoyance, adapted from the nocode reference stack (Post
 cd thirdparty
 cp .env.postgres.example .env.postgres.dev
 cp .env.postgrest.example .env.postgrest.dev
-docker compose up -d
+cp .env.node.example .env.node.dev
+cp .env.ui.example .env.ui.dev
+docker compose up -d --build
+```
+
+Run Flyway migrations after Postgres is healthy (schema is required before the API/UI are useful):
+
+```bash
+cd thirdparty/flyway
+./migrate.sh dev
 ```
 
 ## Verify
@@ -27,8 +38,18 @@ curl http://localhost:4001/
 # Postgres roles
 psql postgres://api:helloapi@localhost:5433/clairvoyance -c '\du'
 
-# Node API DB health (from repo root, with node/.env.dev configured)
+# Node API health
+curl http://localhost:4000/health
 curl http://localhost:4000/health/db
+
+# UI
+open http://localhost:3000
+```
+
+To run only the data layer (Postgres + PostgREST):
+
+```bash
+docker compose up -d clairvoyance-postgres clairvoyance-postgrest
 ```
 
 ## Reset database
@@ -52,8 +73,14 @@ docker compose up -d
 Node `DATABASE_URL`:
 
 ```
+# Host (npm run dev)
 postgres://api:helloapi@localhost:5433/clairvoyance
+
+# Inside Docker (compose overrides this)
+postgres://api:helloapi@clairvoyance-postgres:5432/clairvoyance
 ```
+
+UI Vite URLs are baked at **image build** time and must be browser-reachable public hostnames (`http://plan-api.ioak.io` / `http://plan-pg.ioak.io`). Override via `thirdparty/.env` or shell env before `docker compose build`.
 
 ## Database migrations (Flyway)
 

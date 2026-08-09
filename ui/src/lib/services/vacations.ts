@@ -7,7 +7,7 @@ const baseUrl = `${env.postgrestUrl}/vacation`;
 
 export const vacationsService = {
   async list(): Promise<Vacation[]> {
-    const rows = await http.get<VacationRow[]>(`${baseUrl}?select=*&order=start_date.asc`);
+    const rows = await http.get<VacationRow[]>(`${baseUrl}?select=*&order=start_date.asc&limit=1000000`);
     return rows.map(toVacation);
   },
 

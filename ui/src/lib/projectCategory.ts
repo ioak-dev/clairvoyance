@@ -1,17 +1,27 @@
 import type { Project } from '../types';
 import type { BillableType } from '../types';
 
-export type ProjectCategory = 'Billable' | 'Non-billable' | 'Internal' | 'Opportunity';
+export type ProjectCategory = 'Billable' | 'Non-billable' | 'Opportunity';
 
 export function getProjectCategory(project: Project): ProjectCategory {
+  // Use billableType if available (project-level field)
+  if (project.billableType) {
+    if (project.billableType === 'Opportunity') {
+      return 'Opportunity';
+    }
+    if (project.billableType === 'Non-billable') {
+      return 'Non-billable';
+    }
+    // billableType === 'Billable'
+    return 'Billable';
+  }
+
+  // Fallback: check naming conventions if billableType not set
   const name = project.name.toLowerCase();
   const group = (project.group || '').toLowerCase();
 
   if (project.isOpportunity || (project.winProbability ?? 100) < 100) {
     return 'Opportunity';
-  }
-  if (name.includes('internal') || name.includes('support') || group.includes('internal')) {
-    return 'Internal';
   }
   if (name.includes('non-billable') || group.includes('non-billable')) {
     return 'Non-billable';
@@ -24,8 +34,6 @@ export function getProjectCategoryDotClass(category: ProjectCategory): string {
   switch (category) {
     case 'Opportunity':
       return 'bg-purple-500';
-    case 'Internal':
-      return 'bg-blue-500';
     case 'Non-billable':
       return 'bg-amber-500';
     case 'Billable':
@@ -43,13 +51,24 @@ export function getProjectCategoryIconClass(category: ProjectCategory): string {
   switch (category) {
     case 'Opportunity':
       return 'bg-purple-500';
-    case 'Internal':
-      return 'bg-blue-500';
     case 'Non-billable':
       return 'bg-amber-500';
     case 'Billable':
     default:
       return 'bg-emerald-500';
+  }
+}
+
+/** Category badge styling aligned with scheduler block palette. */
+export function getProjectCategoryBadgeClass(category: ProjectCategory): string {
+  switch (category) {
+    case 'Opportunity':
+      return 'bg-[rgb(78,130,194)] text-white border-[rgb(56,100,155)]';
+    case 'Non-billable':
+      return 'bg-[rgb(217,150,148)] text-white border-[rgb(197,130,128)]';
+    case 'Billable':
+    default:
+      return 'bg-[rgb(129,164,137)] text-white border-[rgb(109,144,117)]';
   }
 }
 
@@ -64,12 +83,6 @@ export function getProjectCategoryBlockStyle(category: ProjectCategory): {
       return {
         colorClass: 'bg-blue-600',
         borderClass: 'border border-blue-700',
-        textClass: 'text-white',
-      };
-    case 'Internal':
-      return {
-        colorClass: 'bg-[rgb(129,164,137)]',
-        borderClass: 'border border-[rgb(109,144,117)]',
         textClass: 'text-white',
       };
     case 'Non-billable':
@@ -102,23 +115,6 @@ function lightenRgb(color: Rgb, towardWhite: number): string {
     g: Math.round(color.g + (255 - color.g) * t),
     b: Math.round(color.b + (255 - color.b) * t),
   });
-}
-
-/** Matches `bg-stripes` in index.css — 6px bands, 12px period at full density. */
-const STRIPE_BAND_PX = 6;
-const TIME_OFF_STRIPE_PERIOD_PX = 12;
-
-/**
- * Repeat period for diagonal bands — null at 100% (solid).
- * Heavy pattern (12px, same as time-off) at low allocation; sparser as % rises.
- */
-export function getAllocationStripeSpacing(percent: number): number | null {
-  const clamped = Math.max(0, Math.min(100, percent));
-  if (clamped >= 100) return null;
-  const utilization = clamped / 100;
-  const minPeriod = TIME_OFF_STRIPE_PERIOD_PX;
-  const maxPeriod = 48;
-  return minPeriod + utilization * (maxPeriod - minPeriod);
 }
 
 /** Subtle % badge on schedule blocks — faint dark glass on any block color. */
@@ -154,7 +150,6 @@ function getProjectCategoryBlockRgb(category: ProjectCategory): {
         fill: { r: 217, g: 150, b: 148 },
         border: { r: 197, g: 130, b: 128 },
       };
-    case 'Internal':
     case 'Billable':
     default:
       return {
@@ -176,11 +171,12 @@ export function getAllocationBlockChrome(category: ProjectCategory): AllocationB
   };
 }
 
-/** Open / unassigned request — transparent category tint + dotted outline (no stripes). */
+/** Open / unassigned request — light opaque tint of category color (no see-through grid). */
 export function getRequestBlockChrome(category: ProjectCategory = 'Billable'): AllocationBlockChrome {
   const { fill, border } = getProjectCategoryBlockRgb(category);
   return {
-    fillColor: `rgba(${fill.r}, ${fill.g}, ${fill.b}, 0.2)`,
+    // Opaque equivalent of rgba(fill, 0.2) over the app surface
+    fillColor: `color-mix(in srgb, ${rgb(fill)} 20%, var(--app-surface))`,
     borderColor: rgb(border),
     stripeColor: 'transparent',
     textClass: 'text-primary',
@@ -197,25 +193,26 @@ export function getRequestBlockBackground(chrome: AllocationBlockChrome): BlockB
 }
 
 /**
- * Solid category fill + single diagonal stripe band when utilization < 100%.
- * Heavy pattern at low % (12px period); solid at 100%.
+ * Solid category fill for schedule blocks.
+ * Utilization is shown via the day bars above the block, not stripe patterns.
  */
-export function getAllocationBlockBackground(
-  percent: number,
+export function getAllocationBlockBackgroundFromDays(
+  _daysPerWeek: number,
   chrome: AllocationBlockChrome,
 ): BlockBackgroundStyle {
-  const period = getAllocationStripeSpacing(percent);
-  if (period === null) {
-    return {
-      backgroundColor: chrome.fillColor,
-      borderColor: chrome.borderColor,
-    };
-  }
-  const band = STRIPE_BAND_PX;
   return {
     backgroundColor: chrome.fillColor,
     borderColor: chrome.borderColor,
-    backgroundImage: `repeating-linear-gradient(45deg, ${chrome.stripeColor} 0px, ${chrome.stripeColor} ${band}px, transparent ${band}px, transparent ${period}px)`,
+  };
+}
+
+export function getAllocationBlockBackground(
+  _percent: number,
+  chrome: AllocationBlockChrome,
+): BlockBackgroundStyle {
+  return {
+    backgroundColor: chrome.fillColor,
+    borderColor: chrome.borderColor,
   };
 }
 
@@ -223,7 +220,10 @@ export function getProjectCategoryLabel(category: ProjectCategory): string {
   return category;
 }
 
-/** Billable type stored on schedules — inherited from the project, not user-editable. */
+/** Billable type stored on project — get directly from project.billableType. */
 export function getBillableTypeFromProject(project: Project): BillableType {
+  if (project.billableType) {
+    return project.billableType;
+  }
   return getProjectCategory(project) === 'Opportunity' ? 'Opportunity' : 'Billable';
 }

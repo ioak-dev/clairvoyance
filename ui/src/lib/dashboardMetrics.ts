@@ -1,18 +1,15 @@
 import type {
-  Allocation,
   BookingRequest,
   Project,
   Resource,
+  ScheduleAssignment,
   Vacation,
+  WeekAllocation,
 } from '../types';
 import {
   countOverlapWeekdays,
   countWeekdays,
-  addDays,
-  formatDateString,
-  getWeekKey,
   isDateInRange,
-  parseDateString,
   type DashboardPeriod,
 } from './dateUtils';
 import {
@@ -20,6 +17,7 @@ import {
   getProjectCategoryDotClass,
   type ProjectCategory,
 } from './projectCategory';
+import { isoWeekToDateRange } from './weekUtils';
 
 export type CategoryHours = {
   category: ProjectCategory;
@@ -44,7 +42,7 @@ export type ProjectHoursRow = {
 export type OpenRequestRow = {
   id: string;
   projectName: string;
-  skill: string;
+  requestName: string;
   hours: number;
   unassigned: boolean;
 };
@@ -91,17 +89,34 @@ function resourceFte(resource: Resource | undefined): number {
   return resource?.fte ?? 1;
 }
 
-function allocationHoursInPeriod(
-  startDate: string,
-  endDate: string,
-  billablePercent: number,
+function weekHoursInPeriod(
+  week: WeekAllocation,
   resource: Resource | undefined,
   period: DashboardPeriod,
 ): number {
-  const overlapDays = countOverlapWeekdays(startDate, endDate, period.start, period.end);
+  const { start, end } = isoWeekToDateRange(week.isoYear, week.isoWeek);
+  const overlapDays = countOverlapWeekdays(start, end, period.start, period.end);
   if (overlapDays === 0) return 0;
   const dailyHours = hoursPerWeekday(resource) * resourceFte(resource);
-  return overlapDays * dailyHours * (billablePercent / 100);
+  const effectiveDays = Math.min(overlapDays, week.daysPerWeek);
+  return effectiveDays * dailyHours;
+}
+
+function addWeekToBuckets(
+  week: WeekAllocation,
+  resource: Resource | undefined,
+  period: DashboardPeriod,
+  weeklyMap: Map<string, number>,
+): void {
+  const { start, end } = isoWeekToDateRange(week.isoYear, week.isoWeek);
+  const overlapDays = countOverlapWeekdays(start, end, period.start, period.end);
+  if (overlapDays === 0) return;
+
+  const dailyHours = hoursPerWeekday(resource) * resourceFte(resource);
+  const effectiveDays = Math.min(overlapDays, week.daysPerWeek);
+  const hours = effectiveDays * dailyHours;
+  const weekKey = `${week.isoYear}-W${String(week.isoWeek).padStart(2, '0')}`;
+  weeklyMap.set(weekKey, (weeklyMap.get(weekKey) ?? 0) + hours);
 }
 
 function capacityHoursInPeriod(resource: Resource, period: DashboardPeriod): number {
@@ -110,40 +125,10 @@ function capacityHoursInPeriod(resource: Resource, period: DashboardPeriod): num
   return overlapDays * hoursPerWeekday(resource) * resourceFte(resource);
 }
 
-function endOfWeekSunday(dateStr: string): string {
-  const d = parseDateString(dateStr);
-  const day = d.getDay();
-  const diff = day === 0 ? 0 : 7 - day;
-  d.setDate(d.getDate() + diff);
-  return formatDateString(d);
-}
-
-function addAllocationToWeeklyBuckets(
-  startDate: string,
-  endDate: string,
-  billablePercent: number,
-  resource: Resource | undefined,
-  period: DashboardPeriod,
-  weeklyMap: Map<string, number>,
-): void {
-  const overlapStart = startDate > period.start ? startDate : period.start;
-  const overlapEnd = endDate < period.end ? endDate : period.end;
-  if (overlapStart > overlapEnd) return;
-
-  const dailyHours = hoursPerWeekday(resource) * resourceFte(resource);
-  let cursor = overlapStart;
-
-  while (cursor <= overlapEnd) {
-    const weekEnd = endOfWeekSunday(cursor);
-    const chunkEnd = weekEnd < overlapEnd ? weekEnd : overlapEnd;
-    const days = countOverlapWeekdays(cursor, chunkEnd, period.start, period.end);
-    if (days > 0) {
-      const hours = days * dailyHours * (billablePercent / 100);
-      const weekKey = getWeekKey(cursor);
-      weeklyMap.set(weekKey, (weeklyMap.get(weekKey) ?? 0) + hours);
-    }
-    cursor = addDays(chunkEnd, 1);
-  }
+function weekLabel(isoYear: number, isoWeek: number): string {
+  const { start } = isoWeekToDateRange(isoYear, isoWeek);
+  const d = new Date(`${start}T12:00:00`);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 const CATEGORY_ORDER: ProjectCategory[] = [
@@ -156,7 +141,7 @@ const CATEGORY_ORDER: ProjectCategory[] = [
 export function buildDashboardSnapshot(
   resources: Resource[],
   projects: Project[],
-  allocations: Allocation[],
+  assignments: ScheduleAssignment[],
   requests: BookingRequest[],
   vacations: Vacation[],
   period: DashboardPeriod,
@@ -178,50 +163,38 @@ export function buildDashboardSnapshot(
 
   const projectHoursMap = new Map<string, number>();
   const weeklyMap = new Map<string, number>();
-
   const personPlanned = new Map<string, number>();
   resources.forEach((r) => personPlanned.set(r.id, 0));
 
-  allocations.forEach((alloc) => {
-    const resource = resourceMap.get(alloc.resourceId);
-    const project = projectMap.get(alloc.projectId);
-    const hours = allocationHoursInPeriod(
-      alloc.startDate,
-      alloc.endDate,
-      alloc.billablePercent,
-      resource,
-      period,
-    );
-    if (hours <= 0) return;
+  assignments.forEach((assignment) => {
+    const resource = resourceMap.get(assignment.resourceId);
+    const project = projectMap.get(assignment.projectId);
 
-    totalPlannedHours += hours;
-    if (alloc.billableType === 'Billable') billableHours += hours;
+    assignment.weeks.forEach((week) => {
+      const hours = weekHoursInPeriod(week, resource, period);
+      if (hours <= 0) return;
 
-    const category = project ? getProjectCategory(project) : 'Billable';
-    categoryMap.set(category, (categoryMap.get(category) ?? 0) + hours);
-    projectHoursMap.set(alloc.projectId, (projectHoursMap.get(alloc.projectId) ?? 0) + hours);
+      totalPlannedHours += hours;
+      const billableType = project?.billableType || assignment.billableType;
+      if (billableType === 'Billable') billableHours += hours;
 
-    addAllocationToWeeklyBuckets(
-      alloc.startDate,
-      alloc.endDate,
-      alloc.billablePercent,
-      resource,
-      period,
-      weeklyMap,
-    );
-
-    if (alloc.resourceId) {
-      personPlanned.set(
-        alloc.resourceId,
-        (personPlanned.get(alloc.resourceId) ?? 0) + hours,
+      const category = project ? getProjectCategory(project) : 'Billable';
+      categoryMap.set(category, (categoryMap.get(category) ?? 0) + hours);
+      projectHoursMap.set(
+        assignment.projectId,
+        (projectHoursMap.get(assignment.projectId) ?? 0) + hours,
       );
-    }
-  });
 
-  function weekLabel(weekKey: string): string {
-    const d = parseDateString(weekKey);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
+      addWeekToBuckets(week, resource, period, weeklyMap);
+
+      if (assignment.resourceId) {
+        personPlanned.set(
+          assignment.resourceId,
+          (personPlanned.get(assignment.resourceId) ?? 0) + hours,
+        );
+      }
+    });
+  });
 
   let totalCapacityHours = 0;
   const personUtilization: PersonUtilization[] = [];
@@ -251,17 +224,14 @@ export function buildDashboardSnapshot(
     .map((req) => {
       const project = projectMap.get(req.projectId);
       const resource = req.resourceId ? resourceMap.get(req.resourceId) : undefined;
-      const hours = allocationHoursInPeriod(
-        req.startDate,
-        req.endDate,
-        req.billablePercent,
-        resource,
-        period,
+      const hours = req.weeks.reduce(
+        (sum, week) => sum + weekHoursInPeriod(week, resource, period),
+        0,
       );
       return {
         id: req.id,
         projectName: project?.name ?? 'Unknown',
-        skill: req.requiredSkill || 'General',
+        requestName: req.requestName || 'General request',
         hours: Math.round(hours),
         unassigned: !req.resourceId,
       };
@@ -296,11 +266,13 @@ export function buildDashboardSnapshot(
 
   const weeklyTrend: WeeklyBucket[] = Array.from(weeklyMap.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([weekKey, hours]) => ({
-      weekKey,
-      label: weekLabel(weekKey),
-      hours: Math.round(hours),
-    }));
+    .map(([weekKey, hours]) => {
+      const match = weekKey.match(/^(\d+)-W(\d+)$/);
+      const label = match
+        ? weekLabel(Number(match[1]), Number(match[2]))
+        : weekKey;
+      return { weekKey, label, hours: Math.round(hours) };
+    });
 
   const topProjects: ProjectHoursRow[] = projects
     .map((p) => ({

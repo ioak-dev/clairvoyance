@@ -66,7 +66,7 @@ export const PipelinePanel: React.FC<PipelinePanelProps> = ({
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-primary truncate">{req.projectName}</p>
               <p className="text-[11px] text-secondary truncate">
-                {req.skill}
+                {req.requestName}
                 {req.unassigned ? ' · open slot' : ''}
               </p>
             </div>

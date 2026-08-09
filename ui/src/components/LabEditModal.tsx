@@ -1,6 +1,7 @@
-import React from 'react';
-import { X } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Search, ChevronDown, CalendarDays } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { dateRangeToWeeks } from '../lib/weekUtils';
 
 export type SimulationType = 'Request' | 'Project';
 
@@ -12,7 +13,7 @@ interface SelectOption {
 export interface EditField {
     key: string;
     label: string;
-    type: 'text' | 'number' | 'date' | 'select' | 'textarea';
+    type: 'text' | 'number' | 'date' | 'select' | 'searchable-select' | 'textarea';
     options?: SelectOption[];
     nullable?: boolean;
     readOnly?: boolean;
@@ -35,6 +36,179 @@ interface LabEditModalProps {
     onPublish: () => void;
 }
 
+function SearchableSelect({
+    options = [],
+    value,
+    nullable,
+    readOnly,
+    onChange,
+}: {
+    options: Array<{ value: string; label: string }>;
+    value: string;
+    nullable?: boolean;
+    readOnly?: boolean;
+    onChange: (val: string) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    const selectedLabel = options.find((o) => o.value === value)?.label ?? '';
+
+    const filtered = query.trim()
+        ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
+        : options;
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+                setOpen(false);
+                setQuery('');
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    const handleSelect = (val: string) => {
+        onChange(val);
+        setOpen(false);
+        setQuery('');
+    };
+
+    return (
+        <div ref={containerRef} className="relative">
+            <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => !readOnly && setOpen((prev) => !prev)}
+                className="w-full flex items-center justify-between rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 text-left"
+            >
+                <span className={selectedLabel ? 'text-primary' : 'text-tertiary'}>
+                    {selectedLabel || (nullable ? 'None' : 'Select opportunity…')}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-tertiary shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+            </button>
+
+            {open && (
+                <div className="absolute z-50 mt-1 w-full rounded-lg border border-default bg-surface shadow-app-md overflow-hidden">
+                    {/* Search input */}
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-default">
+                        <Search className="w-3.5 h-3.5 text-tertiary shrink-0" />
+                        <input
+                            autoFocus
+                            type="text"
+                            placeholder="Search…"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            className="flex-1 bg-transparent text-sm text-primary placeholder:text-tertiary focus:outline-none"
+                        />
+                    </div>
+
+                    {/* Options list */}
+                    <ul className="max-h-56 overflow-y-auto py-1">
+                        {nullable && (
+                            <li
+                                onClick={() => handleSelect('')}
+                                className="px-3 py-2 text-sm text-tertiary hover:bg-surface-hover cursor-pointer"
+                            >
+                                None
+                            </li>
+                        )}
+                        {filtered.length === 0 ? (
+                            <li className="px-3 py-2 text-sm text-tertiary">No results</li>
+                        ) : (
+                            filtered.map((o) => (
+                                <li
+                                    key={o.value}
+                                    onClick={() => handleSelect(o.value)}
+                                    className={`px-3 py-2 text-sm cursor-pointer hover:bg-surface-hover ${
+                                        o.value === value ? 'font-semibold text-blue-600' : 'text-primary'
+                                    }`}
+                                >
+                                    {o.label}
+                                </li>
+                            ))
+                        )}
+                    </ul>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function WeeksGenerator({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [daysPerWeek, setDaysPerWeek] = useState(5);
+
+    const generate = () => {
+        if (!startDate || !endDate || startDate > endDate) return;
+        const weeks = dateRangeToWeeks(startDate, endDate).map((w) => ({
+            iso_year: w.isoYear,
+            iso_week: w.isoWeek,
+            days_per_week: daysPerWeek,
+        }));
+        onChange(JSON.stringify(weeks, null, 2));
+    };
+
+    return (
+        <div className="space-y-2">
+            {/* Generator controls */}
+            <div className="flex items-end gap-2 p-3 rounded-lg border border-default bg-surface-muted">
+                <CalendarDays className="w-4 h-4 text-tertiary shrink-0 mb-2" />
+                <div className="flex-1 min-w-0">
+                    <label className="block text-[10px] font-medium text-tertiary mb-1">Start date</label>
+                    <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <label className="block text-[10px] font-medium text-tertiary mb-1">End date</label>
+                    <input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                </div>
+                <div className="w-24 shrink-0">
+                    <label className="block text-[10px] font-medium text-tertiary mb-1">Days/week</label>
+                    <select
+                        value={daysPerWeek}
+                        onChange={(e) => setDaysPerWeek(Number(e.target.value))}
+                        className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                        {[1, 2, 3, 4, 5].map((d) => (
+                            <option key={d} value={d}>{d} day{d !== 1 ? 's' : ''}</option>
+                        ))}
+                    </select>
+                </div>
+                <button
+                    type="button"
+                    onClick={generate}
+                    disabled={!startDate || !endDate || startDate > endDate}
+                    className="shrink-0 px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    Generate
+                </button>
+            </div>
+
+            {/* Raw JSON textarea */}
+            <textarea
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                rows={4}
+                placeholder='[{"iso_year":2024,"iso_week":1,"days_per_week":5}]'
+                className="w-full resize-y rounded-lg border border-default bg-surface px-3 py-2 text-sm font-mono text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+        </div>
+    );
+}
+
 function renderField(
     field: EditField,
     value: string,
@@ -43,6 +217,18 @@ function renderField(
     const generateUuid = () => {
         onFieldChange(field.key, uuidv4());
     };
+
+    if (field.type === 'searchable-select') {
+        return (
+            <SearchableSelect
+                options={field.options || []}
+                value={value}
+                nullable={field.nullable}
+                readOnly={field.readOnly}
+                onChange={(val) => onFieldChange(field.key, val)}
+            />
+        );
+    }
 
     if (field.type === 'select') {
         return (
@@ -63,6 +249,9 @@ function renderField(
     }
 
     if (field.type === 'textarea') {
+        if (field.key === 'weeks') {
+            return <WeeksGenerator value={value} onChange={(val) => onFieldChange(field.key, val)} />;
+        }
         return (
             <textarea
                 value={value}

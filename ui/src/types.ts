@@ -23,7 +23,7 @@ export interface Resource {
   site?: string;
   status?: PersonStatus;
   lifecycleStatus?: LifecycleStatus;
-  jobCategory?: JobCategory;
+  jobLevelId?: string | null;
   practiceArea?: string;
   employmentType?: string;
   fte?: number;
@@ -56,6 +56,7 @@ export interface Project {
   color: string;
   textColor: string;
   isOpportunity?: boolean;
+  billableType?: BillableType;
   group?: string;
   winProbability?: number | null;
   managerId?: string | null;
@@ -63,21 +64,41 @@ export interface Project {
   consultingUnitId?: string | null;
 }
 
-export type BillableType = 'Billable' | 'Opportunity';
-
+export type BillableType = 'Billable' | 'Non-billable' | 'Opportunity';
 export type BookingCommitmentType = 'hard' | 'soft';
 
-export interface Allocation {
+export interface WeekKey {
+  isoYear: number;
+  isoWeek: number;
+}
+
+export interface WeekAllocation extends WeekKey {
+  daysPerWeek: number;
+}
+
+/** Schedule assignment header + week rows. */
+export interface ScheduleAssignment {
   id: string;
   resourceId: string;
   projectId: string;
-  startDate: string;
-  endDate: string;
-  billablePercent: number;
+  requestId?: string;
   billableType: BillableType;
   bookingType: BookingCommitmentType;
-  /** Set when this schedule row was created from a booking request. */
+  weeks: WeekAllocation[];
+}
+
+/** Derived contiguous block for timeline display. */
+export interface AllocationBlock {
+  scheduleId: string;
+  resourceId: string;
+  projectId: string;
   requestId?: string;
+  billableType: BillableType;
+  bookingType: BookingCommitmentType;
+  startDate: string;
+  endDate: string;
+  weeks: WeekAllocation[];
+  daysPerWeek: number;
 }
 
 export interface Vacation {
@@ -89,32 +110,32 @@ export interface Vacation {
   reason?: string;
 }
 
+/** Request header + week rows. */
 export interface BookingRequest {
   id: string;
   referenceId: string;
   resourceId: string;
   projectId: string;
-  startDate: string;
-  endDate: string;
-  billablePercent: number;
   billableType: BillableType;
   bookingType: BookingCommitmentType;
   probability: number;
   status: 'Pending' | 'Approved' | 'Rejected';
   notes?: string;
-  requiredSkill?: string;
+  requestName?: string;
   consultingUnitId?: string | null;
   practiceAreaId?: string | null;
   competencyCenterId?: string | null;
   siteId?: string | null;
-  jobCategory?: JobCategory | null;
+  jobLevelId?: string | null;
+  weeks: WeekAllocation[];
 }
 
 export type AvailabilityMode = 'complete' | 'partial' | 'everyone';
 
 export interface UtilizationSegment {
-  from: string;
-  to: string;
+  isoYear: number;
+  isoWeek: number;
+  /** Allocated days in this ISO week (raw from RPC; 5 = fully booked). */
   utilization: number;
 }
 
@@ -126,7 +147,7 @@ export interface PersonUtilizationResult {
   name: string;
   email?: string;
   role: string;
-  jobCategory?: JobCategory;
+  jobLevelId?: string | null;
   consultingUnitId?: string | null;
   practiceAreaId?: string | null;
   competencyCenterId?: string | null;
@@ -136,6 +157,8 @@ export interface PersonUtilizationResult {
   competencyCenter?: string;
   site?: string;
   utilization: UtilizationSegment[];
+  /** Average allocated days/week over the period (5 = fully booked). */
   avgUtilization: number;
+  /** Average available days/week over the period (5 = fully free). */
   avgAvailability: number;
 }
