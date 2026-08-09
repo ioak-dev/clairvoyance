@@ -59,18 +59,16 @@ import { useCreateRequest, useDeleteRequest, useRequests, useUpdateRequest, requ
 import {
   useCopyRequestToSchedule,
   useDeleteSchedule,
-  useDeleteScheduleWeeksInRange,
   useDeleteSchedulesByRequest,
   useSchedules,
-  useUpsertScheduleRange,
-  useUpsertScheduleWeeks,
+  useUpsertSchedule,
   scheduleQueryKeys,
 } from './hooks/useSchedules';
 import { useCreateVacation, useDeleteVacation, useUpdateVacation, useVacations } from './hooks/useVacations';
 import { usePersonFilters, useProjectFilters, useRequestFilters } from './hooks/useFilters';
 import { useLookups } from './hooks/useLookups';
 import { useQueryClient } from '@tanstack/react-query';
-import type { SavedFilter } from './types';
+import type { Roster, SavedFilter, ScheduleUnit } from './types';
 import {
   ROUTES,
   DEFAULT_ROUTE,
@@ -78,7 +76,7 @@ import {
   isScheduleArea,
 } from './lib/routes';
 import { CURRENT_DATE_STRING } from './lib/dateUtils';
-import { dateRangeToWeeks, isoWeekToDateRange } from './lib/weekUtils';
+import { blockHoursOnDate, expandDates, personDailyCapacityHours } from './lib/rosterUtils';
 
 const DYNAMIC_HAS_SCHEDULE_FILTER_ID = '__dynamic_has_schedule__';
 
@@ -213,9 +211,7 @@ export default function App() {
   const createRequest = useCreateRequest();
   const updateRequest = useUpdateRequest();
   const deleteRequest = useDeleteRequest();
-  const upsertScheduleRange = useUpsertScheduleRange();
-  const upsertScheduleWeeks = useUpsertScheduleWeeks();
-  const deleteScheduleWeeksInRange = useDeleteScheduleWeeksInRange();
+  const upsertSchedule = useUpsertSchedule();
   const copyRequestToSchedule = useCopyRequestToSchedule();
   const deleteSchedule = useDeleteSchedule();
   const deleteSchedulesByRequest = useDeleteSchedulesByRequest();
@@ -361,23 +357,14 @@ export default function App() {
 
     scheduleAssignments.forEach((assignment: ScheduleAssignment) => {
       const resource = resources.find((r) => r.id === assignment.resourceId);
-      const weeklyHours = resource?.weeklyHours ?? 40;
-      const fte = resource?.fte ?? 1;
+      const capacity = personDailyCapacityHours(resource?.weeklyHours, resource?.fte);
 
-      assignment.weeks.forEach((w) => {
-        const { start, end } = isoWeekToDateRange(w.isoYear, w.isoWeek);
-        const hours = w.daysPerWeek * (weeklyHours / 5) * fte;
+      for (const dateStr of expandDates(assignment.startDate, assignment.endDate)) {
+        const hours = blockHoursOnDate(assignment, dateStr, capacity);
         allHoursSum += hours;
-
-        if (end <= CURRENT_DATE_STRING) {
-          toDateHoursSum += hours;
-        } else if (start <= CURRENT_DATE_STRING) {
-          toDateHoursSum += hours * 0.5;
-          futureHoursSum += hours * 0.5;
-        } else {
-          futureHoursSum += hours;
-        }
-      });
+        if (dateStr <= CURRENT_DATE_STRING) toDateHoursSum += hours;
+        else futureHoursSum += hours;
+      }
     });
 
     return {
@@ -393,16 +380,20 @@ export default function App() {
     projectId: string;
     startDate: string;
     endDate: string;
-    daysPerWeek: number;
+    unit: ScheduleUnit;
+    roster: Roster;
+    title?: string;
     billableType: import('./types').BillableType;
     bookingType: import('./types').BookingCommitmentType;
   }) => {
-    await upsertScheduleRange.mutateAsync({
+    await upsertSchedule.mutateAsync({
       personId: params.resourceId,
       projectId: params.projectId,
       startDate: params.startDate,
       endDate: params.endDate,
-      daysPerWeek: params.daysPerWeek,
+      unit: params.unit,
+      roster: params.roster,
+      title: params.title,
       billableType: params.billableType,
       bookingType: params.bookingType,
     });
@@ -410,27 +401,31 @@ export default function App() {
 
   const handleUpdateBlock = async (
     block: AllocationBlock,
-    applyStartDate: string,
-    applyEndDate: string,
-    daysPerWeek: number,
+    patch: {
+      title?: string;
+      startDate: string;
+      endDate: string;
+      unit: ScheduleUnit;
+      roster: Roster;
+    },
   ) => {
-    const weeks = dateRangeToWeeks(applyStartDate, applyEndDate).map((w) => ({
-      ...w,
-      daysPerWeek,
-    }));
-    await upsertScheduleWeeks.mutateAsync({ scheduleId: block.scheduleId, weeks });
+    await upsertSchedule.mutateAsync({
+      id: block.scheduleId,
+      personId: block.resourceId,
+      projectId: block.projectId,
+      requestId: block.requestId,
+      billableType: block.billableType,
+      bookingType: block.bookingType,
+      title: patch.title,
+      startDate: patch.startDate,
+      endDate: patch.endDate,
+      unit: patch.unit,
+      roster: patch.roster,
+    });
   };
 
-  const handleDeleteBlockRange = async (
-    block: AllocationBlock,
-    applyStartDate: string,
-    applyEndDate: string,
-  ) => {
-    await deleteScheduleWeeksInRange.mutateAsync({
-      scheduleId: block.scheduleId,
-      startDate: applyStartDate,
-      endDate: applyEndDate,
-    });
+  const handleDeleteBlock = async (block: AllocationBlock) => {
+    await deleteSchedule.mutateAsync(block.scheduleId);
   };
 
   const handleApproveVacation = async (id: string) => {
@@ -456,12 +451,12 @@ export default function App() {
     await refreshSchedulingData();
   };
 
-  const handleApproveRequestWithResource = async (requestId: string, resourceId: string) => {
+  const handleApproveRequestWithResource = useCallback(async (requestId: string, resourceId: string) => {
     await copyRequestToSchedule.mutateAsync({ requestId, personId: resourceId });
     await refreshSchedulingData();
-  };
+  }, [copyRequestToSchedule, refreshSchedulingData]);
 
-  const handleUnassignRequest = async (requestId: string) => {
+  const handleUnassignRequest = useCallback(async (requestId: string) => {
     await deleteSchedulesByRequest.mutateAsync(requestId);
     const updatedRequest = await updateRequest.mutateAsync({
       id: requestId,
@@ -473,7 +468,7 @@ export default function App() {
     );
 
     await refreshSchedulingData();
-  };
+  }, [deleteSchedulesByRequest, updateRequest, queryClient, refreshSchedulingData]);
 
   const handleRejectRequest = async (id: string) => {
     await deleteSchedulesByRequest.mutateAsync(id);
@@ -490,8 +485,7 @@ export default function App() {
   };
 
   const handleSaveBookingRequest = async (newReq: Omit<BookingRequest, 'id' | 'status'>) => {
-    const { weeks, ...header } = newReq;
-    await createRequest.mutateAsync({ request: header, weeks });
+    await createRequest.mutateAsync(newReq);
   };
 
   const handleAddResource = async (newRes: Omit<Resource, 'id'>) => {
@@ -517,6 +511,30 @@ export default function App() {
   const handleDeleteProject = async (id: string) => {
     await deleteProject.mutateAsync(id);
   };
+
+  const handleEditBlock = useCallback((block: AllocationBlock) => {
+    setSelectedEditBlock(block);
+  }, []);
+
+  const handleCloseEditModal = useCallback(() => {
+    setSelectedEditBlock(null);
+  }, []);
+
+  const handleOpenScheduleModalWithRes = useCallback((resId: string, projId?: string) => {
+    setPrefilledResourceId(resId);
+    setPrefilledProjectId(projId || '');
+    setPrefilledStartDate('2026-06-01');
+    setPrefilledEndDate('2026-06-15');
+    setIsScheduleModalOpen(true);
+  }, []);
+
+  const handleAddResourceClick = useCallback(() => {
+    setIsAddResourceModalOpen(true);
+  }, []);
+
+  const handleAddProjectClick = useCallback(() => {
+    setIsAddProjectModalOpen(true);
+  }, []);
 
   // Pre-fill schedule prompt from capacity helper
   const handleBookFromCapacityFinder = (resourceId: string, start: string, end: string) => {
@@ -930,16 +948,10 @@ export default function App() {
                 filterCriteria={filterCriteria}
                 isFilterApplying={isFilterApplying}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
-                onEditBlock={(block) => setSelectedEditBlock(block)}
-                onOpenScheduleModalWithRes={(resId, projId) => {
-                  setPrefilledResourceId(resId);
-                  setPrefilledProjectId(projId || '');
-                  setPrefilledStartDate('2026-06-01');
-                  setPrefilledEndDate('2026-06-15');
-                  setIsScheduleModalOpen(true);
-                }}
-                onAddResourceClick={() => setIsAddResourceModalOpen(true)}
-                onAddProjectClick={() => setIsAddProjectModalOpen(true)}
+                onEditBlock={handleEditBlock}
+                onOpenScheduleModalWithRes={handleOpenScheduleModalWithRes}
+                onAddResourceClick={handleAddResourceClick}
+                onAddProjectClick={handleAddProjectClick}
                 onApproveRequestWithResource={handleApproveRequestWithResource}
                 onUnassignRequest={handleUnassignRequest}
               />
@@ -1046,12 +1058,12 @@ export default function App() {
 
       <EditAllocationModal
         isOpen={selectedEditBlock !== null}
-        onClose={() => setSelectedEditBlock(null)}
+        onClose={handleCloseEditModal}
         block={selectedEditBlock}
         projects={projects}
         resources={resources}
         onUpdate={handleUpdateBlock}
-        onDelete={handleDeleteBlockRange}
+        onDelete={handleDeleteBlock}
       />
 
       <AddResourceModal

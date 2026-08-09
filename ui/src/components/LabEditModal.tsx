@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Search, ChevronDown, CalendarDays } from 'lucide-react';
+import { X, Search, ChevronDown } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { dateRangeToWeeks } from '../lib/weekUtils';
+import { DEFAULT_ROSTER, type Roster } from '../types';
+import { normalizeRoster, WEEKDAY_LABELS } from '../lib/rosterUtils';
 
 export type SimulationType = 'Request' | 'Project';
 
@@ -13,7 +14,7 @@ interface SelectOption {
 export interface EditField {
     key: string;
     label: string;
-    type: 'text' | 'number' | 'date' | 'select' | 'searchable-select' | 'textarea';
+    type: 'text' | 'number' | 'date' | 'select' | 'searchable-select' | 'textarea' | 'roster';
     options?: SelectOption[];
     nullable?: boolean;
     readOnly?: boolean;
@@ -137,74 +138,40 @@ function SearchableSelect({
     );
 }
 
-function WeeksGenerator({ value, onChange }: { value: string; onChange: (val: string) => void }) {
-    const [startDate, setStartDate] = useState('');
-    const [endDate, setEndDate] = useState('');
-    const [daysPerWeek, setDaysPerWeek] = useState(5);
+function parseRosterEditValue(value: string): Roster {
+    try {
+        const parsed = JSON.parse(value.trim() || '[]');
+        return normalizeRoster(parsed);
+    } catch {
+        return [...DEFAULT_ROSTER] as Roster;
+    }
+}
 
-    const generate = () => {
-        if (!startDate || !endDate || startDate > endDate) return;
-        const weeks = dateRangeToWeeks(startDate, endDate).map((w) => ({
-            iso_year: w.isoYear,
-            iso_week: w.isoWeek,
-            days_per_week: daysPerWeek,
-        }));
-        onChange(JSON.stringify(weeks, null, 2));
+function RosterEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+    const roster = parseRosterEditValue(value);
+
+    const updateDay = (index: number, raw: string) => {
+        const parsed = Number(raw);
+        const next = [...roster] as Roster;
+        next[index] = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+        onChange(JSON.stringify(next));
     };
 
     return (
-        <div className="space-y-2">
-            {/* Generator controls */}
-            <div className="flex items-end gap-2 p-3 rounded-lg border border-default bg-surface-muted">
-                <CalendarDays className="w-4 h-4 text-tertiary shrink-0 mb-2" />
-                <div className="flex-1 min-w-0">
-                    <label className="block text-[10px] font-medium text-tertiary mb-1">Start date</label>
+        <div className="grid grid-cols-7 gap-2 p-3 rounded-lg border border-default bg-surface-muted">
+            {WEEKDAY_LABELS.map((label, index) => (
+                <div key={label}>
+                    <label className="block text-[10px] font-medium text-tertiary mb-1 text-center">{label}</label>
                     <input
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={roster[index]}
+                        onChange={(e) => updateDay(index, e.target.value)}
+                        className="w-full rounded-md border border-default bg-surface px-1.5 py-1.5 text-sm text-primary text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
                     />
                 </div>
-                <div className="flex-1 min-w-0">
-                    <label className="block text-[10px] font-medium text-tertiary mb-1">End date</label>
-                    <input
-                        type="date"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    />
-                </div>
-                <div className="w-24 shrink-0">
-                    <label className="block text-[10px] font-medium text-tertiary mb-1">Days/week</label>
-                    <select
-                        value={daysPerWeek}
-                        onChange={(e) => setDaysPerWeek(Number(e.target.value))}
-                        className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    >
-                        {[1, 2, 3, 4, 5].map((d) => (
-                            <option key={d} value={d}>{d} day{d !== 1 ? 's' : ''}</option>
-                        ))}
-                    </select>
-                </div>
-                <button
-                    type="button"
-                    onClick={generate}
-                    disabled={!startDate || !endDate || startDate > endDate}
-                    className="shrink-0 px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    Generate
-                </button>
-            </div>
-
-            {/* Raw JSON textarea */}
-            <textarea
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                rows={4}
-                placeholder='[{"iso_year":2024,"iso_week":1,"days_per_week":5}]'
-                className="w-full resize-y rounded-lg border border-default bg-surface px-3 py-2 text-sm font-mono text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-            />
+            ))}
         </div>
     );
 }
@@ -248,10 +215,11 @@ function renderField(
         );
     }
 
+    if (field.type === 'roster') {
+        return <RosterEditor value={value} onChange={(val) => onFieldChange(field.key, val)} />;
+    }
+
     if (field.type === 'textarea') {
-        if (field.key === 'weeks') {
-            return <WeeksGenerator value={value} onChange={(val) => onFieldChange(field.key, val)} />;
-        }
         return (
             <textarea
                 value={value}
@@ -360,7 +328,10 @@ export const LabEditModal: React.FC<LabEditModalProps> = ({
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {fields.map((field) => (
-                            <div key={field.key} className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
+                            <div
+                                key={field.key}
+                                className={field.type === 'textarea' || field.type === 'roster' ? 'md:col-span-2' : ''}
+                            >
                                 <label className="block text-xs font-medium text-secondary mb-1.5">{field.label}</label>
                                 {renderField(field, editValues[field.key] || '', onFieldChange)}
                             </div>

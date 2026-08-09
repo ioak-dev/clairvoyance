@@ -6,12 +6,14 @@ import type {
   PersonStatus,
   Project,
   Resource,
+  Roster,
   SavedFilter,
   ScheduleAssignment,
+  ScheduleUnit,
   Vacation,
-  WeekAllocation,
 } from '../types';
-import { weekKeysToDateRange } from '../lib/weekUtils';
+import { DEFAULT_ROSTER } from '../types';
+import { normalizeRoster } from '../lib/rosterUtils';
 import {
   getProjectCategory,
   getProjectCategoryIconClass,
@@ -66,32 +68,18 @@ export interface PersonRow {
   competency_center?: LookupRow | null;
 }
 
-export interface ScheduleWeekRow {
-  id: string;
-  schedule_id: string;
-  person_id: string;
-  project_id: string;
-  iso_year: number;
-  iso_week: number;
-  days_per_week: number;
-}
-
 export interface ScheduleRow {
   id: string;
+  title: string | null;
   project_id: string;
   person_id: string;
   request_id: string | null;
   billable_type: BillableType;
   booking_type: BookingCommitmentType;
-  schedule_week?: ScheduleWeekRow[];
-}
-
-export interface RequestWeekRow {
-  id: string;
-  request_id: string;
-  iso_year: number;
-  iso_week: number;
-  days_per_week: number;
+  start_date: string;
+  end_date: string;
+  unit: ScheduleUnit;
+  roster: number[] | string;
 }
 
 export interface RequestRow {
@@ -110,7 +98,10 @@ export interface RequestRow {
   competency_center_id: string | null;
   site_id: string | null;
   job_level_id: string | null;
-  request_week?: RequestWeekRow[];
+  start_date: string;
+  end_date: string;
+  unit: ScheduleUnit;
+  roster: number[] | string;
 }
 
 export interface SimulationLogRow {
@@ -126,10 +117,9 @@ export interface ScheduleAuditReportRow {
   audit_id: string;
   changed_at: string;
   transaction_id: number;
-  entity_type: 'schedule' | 'schedule_week';
+  entity_type: 'schedule';
   change_action: 'INSERT' | 'UPDATE' | 'DELETE';
   schedule_id: string | null;
-  schedule_week_id: string | null;
   project_id: string | null;
   project_reference_id: string | null;
   project_name: string | null;
@@ -138,10 +128,16 @@ export interface ScheduleAuditReportRow {
   person_name: string | null;
   request_id: string | null;
   request_reference_id: string | null;
-  iso_year: number | null;
-  iso_week: number | null;
-  days_per_week_before: number | null;
-  days_per_week_after: number | null;
+  title_before: string | null;
+  title_after: string | null;
+  start_date_before: string | null;
+  start_date_after: string | null;
+  end_date_before: string | null;
+  end_date_after: string | null;
+  unit_before: ScheduleUnit | null;
+  unit_after: ScheduleUnit | null;
+  roster_before: number[] | null;
+  roster_after: number[] | null;
   billable_type_before: BillableType | null;
   billable_type_after: BillableType | null;
   booking_type_before: BookingCommitmentType | null;
@@ -167,7 +163,7 @@ export interface PersonUtilizationSearchRow {
   practice_area_name: string | null;
   competency_center_name: string | null;
   site_name: string | null;
-  utilization: Array<{ iso_year: number; iso_week: number; utilization: number }>;
+  utilization: Array<{ date: string; hours: number; utilization: number }>;
   avg_utilization: number;
   avg_availability: number;
 }
@@ -191,20 +187,17 @@ export interface FilterRow {
   item_count?: number;
 }
 
-function mapScheduleWeeks(rows: ScheduleWeekRow[] | undefined): WeekAllocation[] {
-  return (rows ?? []).map((w) => ({
-    isoYear: w.iso_year,
-    isoWeek: w.iso_week,
-    daysPerWeek: w.days_per_week,
-  }));
-}
-
-function mapRequestWeeks(rows: RequestWeekRow[] | undefined): WeekAllocation[] {
-  return (rows ?? []).map((w) => ({
-    isoYear: w.iso_year,
-    isoWeek: w.iso_week,
-    daysPerWeek: w.days_per_week,
-  }));
+function parseRoster(raw: number[] | string | null | undefined): Roster {
+  if (typeof raw === 'string') {
+    try {
+      return normalizeRoster(JSON.parse(raw));
+    } catch {
+      // Postgres array literal: {1,1,1,1,1,0,0}
+      const inner = raw.replace(/^\{|\}$/g, '');
+      return normalizeRoster(inner.split(',').map((s) => Number(s.trim())));
+    }
+  }
+  return normalizeRoster(raw);
 }
 
 export function toProject(row: ProjectRow): Project {
@@ -263,12 +256,16 @@ export function toResource(row: PersonRow): Resource {
 export function toScheduleAssignment(row: ScheduleRow): ScheduleAssignment {
   return {
     id: row.id,
+    title: row.title || undefined,
     resourceId: row.person_id,
     projectId: row.project_id,
     requestId: row.request_id || undefined,
     billableType: row.billable_type,
     bookingType: row.booking_type ?? 'hard',
-    weeks: mapScheduleWeeks(row.schedule_week),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    unit: row.unit ?? 'utilization',
+    roster: parseRoster(row.roster),
   };
 }
 
@@ -289,7 +286,10 @@ export function toBookingRequest(row: RequestRow): BookingRequest {
     competencyCenterId: row.competency_center_id,
     siteId: row.site_id,
     jobLevelId: row.job_level_id,
-    weeks: mapRequestWeeks(row.request_week),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    unit: row.unit ?? 'utilization',
+    roster: parseRoster(row.roster),
   };
 }
 
@@ -312,8 +312,8 @@ export function toPersonUtilizationResult(row: PersonUtilizationSearchRow) {
     competencyCenter: row.competency_center_name || undefined,
     site: row.site_name || undefined,
     utilization: (row.utilization || []).map((segment) => ({
-      isoYear: Number(segment.iso_year),
-      isoWeek: Number(segment.iso_week),
+      date: segment.date,
+      hours: Number(segment.hours) || 0,
       utilization: Number(segment.utilization) || 0,
     })),
     avgUtilization: Number(row.avg_utilization) || 0,
@@ -448,32 +448,8 @@ export function updateProjectPayload(project: Partial<Project>) {
   };
 }
 
-export function createScheduleHeaderPayload(assignment: {
-  projectId: string;
-  resourceId: string;
-  billableType: BillableType;
-  bookingType: BookingCommitmentType;
-  requestId?: string | null;
-}) {
-  return {
-    project_id: assignment.projectId,
-    person_id: assignment.resourceId,
-    request_id: assignment.requestId || null,
-    billable_type: assignment.billableType,
-    booking_type: assignment.bookingType ?? 'hard',
-  };
-}
-
-export function weekAllocationToPayload(week: WeekAllocation) {
-  return {
-    iso_year: week.isoYear,
-    iso_week: week.isoWeek,
-    days_per_week: week.daysPerWeek,
-  };
-}
-
-export function createRequestHeaderPayload(
-  request: Omit<BookingRequest, 'id' | 'status' | 'weeks'>,
+export function createRequestPayload(
+  request: Omit<BookingRequest, 'id' | 'status'>,
   status: ApprovalStatus = 'Pending',
 ) {
   return {
@@ -491,6 +467,10 @@ export function createRequestHeaderPayload(
     competency_center_id: request.competencyCenterId || null,
     site_id: request.siteId || null,
     job_level_id: request.jobLevelId || null,
+    start_date: request.startDate,
+    end_date: request.endDate,
+    unit: request.unit ?? 'utilization',
+    roster: request.roster ?? DEFAULT_ROSTER,
   };
 }
 
@@ -510,6 +490,10 @@ export function updateRequestPayload(request: Partial<BookingRequest> & { status
     ...(request.competencyCenterId !== undefined ? { competency_center_id: request.competencyCenterId || null } : {}),
     ...(request.siteId !== undefined ? { site_id: request.siteId || null } : {}),
     ...(request.jobLevelId !== undefined ? { job_level_id: request.jobLevelId || null } : {}),
+    ...(request.startDate !== undefined ? { start_date: request.startDate } : {}),
+    ...(request.endDate !== undefined ? { end_date: request.endDate } : {}),
+    ...(request.unit !== undefined ? { unit: request.unit } : {}),
+    ...(request.roster !== undefined ? { roster: request.roster } : {}),
   };
 }
 
@@ -529,11 +513,10 @@ export function toLabRequestPayloadItem(request: BookingRequest): Record<string,
     competency_center_id: request.competencyCenterId ?? null,
     site_id: request.siteId ?? null,
     job_level_id: request.jobLevelId ?? null,
-    weeks: request.weeks.map((w) => ({
-      iso_year: w.isoYear,
-      iso_week: w.isoWeek,
-      days_per_week: w.daysPerWeek,
-    })),
+    start: request.startDate,
+    end: request.endDate,
+    unit: request.unit,
+    roster: request.roster,
   };
 }
 
@@ -569,15 +552,12 @@ export function updateVacationPayload(vacation: Partial<Vacation>) {
   };
 }
 
-/** Convenience: derived date bounds from week rows for display. */
 export function requestDateBounds(request: BookingRequest): { startDate: string; endDate: string } | null {
-  const range = weekKeysToDateRange(request.weeks);
-  if (!range) return null;
-  return { startDate: range.start, endDate: range.end };
+  if (!request.startDate || !request.endDate) return null;
+  return { startDate: request.startDate, endDate: request.endDate };
 }
 
 export function scheduleDateBounds(assignment: ScheduleAssignment): { startDate: string; endDate: string } | null {
-  const range = weekKeysToDateRange(assignment.weeks);
-  if (!range) return null;
-  return { startDate: range.start, endDate: range.end };
+  if (!assignment.startDate || !assignment.endDate) return null;
+  return { startDate: assignment.startDate, endDate: assignment.endDate };
 }

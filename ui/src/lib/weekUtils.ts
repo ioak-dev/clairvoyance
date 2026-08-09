@@ -1,4 +1,4 @@
-import type { AllocationBlock, BillableType, BookingCommitmentType, WeekAllocation, WeekKey } from '../types';
+import type { WeekKey } from '../types';
 import { addDays, buildDateRange, formatDateString, parseDateString } from './dateUtils';
 
 export interface TimelineWeek {
@@ -82,56 +82,6 @@ export function weekKeysToDateRange(weeks: WeekKey[]): { start: string; end: str
   return { start: first.start, end: last.end };
 }
 
-function nextWeekKey(key: WeekKey): WeekKey {
-  const { end } = isoWeekToDateRange(key.isoYear, key.isoWeek);
-  return getIsoWeekKey(addDays(end, 1));
-}
-
-export interface BlockSource {
-  scheduleId: string;
-  resourceId: string;
-  projectId: string;
-  requestId?: string;
-  billableType: BillableType;
-  bookingType: BookingCommitmentType;
-  weeks: WeekAllocation[];
-}
-
-export function deriveAllocationBlocks(source: BlockSource): AllocationBlock[] {
-  const sorted = [...source.weeks].sort((a, b) => weekKeySort(a, b));
-  if (sorted.length === 0) return [];
-
-  const blocks: AllocationBlock[] = [];
-  let runStart = 0;
-
-  for (let i = 1; i <= sorted.length; i++) {
-    const prev = sorted[i - 1];
-    const curr = sorted[i];
-    const sameDays = curr && curr.daysPerWeek === sorted[runStart].daysPerWeek;
-    const consecutive = curr && weekKeyEquals(nextWeekKey(prev), curr);
-
-    if (!curr || !sameDays || !consecutive) {
-      const runWeeks = sorted.slice(runStart, i);
-      const range = weekKeysToDateRange(runWeeks)!;
-      blocks.push({
-        scheduleId: source.scheduleId,
-        resourceId: source.resourceId,
-        projectId: source.projectId,
-        requestId: source.requestId,
-        billableType: source.billableType,
-        bookingType: source.bookingType,
-        startDate: range.start,
-        endDate: range.end,
-        weeks: runWeeks.map((w) => ({ isoYear: w.isoYear, isoWeek: w.isoWeek, daysPerWeek: w.daysPerWeek })),
-        daysPerWeek: sorted[runStart].daysPerWeek,
-      });
-      runStart = i;
-    }
-  }
-
-  return blocks;
-}
-
 export function buildWeekTimeline(startDate: string, endDate: string, maxWeeks = 104): TimelineWeek[] {
   const weekKeys = dateRangeToWeeks(startDate, endDate).slice(0, maxWeeks);
   return weekKeys.map((key) => {
@@ -206,14 +156,4 @@ export function getIsoWeekWeekdayBounds(
   const { start: monday } = isoWeekToDateRange(isoYear, isoWeek);
   const friday = addDays(monday, 4);
   return getDateRangeBounds(columns, monday, friday);
-}
-
-export function maxDaysPerWeek(weeks: WeekAllocation[]): number {
-  if (weeks.length === 0) return 0;
-  return Math.max(...weeks.map((w) => w.daysPerWeek));
-}
-
-export function avgDaysPerWeek(weeks: WeekAllocation[]): number {
-  if (weeks.length === 0) return 0;
-  return weeks.reduce((sum, w) => sum + w.daysPerWeek, 0) / weeks.length;
 }

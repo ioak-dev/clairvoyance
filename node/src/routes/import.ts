@@ -721,6 +721,64 @@ export async function importOpportunities(req: Request, res: Response) {
   }
 }
 
+function parseRosterFromImportRow(row: ExcelRow): number[] {
+  const rosterJson = getStringValue(row, ['Roster', 'roster']);
+  if (rosterJson) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rosterJson);
+    } catch {
+      throw new Error('Roster must be valid JSON array of length 7');
+    }
+    if (!Array.isArray(parsed) || parsed.length !== 7) {
+      throw new Error('Roster must be a JSON array of length 7 (Mon–Sun)');
+    }
+    return parsed.map((value, index) => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new Error(`Roster[${index}] must be a number >= 0`);
+      }
+      return Math.round(n * 10000) / 10000;
+    });
+  }
+
+  const dayAliases = [
+    ['Mon', 'Monday', 'mon'],
+    ['Tue', 'Tuesday', 'tue'],
+    ['Wed', 'Wednesday', 'wed'],
+    ['Thu', 'Thursday', 'thu'],
+    ['Fri', 'Friday', 'fri'],
+    ['Sat', 'Saturday', 'sat'],
+    ['Sun', 'Sunday', 'sun'],
+  ];
+
+  const hasWeekdayColumns = dayAliases.slice(0, 5).some((aliases) => getCellValue(row, aliases) !== undefined);
+  if (!hasWeekdayColumns) {
+    throw new Error('Missing roster (provide Roster JSON or Mon/Tue/Wed/Thu/Fri columns)');
+  }
+
+  return dayAliases.map((aliases, index) => {
+    const value = getNumberValue(row, aliases);
+    if (value === undefined) {
+      // Sat/Sun default to 0 when weekday columns are used.
+      if (index >= 5) return 0;
+      throw new Error(`Missing ${aliases[0]} roster value`);
+    }
+    if (value < 0) {
+      throw new Error(`${aliases[0]} must be >= 0. Received: ${value}`);
+    }
+    return Math.round(value * 10000) / 10000;
+  });
+}
+
+function normalizeScheduleUnit(value: string | undefined): 'utilization' | 'hours' {
+  if (!value) return 'utilization';
+  const normalized = value.toLowerCase().trim();
+  if (normalized === 'hours' || normalized === 'hour' || normalized === 'h') return 'hours';
+  if (normalized === 'utilization' || normalized === 'util' || normalized === 'u') return 'utilization';
+  throw new Error(`Invalid Unit: ${value}. Expected utilization or hours.`);
+}
+
 export async function importSchedules(req: Request, res: Response) {
   try {
     if (!req.file) {
@@ -751,39 +809,25 @@ export async function importSchedules(req: Request, res: Response) {
 
       const sheetName = workbook.SheetNames[0];
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]) as ExcelRow[];
-      const scheduleHeaderCache = new Map<string, string>();
 
       for (let idx = 0; idx < rows.length; idx++) {
         const row = rows[idx];
         await client.query(`SAVEPOINT row_${idx}`);
         try {
-          const isoYear = getNumberValue(row, ['Year', 'ISO Year', 'iso_year']);
-          const isoWeek = getNumberValue(row, ['Week', 'ISO Week', 'iso_week']);
-          const days = getNumberValue(row, ['Days', 'days', 'Days Per Week', 'days_per_week', 'days/week']);
+          const startRaw = getCellValue(row, ['Start', 'Start Date', 'start', 'start_date']);
+          const endRaw = getCellValue(row, ['End', 'End Date', 'end', 'end_date']);
+          const start = toIsoDate(startRaw);
+          const end = toIsoDate(endRaw);
 
-          if (isoYear === undefined || isoWeek === undefined || days === undefined) {
-            throw new Error('Missing required fields (Year, Week, Days)');
+          if (!start || !end) {
+            throw new Error('Missing required fields (Start, End)');
+          }
+          if (end < start) {
+            throw new Error(`End must be on or after Start (${start} … ${end})`);
           }
 
-          if (!Number.isInteger(isoYear) || isoYear < 2000 || isoYear > 2100) {
-            throw new Error(`Invalid Year: ${isoYear}`);
-          }
-
-          if (!Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
-            throw new Error(`Invalid Week: ${isoWeek}`);
-          }
-
-          if (days < 0 || days > 10) {
-            throw new Error(`Days must be between 0 and 10. Received: ${days}`);
-          }
-
-          const calendarWeek = await client.query(
-            `SELECT 1 FROM calendar_week WHERE iso_year = $1 AND iso_week = $2 LIMIT 1`,
-            [isoYear, isoWeek],
-          );
-          if (calendarWeek.rows.length === 0) {
-            throw new Error(`ISO week not found in calendar: ${isoYear}-W${String(isoWeek).padStart(2, '0')}`);
-          }
+          const unit = normalizeScheduleUnit(getStringValue(row, ['Unit', 'unit']));
+          const roster = parseRosterFromImportRow(row);
 
           const personId = await resolvePersonId(client, row);
           const project = await resolveProject(client, row);
@@ -799,57 +843,24 @@ export async function importSchedules(req: Request, res: Response) {
           );
           const bookingType = rowBookingType || 'hard';
 
-          const cacheKey = `${personId}|${project.id}|${requestId || 'null'}`;
-          let scheduleId = scheduleHeaderCache.get(cacheKey);
-
-          if (!scheduleId) {
-            const existingSchedule = await client.query(
-              `SELECT id
-               FROM schedule
-               WHERE person_id = $1
-                 AND project_id = $2
-                 AND (($3::UUID IS NULL AND request_id IS NULL) OR request_id = $3)
-               ORDER BY created_at ASC
-               LIMIT 1`,
-              [personId, project.id, requestId],
-            );
-
-            if (existingSchedule.rows.length > 0) {
-              scheduleId = existingSchedule.rows[0].id;
-              await client.query(
-                `UPDATE schedule
-                 SET billable_type = $2,
-                     booking_type = $3,
-                     updated_at = NOW()
-                 WHERE id = $1`,
-                [scheduleId, billableType, bookingType],
-              );
-            } else {
-              const created = await client.query(
-                `INSERT INTO schedule (project_id, person_id, request_id, billable_type, booking_type)
-                 VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id`,
-                [project.id, personId, requestId, billableType, bookingType],
-              );
-              scheduleId = created.rows[0].id;
-            }
-
-            if (!scheduleId) {
-              throw new Error('Failed to resolve schedule header');
-            }
-            scheduleHeaderCache.set(cacheKey, scheduleId);
-          }
-
-          const roundedDays = Math.round(days * 100) / 100;
+          const title = getStringValue(row, ['Title', 'title', 'Schedule Title']) || null;
 
           await client.query(
-            `INSERT INTO schedule_week (schedule_id, person_id, project_id, iso_year, iso_week, days_per_week)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (person_id, project_id, iso_year, iso_week)
-             DO UPDATE SET
-               schedule_id = EXCLUDED.schedule_id,
-               days_per_week = EXCLUDED.days_per_week`,
-            [scheduleId, personId, project.id, isoYear, isoWeek, roundedDays],
+            `SELECT upsert_schedule($1::jsonb)`,
+            [
+              JSON.stringify({
+                person_id: personId,
+                project_id: project.id,
+                request_id: requestId,
+                title,
+                billable_type: billableType,
+                booking_type: bookingType,
+                start,
+                end,
+                unit,
+                roster,
+              }),
+            ],
           );
 
           result.count++;
@@ -1066,9 +1077,10 @@ export async function downloadSchedules(_req: Request, res: Response) {
       resource_full_name: string;
       project_id: string;
       project_name: string;
-      iso_year: number;
-      iso_week: number;
-      days_per_week: number;
+      start_date: string;
+      end_date: string;
+      unit: 'utilization' | 'hours';
+      roster: number[] | string;
       billable_type: 'Billable' | 'Non-billable' | 'Opportunity';
       booking_type: 'hard' | 'soft';
       request_reference_id: string | null;
@@ -1078,32 +1090,44 @@ export async function downloadSchedules(_req: Request, res: Response) {
          (p.first_name || ' ' || p.last_name) AS resource_full_name,
          pr.project_id,
          pr.name AS project_name,
-         sw.iso_year,
-         sw.iso_week,
-         sw.days_per_week,
+         to_char(s.start_date, 'YYYY-MM-DD') AS start_date,
+         to_char(s.end_date, 'YYYY-MM-DD') AS end_date,
+         s.unit,
+         s.roster,
          s.billable_type,
          s.booking_type,
          r.reference_id AS request_reference_id
-       FROM schedule_week sw
-       JOIN schedule s ON s.id = sw.schedule_id
-       JOIN person p ON p.id = sw.person_id
-       JOIN project pr ON pr.id = sw.project_id
+       FROM schedule s
+       JOIN person p ON p.id = s.person_id
+       JOIN project pr ON pr.id = s.project_id
        LEFT JOIN request r ON r.id = s.request_id
-       ORDER BY p.employee_id NULLS LAST, pr.project_id, sw.iso_year, sw.iso_week`,
+       ORDER BY p.employee_id NULLS LAST, pr.project_id, s.start_date, s.end_date`,
     );
 
-    const sheetRows = rows.rows.map((row) => ({
-      'Employee ID': row.employee_id || '',
-      'Resource Full Name': row.resource_full_name,
-      'Project ID': row.project_id,
-      'Project Name': row.project_name,
-      Year: row.iso_year,
-      Week: row.iso_week,
-      Days: row.days_per_week,
-      'Billable Type': row.billable_type,
-      'Booking Type': row.booking_type,
-      'Request Reference ID': row.request_reference_id || '',
-    }));
+    const sheetRows = rows.rows.map((row) => {
+      const roster = Array.isArray(row.roster)
+        ? row.roster.map((value) => Number(value))
+        : [1, 1, 1, 1, 1, 0, 0];
+      return {
+        'Employee ID': row.employee_id || '',
+        'Resource Full Name': row.resource_full_name,
+        'Project ID': row.project_id,
+        'Project Name': row.project_name,
+        Start: row.start_date,
+        End: row.end_date,
+        Unit: row.unit,
+        Mon: roster[0] ?? 0,
+        Tue: roster[1] ?? 0,
+        Wed: roster[2] ?? 0,
+        Thu: roster[3] ?? 0,
+        Fri: roster[4] ?? 0,
+        Sat: roster[5] ?? 0,
+        Sun: roster[6] ?? 0,
+        'Billable Type': row.billable_type,
+        'Booking Type': row.booking_type,
+        'Request Reference ID': row.request_reference_id || '',
+      };
+    });
 
     sendWorkbook(
       res,
@@ -1113,9 +1137,16 @@ export async function downloadSchedules(_req: Request, res: Response) {
         'Resource Full Name': '',
         'Project ID': '',
         'Project Name': '',
-        Year: '',
-        Week: '',
-        Days: '',
+        Start: '',
+        End: '',
+        Unit: 'utilization',
+        Mon: 1,
+        Tue: 1,
+        Wed: 1,
+        Thu: 1,
+        Fri: 1,
+        Sat: 0,
+        Sun: 0,
         'Billable Type': 'Billable',
         'Booking Type': 'hard',
         'Request Reference ID': '',

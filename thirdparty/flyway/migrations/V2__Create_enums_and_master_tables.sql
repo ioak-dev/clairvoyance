@@ -1,6 +1,7 @@
 CREATE TYPE billable_type AS ENUM ('Billable', 'Non-billable', 'Opportunity');
 CREATE TYPE approval_status AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TYPE booking_type AS ENUM ('hard', 'soft');
+CREATE TYPE schedule_unit AS ENUM ('utilization', 'hours');
 
 CREATE TABLE market_unit (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -70,6 +71,11 @@ CREATE TABLE person (
     weekly_hours NUMERIC(5, 2),
     global_designation TEXT,
     local_designation TEXT,
+    cost_center TEXT,
+    band TEXT,
+    dob DATE,
+    skills TEXT,
+    business_unit TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT person_status_check CHECK (status IN ('Active', 'Inactive')),
@@ -90,6 +96,16 @@ CREATE TABLE project (
     market_unit_id UUID REFERENCES market_unit(id) ON DELETE SET NULL,
     consulting_unit_id UUID REFERENCES consulting_unit(id) ON DELETE SET NULL,
     win_probability NUMERIC(5, 2),
+    billable_type billable_type NOT NULL DEFAULT 'Billable',
+    practice_area_id UUID REFERENCES practice_area(id) ON DELETE SET NULL,
+    client_name TEXT,
+    project_status TEXT DEFAULT 'Active',
+    start_date DATE,
+    end_date DATE,
+    delivery_model TEXT,
+    industry TEXT,
+    engagement_type TEXT,
+    description TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT project_win_probability_check CHECK (

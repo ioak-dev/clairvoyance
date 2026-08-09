@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
-import { dateRangeToWeeks } from '../lib/weekUtils';
+import { DEFAULT_ROSTER, type Roster, type ScheduleUnit } from '../types';
+import { normalizeRoster, WEEKDAY_LABELS } from '../lib/rosterUtils';
 import { useLookups } from '../hooks/useLookups';
 import { useProjects } from '../hooks/useProjects';
 import { getFilteredCompetencyCenterOptions } from './labEditFieldConfig';
@@ -21,7 +22,10 @@ interface LabCreateModalProps {
 interface RequestFormState {
     id: string;
     project_id: string;
-    weeks: string;
+    start: string;
+    end: string;
+    unit: ScheduleUnit;
+    roster: Roster;
     status: string;
     probability: string;
     request_name: string;
@@ -50,20 +54,14 @@ function getNextMonthBounds() {
     };
 }
 
-function buildWeeksJson(startDate: string, endDate: string, daysPerWeek: number): string {
-    const weeks = dateRangeToWeeks(startDate, endDate).map((week) => ({
-        iso_year: week.isoYear,
-        iso_week: week.isoWeek,
-        days_per_week: daysPerWeek,
-    }));
-    return JSON.stringify(weeks, null, 2);
-}
-
 function createInitialFormState(startDate: string, endDate: string): RequestFormState {
     return {
         id: '',
         project_id: '',
-        weeks: buildWeeksJson(startDate, endDate, 5),
+        start: startDate,
+        end: endDate,
+        unit: 'utilization',
+        roster: [...DEFAULT_ROSTER] as Roster,
         status: 'Pending',
         probability: '100',
         request_name: '',
@@ -83,7 +81,10 @@ function toRequestPayload(form: RequestFormState): Record<string, unknown> {
         person_id: '',
         billable_type: 'Opportunity',
         booking_type: 'soft',
-        weeks: JSON.parse(form.weeks),
+        start: form.start,
+        end: form.end,
+        unit: form.unit,
+        roster: form.roster,
         status: form.status,
         probability: Number(form.probability),
         request_name: form.request_name.trim() || null,
@@ -110,9 +111,6 @@ function toRawRequestText(payload: Record<string, unknown>): string {
 export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose, onCreate }) => {
     const nextMonthBounds = useMemo(() => getNextMonthBounds(), []);
     const [inputMode, setInputMode] = useState<CreateInputMode>('form');
-    const [weekStartDate, setWeekStartDate] = useState(nextMonthBounds.startDate);
-    const [weekEndDate, setWeekEndDate] = useState(nextMonthBounds.endDate);
-    const [weekDays, setWeekDays] = useState(5);
     const [form, setForm] = useState<RequestFormState>(() =>
         createInitialFormState(nextMonthBounds.startDate, nextMonthBounds.endDate),
     );
@@ -143,9 +141,6 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
         const initialPayload = toRequestPayload(initialForm);
 
         setInputMode('form');
-        setWeekStartDate(nextBounds.startDate);
-        setWeekEndDate(nextBounds.endDate);
-        setWeekDays(5);
         setForm(initialForm);
         setJsonText(toRawRequestText(initialPayload));
         setError('');
@@ -154,7 +149,7 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
 
     if (!isOpen) return null;
 
-    const updateFormField = (key: keyof RequestFormState, value: string) => {
+    const updateFormField = <K extends keyof RequestFormState>(key: K, value: RequestFormState[K]) => {
         setForm((current) => {
             const next = { ...current, [key]: value };
             if (key === 'practice_area_id' && current.practice_area_id !== value) {
@@ -165,12 +160,15 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
         setError('');
     };
 
-    const regenerateWeeksJson = () => {
-        if (!weekStartDate || !weekEndDate || weekStartDate > weekEndDate) {
-            setError('Week date range is invalid.');
-            return;
-        }
-        updateFormField('weeks', buildWeeksJson(weekStartDate, weekEndDate, weekDays));
+    const updateRosterDay = (index: number, raw: string) => {
+        const parsed = Number(raw);
+        const value = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+        setForm((current) => {
+            const nextRoster = [...current.roster] as Roster;
+            nextRoster[index] = value;
+            return { ...current, roster: nextRoster };
+        });
+        setError('');
     };
 
     const generateRequestReferenceId = () => {
@@ -187,8 +185,12 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                 setError('Opportunity is required.');
                 return;
             }
-            if (!form.weeks.trim()) {
-                setError('Weeks is required.');
+            if (!form.start || !form.end) {
+                setError('Start and End dates are required.');
+                return;
+            }
+            if (form.start > form.end) {
+                setError('End must be on or after Start.');
                 return;
             }
             if (!form.status.trim()) {
@@ -200,24 +202,20 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                 setError('Probability must be a valid number.');
                 return;
             }
+            if (normalizeRoster(form.roster).length !== 7) {
+                setError('Roster must have 7 values (Mon–Sun).');
+                return;
+            }
 
             setIsSubmitting(true);
 
             try {
                 const payload = toRequestPayload(form);
-                if (!Array.isArray(payload.weeks)) {
-                    setError('Weeks must be a JSON array.');
-                    return;
-                }
                 const rawText = toRawRequestText(payload);
                 await onCreate({ type: 'Request', payload: [payload] }, rawText);
                 onClose();
             } catch (err) {
-                if (err instanceof SyntaxError) {
-                    setError('Weeks must be valid JSON.');
-                } else {
-                    setError(err instanceof Error ? err.message : 'Publish failed.');
-                }
+                setError(err instanceof Error ? err.message : 'Publish failed.');
             } finally {
                 setIsSubmitting(false);
             }
@@ -245,6 +243,15 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
             if (!Array.isArray(parsed.payload)) {
                 setError('The field "payload" is required and must be an array.');
                 return;
+            }
+
+            for (const item of parsed.payload) {
+                if (!item || typeof item !== 'object') continue;
+                const row = item as Record<string, unknown>;
+                if ('weeks' in row || 'days_per_week' in row) {
+                    setError('payload must use start/end/unit/roster; weeks are not supported.');
+                    return;
+                }
             }
 
             setIsSubmitting(true);
@@ -353,6 +360,38 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                                     </select>
                                 </div>
                                 <div>
+                                    <label className="block text-xs font-medium text-secondary mb-1.5">Start</label>
+                                    <input
+                                        type="date"
+                                        value={form.start}
+                                        onChange={(e) => updateFormField('start', e.target.value)}
+                                        disabled={isSubmitting}
+                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-secondary mb-1.5">End</label>
+                                    <input
+                                        type="date"
+                                        value={form.end}
+                                        onChange={(e) => updateFormField('end', e.target.value)}
+                                        disabled={isSubmitting}
+                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-secondary mb-1.5">Unit</label>
+                                    <select
+                                        value={form.unit}
+                                        onChange={(e) => updateFormField('unit', e.target.value as ScheduleUnit)}
+                                        disabled={isSubmitting}
+                                        className="w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                    >
+                                        <option value="utilization">utilization</option>
+                                        <option value="hours">hours</option>
+                                    </select>
+                                </div>
+                                <div>
                                     <label className="block text-xs font-medium text-secondary mb-1.5">Status</label>
                                     <select
                                         value={form.status}
@@ -458,60 +497,25 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                             </div>
 
                             <div className="space-y-2">
-                                <label className="block text-xs font-medium text-secondary">Weeks (JSON)</label>
-                                <div className="flex items-end gap-2 p-3 rounded-lg border border-default bg-surface-muted">
-                                    <div className="flex-1 min-w-0">
-                                        <label className="block text-[10px] font-medium text-tertiary mb-1">From</label>
-                                        <input
-                                            type="date"
-                                            value={weekStartDate}
-                                            onChange={(e) => setWeekStartDate(e.target.value)}
-                                            disabled={isSubmitting}
-                                            className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                        />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <label className="block text-[10px] font-medium text-tertiary mb-1">To</label>
-                                        <input
-                                            type="date"
-                                            value={weekEndDate}
-                                            onChange={(e) => setWeekEndDate(e.target.value)}
-                                            disabled={isSubmitting}
-                                            className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                        />
-                                    </div>
-                                    <div className="w-24 shrink-0">
-                                        <label className="block text-[10px] font-medium text-tertiary mb-1">Days/week</label>
-                                        <select
-                                            value={weekDays}
-                                            onChange={(e) => setWeekDays(Number(e.target.value))}
-                                            disabled={isSubmitting}
-                                            className="w-full rounded-md border border-default bg-surface px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                        >
-                                            {[1, 2, 3, 4, 5].map((dayCount) => (
-                                                <option key={dayCount} value={dayCount}>
-                                                    {dayCount} day{dayCount !== 1 ? 's' : ''}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={regenerateWeeksJson}
-                                        disabled={isSubmitting || !weekStartDate || !weekEndDate || weekStartDate > weekEndDate}
-                                        className="shrink-0 px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                                    >
-                                        Generate
-                                    </button>
+                                <label className="block text-xs font-medium text-secondary">
+                                    Roster ({form.unit === 'hours' ? 'hours/day' : 'utilization'} Mon–Sun)
+                                </label>
+                                <div className="grid grid-cols-7 gap-2 p-3 rounded-lg border border-default bg-surface-muted">
+                                    {WEEKDAY_LABELS.map((label, index) => (
+                                        <div key={label}>
+                                            <label className="block text-[10px] font-medium text-tertiary mb-1 text-center">{label}</label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step={form.unit === 'hours' ? 0.5 : 0.1}
+                                                value={form.roster[index]}
+                                                onChange={(e) => updateRosterDay(index, e.target.value)}
+                                                disabled={isSubmitting}
+                                                className="w-full rounded-md border border-default bg-surface px-1.5 py-1.5 text-sm text-primary text-center focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+                                            />
+                                        </div>
+                                    ))}
                                 </div>
-
-                                <textarea
-                                    value={form.weeks}
-                                    onChange={(e) => updateFormField('weeks', e.target.value)}
-                                    rows={5}
-                                    disabled={isSubmitting}
-                                    className="w-full resize-y rounded-lg border border-default bg-surface px-3 py-2 text-sm font-mono text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                />
                             </div>
 
                             <div>
@@ -534,7 +538,7 @@ export const LabCreateModal: React.FC<LabCreateModalProps> = ({ isOpen, onClose,
                                 rows={18}
                                 disabled={isSubmitting}
                                 className="w-full resize-y rounded-lg border border-default bg-surface px-3 py-2 text-sm font-mono text-primary focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
-                                placeholder='{"type":"Request","payload":[{"id":"NW-REQ-001"}]}'
+                                placeholder='{"type":"Request","payload":[{"id":"NW-REQ-001","start":"2026-03-02","end":"2026-04-17","unit":"utilization","roster":[1,1,1,1,1,0,0]}]}'
                             />
                         </div>
                     )}

@@ -3,16 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import React, { useMemo, useState, useCallback, useImperativeHandle, forwardRef, memo } from 'react';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
-import { AlertTriangle, Calendar, CalendarClock, CheckCircle2, Loader2, MinusCircle, Plus, User, UserCheck } from 'lucide-react';
+import { Calendar, CalendarClock, Loader2, Plus, User, UserCheck } from 'lucide-react';
 import {
   getProjectCategory,
   getAllocationBlockChrome,
   getAllocationBlockBackgroundFromDays,
   getRequestBlockChrome,
   getRequestBlockBackground,
-  SCHEDULE_BLOCK_BADGE_CLASS,
   type ProjectCategory,
   type AllocationBlockChrome,
 } from '../lib/projectCategory';
@@ -20,12 +19,17 @@ import { filterPeople, filterProjects, filterRequests } from '../lib/filterEngin
 import { addDays, CURRENT_DATE_STRING } from '../lib/dateUtils';
 import {
   buildDayColumnLayout,
-  deriveAllocationBlocks,
   getDateRangeBounds,
-  getIsoWeekKey,
-  getIsoWeekWeekdayBounds,
   type DayColumnLayout,
 } from '../lib/weekUtils';
+import {
+  assignmentToBlock,
+  buildDailyTotals,
+  personDailyCapacityHours,
+  rosterSummaryLabel,
+  splitBlockIntoWeekSegments,
+  weekSegmentLabel,
+} from '../lib/rosterUtils';
 import { requestDateBounds } from '../types/api';
 import { useSchedulesInRange } from '../hooks/useSchedules';
 import { useHorizontalTimelineWindow } from '../hooks/useHorizontalTimelineWindow';
@@ -59,71 +63,70 @@ interface SchedulerGridProps {
 }
 
 function assignmentToBlocks(assignment: ScheduleAssignment): AllocationBlock[] {
-  return deriveAllocationBlocks({
-    scheduleId: assignment.id,
-    resourceId: assignment.resourceId,
-    projectId: assignment.projectId,
-    requestId: assignment.requestId,
-    billableType: assignment.billableType,
-    bookingType: assignment.bookingType,
-    weeks: assignment.weeks,
-  });
+  return [assignmentToBlock(assignment)];
 }
 
 function requestToBlocks(request: BookingRequest): AllocationBlock[] {
-  return deriveAllocationBlocks({
+  return [{
     scheduleId: request.id,
+    title: request.requestName,
     resourceId: request.resourceId || 'unassigned',
     projectId: request.projectId,
     requestId: request.id,
     billableType: request.billableType,
     bookingType: request.bookingType,
-    weeks: request.weeks,
-  });
+    startDate: request.startDate,
+    endDate: request.endDate,
+    unit: request.unit,
+    roster: request.roster,
+  }];
 }
 
-function daysPerWeekLabel(daysPerWeek: number): string {
-  const pct = Math.round((daysPerWeek / 5) * 100);
-  return `${pct}% · ${daysPerWeek} day${daysPerWeek === 1 ? '' : 's'}`;
+function formatDayHours(hours: number): string {
+  const rounded = Math.round(hours * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-function UtilizationDayBar({
+function DailyTotalStrip({
   columns,
-  isoYear,
-  isoWeek,
-  daysPerWeek,
-  topOffset = 0,
+  totals,
+  capacity,
+  resourceName,
 }: {
   columns: DayColumnLayout[];
-  isoYear: number;
-  isoWeek: number;
-  daysPerWeek: number;
-  topOffset?: number;
+  totals: Map<string, number>;
+  capacity: number;
+  resourceName: string;
 }) {
-  const bounds = getIsoWeekWeekdayBounds(columns, isoYear, isoWeek);
-  if (!bounds) return null;
-
-  const clampedDays = Math.min(5, Math.max(0, daysPerWeek));
-  const dayWidth = bounds.width / 5;
-
   return (
-    <div
-      className="absolute pointer-events-none flex gap-px"
-      style={{ left: bounds.left + 4, width: Math.max(bounds.width - 8, 8), top: topOffset, height: 4 }}
-    >
-      {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} style={{ width: dayWidth - 1 }} className="bg-emerald-100/50 rounded-sm overflow-hidden">
+    <div className="absolute inset-x-0 top-[2px] h-[18px] pointer-events-none z-[6]">
+      {columns.map((col) => {
+        if (col.isWeekend) return null;
+        const hours = totals.get(col.dateStr) || 0;
+        if (hours <= 0) return null;
+
+        const util = capacity > 0 ? hours / capacity : 0;
+        const over = util > 1.01;
+        const barClass = over
+          ? 'bg-rose-500/45 text-rose-950'
+          : 'bg-emerald-500/40 text-emerald-950';
+
+        return (
           <div
-            style={{ width: `${Math.max(0, Math.min(1, clampedDays - i)) * 100}%` }}
-            className="h-full bg-emerald-500 rounded-sm"
-          />
-        </div>
-      ))}
+            key={`util-${col.dateStr}`}
+            style={{ left: `${col.left + 1}px`, width: `${Math.max(col.width - 2, 2)}px` }}
+            className={`absolute top-0 h-[18px] rounded-[3px] flex items-center justify-center text-[10px] font-bold tabular-nums leading-none ${barClass}`}
+            title={`${resourceName} · ${col.dateStr}: ${hours.toFixed(1)}h / ${capacity.toFixed(1)}h (${Math.round(util * 100)}%)`}
+          >
+            {formatDayHours(hours)}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>(function SchedulerGrid({
+export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridProps>(function SchedulerGrid({
   resources,
   projects,
   vacations,
@@ -180,22 +183,6 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
       else groups.push({ monthName: col.monthName, width: col.width });
     });
     return groups;
-  }, [dayColumns]);
-
-  const visibleIsoWeeks = useMemo(() => {
-    const seen = new Set<string>();
-    const weeks: Array<{ isoYear: number; isoWeek: number }> = [];
-
-    dayColumns.forEach((col) => {
-      if (col.isWeekend) return;
-      const key = getIsoWeekKey(col.dateStr);
-      const weekId = `${key.isoYear}-${key.isoWeek}`;
-      if (seen.has(weekId)) return;
-      seen.add(weekId);
-      weeks.push({ isoYear: key.isoYear, isoWeek: key.isoWeek });
-    });
-
-    return weeks;
   }, [dayColumns]);
 
   const assignmentRows = useMemo(() => {
@@ -277,6 +264,18 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
     return rows;
   }, [resources, projects, rangeAssignments, requests, filterCriteria, viewMode]);
 
+  const resourceDailyTotals = useMemo(() => {
+    if (viewMode !== 'resources') return null;
+    const map = new Map<string, Map<string, number>>();
+    for (const row of assignmentRows) {
+      if (!row.resource) continue;
+      const capacity = personDailyCapacityHours(row.resource.weeklyHours, row.resource.fte);
+      const blocks = row.projectLanes.flatMap((lane) => lane.blocks);
+      map.set(row.resource.id, buildDailyTotals(blocks, windowStart, windowEnd, capacity));
+    }
+    return map;
+  }, [assignmentRows, viewMode, windowStart, windowEnd]);
+
   const getApprovedVacationsForResource = (resourceId: string) =>
     vacations.filter((v) => v.status === 'Approved' && v.resourceId === resourceId);
 
@@ -285,16 +284,10 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
     lane: { project?: Project; resource?: Resource; request?: BookingRequest },
     row: (typeof assignmentRows)[0],
   ) => {
-    const segments = block.weeks.map((week) => ({
-      week,
-      bounds: getIsoWeekWeekdayBounds(dayColumns, week.isoYear, week.isoWeek),
-    })).filter((s) => s.bounds !== null) as Array<{
-      week: (typeof block.weeks)[0];
-      bounds: { left: number; width: number };
-    }>;
+    const weekSegments = splitBlockIntoWeekSegments(block);
+    if (weekSegments.length === 0) return null;
 
-    if (segments.length === 0) return null;
-
+    const summary = rosterSummaryLabel(block.unit, block.roster);
     let blockTitle = '';
     let blockLabel = '';
     let showPersonIcon = false;
@@ -302,28 +295,27 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
 
     if (viewMode === 'requests' && lane.request) {
       const req = lane.request;
-      const bounds = requestDateBounds(req);
+      const reqBounds = requestDateBounds(req);
       const assignedRes = req.resourceId ? resources.find((r) => r.id === req.resourceId) : null;
-      const dateLabel = bounds ? `${bounds.startDate} to ${bounds.endDate}` : '';
+      const dateLabel = reqBounds ? `${reqBounds.startDate} to ${reqBounds.endDate}` : '';
       if (assignedRes) {
-        blockTitle = `Assigned: ${assignedRes.name}\nRequest: ${req.requestName || 'General request'}\n${dateLabel}\n${block.daysPerWeek}d/wk`;
+        blockTitle = `Assigned: ${assignedRes.name}\nRequest: ${req.requestName || 'General request'}\n${dateLabel}\n${summary}`;
         blockLabel = assignedRes.name;
         showUserCheckIcon = true;
       } else {
-        blockTitle = `Request: ${req.requestName || 'General request'}\n${dateLabel}\n${block.daysPerWeek}d/wk`;
+        blockTitle = `Request: ${req.requestName || 'General request'}\n${dateLabel}\n${summary}`;
         blockLabel = req.requestName || 'Request';
         showPersonIcon = true;
       }
     } else if (viewMode === 'projects') {
-      blockTitle = `${lane.resource?.name}: ${block.daysPerWeek}d/wk`;
+      blockTitle = `${lane.resource?.name}: ${summary}${block.title ? `\n${block.title}` : ''}`;
       blockLabel = lane.resource?.name || 'Resource';
     } else {
-      blockTitle = `${lane.project?.name}: ${block.daysPerWeek}d/wk`;
-      blockLabel = lane.project?.name || 'Project';
+      blockTitle = `${lane.project?.name}: ${summary}${block.title ? `\n${block.title}` : ''}`;
+      blockLabel = block.title || lane.project?.name || 'Project';
     }
 
     let textClass = 'text-slate-800';
-    let badgeClass = SCHEDULE_BLOCK_BADGE_CLASS;
     let blockSurfaceStyle: React.CSSProperties | undefined;
     let blockCategory: ProjectCategory | null = null;
     let blockChrome: AllocationBlockChrome | null = null;
@@ -335,42 +327,37 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
       if (isAssigned) {
         blockCategory = category;
         blockChrome = getAllocationBlockChrome(category);
-        blockSurfaceStyle = getAllocationBlockBackgroundFromDays(block.daysPerWeek, blockChrome);
+        blockSurfaceStyle = getAllocationBlockBackgroundFromDays(0, blockChrome);
       } else {
         blockChrome = getRequestBlockChrome(category);
         blockSurfaceStyle = getRequestBlockBackground(blockChrome);
       }
       textClass = blockChrome.textClass;
-      badgeClass = blockChrome.badgeClass;
       if (!isAssigned) borderClass = 'border border-dotted';
     } else {
       const proj = lane.project || row.project || projects.find((p) => p.id === block.projectId);
       if (proj) {
         blockCategory = getProjectCategory(proj);
         blockChrome = getAllocationBlockChrome(blockCategory);
-        blockSurfaceStyle = getAllocationBlockBackgroundFromDays(block.daysPerWeek, blockChrome);
+        blockSurfaceStyle = getAllocationBlockBackgroundFromDays(0, blockChrome);
         textClass = blockChrome.textClass;
-        badgeClass = blockChrome.badgeClass;
       }
     }
 
-    const subtitle = blockCategory
-      ? `${daysPerWeekLabel(block.daysPerWeek)} - ${blockCategory.charAt(0)} - ${block.billableType}`
-      : daysPerWeekLabel(block.daysPerWeek);
+    const resourceBlockTop = viewMode === 'resources' ? 24 : 6;
 
-    const resourceRowOffset = viewMode === 'resources' ? 8 : 0;
-    const resourceBlockTop = viewMode === 'resources' ? 14 : 6;
+    return weekSegments.map((seg) => {
+      const bounds = getDateRangeBounds(dayColumns, seg.startDate, seg.endDate);
+      if (!bounds) return null;
 
-    return segments.map(({ week, bounds }) => (
-      <React.Fragment key={`${block.scheduleId}-${week.isoYear}-${week.isoWeek}`}>
-        <UtilizationDayBar
-          columns={dayColumns}
-          isoYear={week.isoYear}
-          isoWeek={week.isoWeek}
-          daysPerWeek={week.daysPerWeek}
-          topOffset={resourceRowOffset}
-        />
+      const segLabel = weekSegmentLabel(block.unit, block.roster, seg.activeDays);
+      const subtitle = blockCategory
+        ? `${segLabel} - ${blockCategory.charAt(0)} - ${block.billableType}`
+        : segLabel;
+
+      return (
         <div
+          key={`${block.scheduleId}-${seg.isoYear}-W${seg.isoWeek}`}
           style={{
             left: `${bounds.left + 4}px`,
             width: `${Math.max(bounds.width - 8, 8)}px`,
@@ -386,17 +373,17 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
             }
           }}
           className={`absolute select-none overflow-hidden text-left px-2 py-1.5 rounded-lg transition-transform hover:scale-[1.01] cursor-pointer shadow-sm flex items-center gap-2 ${borderClass} ${textClass} z-[5]`}
-          title={blockTitle}
+          title={`${blockTitle}\n${seg.startDate} – ${seg.endDate}`}
         >
           <div className="flex-1 min-w-0">
             <div className="text-[11px] font-bold tracking-tight leading-tight truncate">{blockLabel}</div>
-            <div className="text-[9px] font-medium opacity-80 truncate mt-0.5">{subtitle}</div>
+            <div className="text-[9px] font-medium opacity-90 truncate mt-0.5">{subtitle}</div>
           </div>
           {showPersonIcon && <User className="w-3.5 h-3.5 shrink-0" />}
           {showUserCheckIcon && <UserCheck className="w-3.5 h-3.5 shrink-0" />}
         </div>
-      </React.Fragment>
-    ));
+      );
+    });
   };
 
   const renderRow = (row: (typeof assignmentRows)[0]) => {
@@ -405,22 +392,16 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
         ? []
         : getApprovedVacationsForResource(row.resource.id);
 
-    const resourceWeeklyTotals =
-      viewMode === 'projects' || viewMode === 'requests' || !row.resource
-        ? null
-        : row.projectLanes.reduce((acc, lane) => {
-            lane.blocks.forEach((block) => {
-              block.weeks.forEach((week) => {
-                const weekId = `${week.isoYear}-${week.isoWeek}`;
-                acc.set(weekId, (acc.get(weekId) || 0) + week.daysPerWeek);
-              });
-            });
-            return acc;
-          }, new Map<string, number>());
+    const capacity = row.resource
+      ? personDailyCapacityHours(row.resource.weeklyHours, row.resource.fte)
+      : 8;
+    const dailyTotals = row.resource
+      ? resourceDailyTotals?.get(row.resource.id) ?? null
+      : null;
 
     return (
-      <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[64px]">
-        <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[64px]">
+      <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[72px]">
+        <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[72px]">
           <div className="flex items-center gap-2 overflow-hidden py-3 w-full">
             {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
               <div className="truncate text-left flex-1">
@@ -470,7 +451,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
               <button
                 onClick={() => setBulkScheduleResource(row.resource!)}
                 className="p-1 hover:bg-indigo-50 text-indigo-500 rounded cursor-pointer"
-                title={`Bulk schedule ${row.resource.name} for 2026`}
+                title={`Bulk schedule ${row.resource.name}`}
               >
                 <CalendarClock className="w-3.5 h-3.5" />
               </button>
@@ -478,47 +459,14 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
           ) : null}
         </div>
 
-        <div style={{ width: `${gridWidth}px` }} className="relative flex flex-col justify-center py-3 shrink-0 min-h-[64px]">
-          {resourceWeeklyTotals && row.resource && (
-            <div className="absolute inset-x-0 top-0 h-[12px] pointer-events-none z-[6]">
-              {visibleIsoWeeks.map((week) => {
-                const bounds = getIsoWeekWeekdayBounds(dayColumns, week.isoYear, week.isoWeek);
-                if (!bounds) return null;
-
-                const weekId = `${week.isoYear}-${week.isoWeek}`;
-                const totalDays = resourceWeeklyTotals.get(weekId) || 0;
-                if (totalDays <= 0) return null;
-                const utilizationLabel = totalDays > 5
-                  ? 'Over-utilized'
-                  : totalDays === 5
-                    ? 'Fully utilized'
-                    : 'Under-utilized';
-
-                const indicatorLeft = bounds.left + Math.max((bounds.width - 12) / 2, 0);
-                const indicatorClass = totalDays > 5
-                  ? 'text-rose-600'
-                  : totalDays === 5
-                    ? 'text-emerald-600'
-                    : 'text-amber-600';
-
-                const IndicatorIcon = totalDays > 5
-                  ? AlertTriangle
-                  : totalDays === 5
-                    ? CheckCircle2
-                    : MinusCircle;
-
-                return (
-                  <div
-                    key={`util-${row.id}-${weekId}`}
-                    style={{ left: `${indicatorLeft}px`, width: '12px' }}
-                    className={`absolute top-0 h-[12px] w-[12px] rounded-full bg-surface shadow-app-sm flex items-center justify-center ${indicatorClass}`}
-                    title={`${row.resource.name} - ${week.isoYear} W${String(week.isoWeek).padStart(2, '0')}: ${totalDays}d/wk (${utilizationLabel})`}
-                  >
-                    <IndicatorIcon className="w-[10px] h-[10px]" />
-                  </div>
-                );
-              })}
-            </div>
+        <div style={{ width: `${gridWidth}px` }} className="relative flex flex-col justify-center py-3 shrink-0 min-h-[72px]">
+          {dailyTotals && row.resource && (
+            <DailyTotalStrip
+              columns={dayColumns}
+              totals={dailyTotals}
+              capacity={capacity}
+              resourceName={row.resource.name}
+            />
           )}
 
           {/* Day column grid lines */}
@@ -568,9 +516,7 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
 
               return (
                 <div key={laneKey} className="h-[56px] relative w-full">
-                  {lane.blocks.flatMap((block) =>
-                    renderBlockSegments(block, lane, row) ?? [],
-                  )}
+                  {lane.blocks.flatMap((block) => renderBlockSegments(block, lane, row) ?? [])}
                 </div>
               );
             })}
@@ -687,4 +633,6 @@ export const SchedulerGrid = forwardRef<SchedulerGridHandle, SchedulerGridProps>
       )}
     </div>
   );
-});
+}));
+
+SchedulerGrid.displayName = 'SchedulerGrid';

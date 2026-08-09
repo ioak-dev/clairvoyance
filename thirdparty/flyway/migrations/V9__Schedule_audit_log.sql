@@ -2,17 +2,22 @@ CREATE TABLE schedule_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     transaction_id BIGINT NOT NULL DEFAULT txid_current(),
-    entity_type TEXT NOT NULL CHECK (entity_type IN ('schedule', 'schedule_week')),
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('schedule')),
     change_action TEXT NOT NULL CHECK (change_action IN ('INSERT', 'UPDATE', 'DELETE')),
     schedule_id UUID,
-    schedule_week_id UUID,
     project_id UUID,
     person_id UUID,
     request_id UUID,
-    iso_year SMALLINT,
-    iso_week SMALLINT,
-    days_per_week_before NUMERIC(4,2),
-    days_per_week_after NUMERIC(4,2),
+    title_before TEXT,
+    title_after TEXT,
+    start_date_before DATE,
+    start_date_after DATE,
+    end_date_before DATE,
+    end_date_after DATE,
+    unit_before schedule_unit,
+    unit_after schedule_unit,
+    roster_before NUMERIC(8, 4)[],
+    roster_after NUMERIC(8, 4)[],
     billable_type_before billable_type,
     billable_type_after billable_type,
     booking_type_before booking_type,
@@ -36,70 +41,24 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE
-    v_old_row JSONB;
-    v_new_row JSONB;
-    v_schedule_id UUID;
-    v_schedule_week_id UUID;
-    v_project_id UUID;
-    v_person_id UUID;
-    v_request_id UUID;
-    v_iso_year SMALLINT;
-    v_iso_week SMALLINT;
-    v_days_before NUMERIC(4,2);
-    v_days_after NUMERIC(4,2);
-    v_billable_before billable_type;
-    v_billable_after billable_type;
-    v_booking_before booking_type;
-    v_booking_after booking_type;
 BEGIN
-    v_old_row := CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN to_jsonb(OLD) ELSE NULL END;
-    v_new_row := CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN to_jsonb(NEW) ELSE NULL END;
-
-    IF TG_TABLE_NAME = 'schedule' THEN
-        v_schedule_id := COALESCE(NEW.id, OLD.id);
-        v_project_id := COALESCE(NEW.project_id, OLD.project_id);
-        v_person_id := COALESCE(NEW.person_id, OLD.person_id);
-        v_request_id := COALESCE(NEW.request_id, OLD.request_id);
-        v_billable_before := CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.billable_type ELSE NULL END;
-        v_billable_after := CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.billable_type ELSE NULL END;
-        v_booking_before := CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.booking_type ELSE NULL END;
-        v_booking_after := CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.booking_type ELSE NULL END;
-    ELSIF TG_TABLE_NAME = 'schedule_week' THEN
-        v_schedule_id := COALESCE(NEW.schedule_id, OLD.schedule_id);
-        v_schedule_week_id := COALESCE(NEW.id, OLD.id);
-        v_project_id := COALESCE(NEW.project_id, OLD.project_id);
-        v_person_id := COALESCE(NEW.person_id, OLD.person_id);
-        v_iso_year := COALESCE(NEW.iso_year, OLD.iso_year);
-        v_iso_week := COALESCE(NEW.iso_week, OLD.iso_week);
-        v_days_before := CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.days_per_week ELSE NULL END;
-        v_days_after := CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.days_per_week ELSE NULL END;
-
-        SELECT s.request_id, s.billable_type, s.booking_type
-        INTO v_request_id, v_billable_after, v_booking_after
-        FROM schedule s
-        WHERE s.id = v_schedule_id;
-
-        IF TG_OP = 'DELETE' THEN
-            v_billable_after := NULL;
-            v_booking_after := NULL;
-        END IF;
-    ELSE
-        RAISE EXCEPTION 'Unsupported schedule audit table: %', TG_TABLE_NAME;
-    END IF;
-
     INSERT INTO schedule_audit_log (
         entity_type,
         change_action,
         schedule_id,
-        schedule_week_id,
         project_id,
         person_id,
         request_id,
-        iso_year,
-        iso_week,
-        days_per_week_before,
-        days_per_week_after,
+        title_before,
+        title_after,
+        start_date_before,
+        start_date_after,
+        end_date_before,
+        end_date_after,
+        unit_before,
+        unit_after,
+        roster_before,
+        roster_after,
         billable_type_before,
         billable_type_after,
         booking_type_before,
@@ -107,37 +66,28 @@ BEGIN
         old_row,
         new_row
     ) VALUES (
-        TG_TABLE_NAME,
+        'schedule',
         TG_OP,
-        v_schedule_id,
-        v_schedule_week_id,
-        v_project_id,
-        v_person_id,
-        v_request_id,
-        v_iso_year,
-        v_iso_week,
-        v_days_before,
-        v_days_after,
-        CASE
-            WHEN TG_TABLE_NAME = 'schedule' AND TG_OP IN ('UPDATE', 'DELETE') THEN OLD.billable_type
-            ELSE NULL
-        END,
-        CASE
-            WHEN TG_TABLE_NAME = 'schedule' AND TG_OP IN ('INSERT', 'UPDATE') THEN NEW.billable_type
-            WHEN TG_TABLE_NAME = 'schedule_week' THEN v_billable_after
-            ELSE NULL
-        END,
-        CASE
-            WHEN TG_TABLE_NAME = 'schedule' AND TG_OP IN ('UPDATE', 'DELETE') THEN OLD.booking_type
-            ELSE NULL
-        END,
-        CASE
-            WHEN TG_TABLE_NAME = 'schedule' AND TG_OP IN ('INSERT', 'UPDATE') THEN NEW.booking_type
-            WHEN TG_TABLE_NAME = 'schedule_week' THEN v_booking_after
-            ELSE NULL
-        END,
-        v_old_row,
-        v_new_row
+        COALESCE(NEW.id, OLD.id),
+        COALESCE(NEW.project_id, OLD.project_id),
+        COALESCE(NEW.person_id, OLD.person_id),
+        COALESCE(NEW.request_id, OLD.request_id),
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.title ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.title ELSE NULL END,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.start_date ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.start_date ELSE NULL END,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.end_date ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.end_date ELSE NULL END,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.unit ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.unit ELSE NULL END,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.roster ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.roster ELSE NULL END,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.billable_type ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.billable_type ELSE NULL END,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.booking_type ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.booking_type ELSE NULL END,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN to_jsonb(OLD) ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN to_jsonb(NEW) ELSE NULL END
     );
 
     RETURN COALESCE(NEW, OLD);
@@ -147,11 +97,6 @@ $$;
 DROP TRIGGER IF EXISTS schedule_audit_log_trigger ON schedule;
 CREATE TRIGGER schedule_audit_log_trigger
     AFTER INSERT OR UPDATE OR DELETE ON schedule
-    FOR EACH ROW EXECUTE FUNCTION log_schedule_audit_change();
-
-DROP TRIGGER IF EXISTS schedule_week_audit_log_trigger ON schedule_week;
-CREATE TRIGGER schedule_week_audit_log_trigger
-    AFTER INSERT OR UPDATE OR DELETE ON schedule_week
     FOR EACH ROW EXECUTE FUNCTION log_schedule_audit_change();
 
 CREATE OR REPLACE FUNCTION schedule_audit_report(
@@ -167,7 +112,6 @@ RETURNS TABLE (
     entity_type TEXT,
     change_action TEXT,
     schedule_id UUID,
-    schedule_week_id UUID,
     project_id UUID,
     project_reference_id TEXT,
     project_name TEXT,
@@ -176,10 +120,16 @@ RETURNS TABLE (
     person_name TEXT,
     request_id UUID,
     request_reference_id TEXT,
-    iso_year SMALLINT,
-    iso_week SMALLINT,
-    days_per_week_before NUMERIC(4,2),
-    days_per_week_after NUMERIC(4,2),
+    title_before TEXT,
+    title_after TEXT,
+    start_date_before DATE,
+    start_date_after DATE,
+    end_date_before DATE,
+    end_date_after DATE,
+    unit_before schedule_unit,
+    unit_after schedule_unit,
+    roster_before NUMERIC[],
+    roster_after NUMERIC[],
     billable_type_before billable_type,
     billable_type_after billable_type,
     booking_type_before booking_type,
@@ -210,7 +160,6 @@ BEGIN
         sal.entity_type,
         sal.change_action,
         sal.schedule_id,
-        sal.schedule_week_id,
         sal.project_id,
         p.reference_id AS project_reference_id,
         p.name AS project_name,
@@ -219,10 +168,16 @@ BEGIN
         NULLIF(TRIM(CONCAT(COALESCE(pe.first_name, ''), ' ', COALESCE(pe.last_name, ''))), '') AS person_name,
         sal.request_id,
         r.reference_id AS request_reference_id,
-        sal.iso_year,
-        sal.iso_week,
-        sal.days_per_week_before,
-        sal.days_per_week_after,
+        sal.title_before,
+        sal.title_after,
+        sal.start_date_before,
+        sal.start_date_after,
+        sal.end_date_before,
+        sal.end_date_after,
+        sal.unit_before,
+        sal.unit_after,
+        sal.roster_before,
+        sal.roster_after,
         sal.billable_type_before,
         sal.billable_type_after,
         sal.booking_type_before,
@@ -247,5 +202,3 @@ GRANT SELECT ON schedule_audit_log TO anon;
 GRANT SELECT ON schedule_audit_log TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION schedule_audit_report(UUID[], UUID[], DATE, DATE)
     TO anon, authenticated, service_role;
-
-NOTIFY pgrst, 'reload schema';

@@ -38,10 +38,22 @@ export function buildRequestFields(params: {
     { key: 'id', label: 'Request Reference ID', type: 'text', required: true, canGenerateUuid: true },
     { key: 'project_id', label: 'Opportunity', type: 'searchable-select', options: opportunityOptions, required: true },
     { key: 'person_id', label: 'Person', type: 'select', options: [], nullable: true, readOnly: true },
+    { key: 'start', label: 'Start', type: 'date', required: true },
+    { key: 'end', label: 'End', type: 'date', required: true },
     {
-      key: 'weeks',
-      label: 'Weeks (JSON: [{iso_year, iso_week, days_per_week}])',
-      type: 'textarea',
+      key: 'unit',
+      label: 'Unit',
+      type: 'select',
+      options: [
+        { value: 'utilization', label: 'utilization' },
+        { value: 'hours', label: 'hours' },
+      ],
+      required: true,
+    },
+    {
+      key: 'roster',
+      label: 'Roster (Mon–Sun)',
+      type: 'roster',
       required: true,
     },
     {

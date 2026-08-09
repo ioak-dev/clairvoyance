@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { WeekAllocation } from '../types';
-import { schedulesService, type UpsertScheduleRangeParams } from '../lib/services/schedules';
+import { schedulesService, type UpsertScheduleParams } from '../lib/services/schedules';
 
 export const scheduleQueryKeys = {
   all: ['schedules'] as const,
@@ -25,41 +24,12 @@ export function useSchedulesInRange(startDate: string, endDate: string, enabled 
   });
 }
 
-export function useUpsertScheduleRange() {
+export function useUpsertSchedule() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (params: UpsertScheduleRangeParams) => schedulesService.upsertRange(params),
+    mutationFn: (params: UpsertScheduleParams) => schedulesService.upsert(params),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
-    },
-  });
-}
-
-export function useUpsertScheduleWeeks() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ scheduleId, weeks }: { scheduleId: string; weeks: WeekAllocation[] }) =>
-      schedulesService.upsertWeeks(scheduleId, weeks),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
-    },
-  });
-}
-
-export function useDeleteScheduleWeeksInRange() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      scheduleId,
-      startDate,
-      endDate,
-    }: {
-      scheduleId: string;
-      startDate: string;
-      endDate: string;
-    }) => schedulesService.deleteWeeksInRange(scheduleId, startDate, endDate),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
     },
   });
 }

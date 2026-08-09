@@ -7,8 +7,8 @@ export interface PersonUtilizationSearchParams {
   from: string;
   to: string;
   availability?: AvailabilityMode;
-  /** Required days per week from request weeks. */
-  requiredDays?: number;
+  /** Required average free hours/day. */
+  requiredHours?: number;
   consultingUnitId?: string | null;
   practiceAreaId?: string | null;
   competencyCenterId?: string | null;
@@ -25,7 +25,7 @@ export const personUtilizationService = {
         p_from: params.from,
         p_to: params.to,
         p_availability: params.availability || 'everyone',
-        p_required_days: params.requiredDays ?? 5,
+        p_required_hours: params.requiredHours ?? 8,
         p_consulting_unit_id: params.consultingUnitId || null,
         p_practice_area_id: params.practiceAreaId || null,
         p_competency_center_id: params.competencyCenterId || null,

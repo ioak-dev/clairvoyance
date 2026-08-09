@@ -1,3 +1,34 @@
+CREATE OR REPLACE FUNCTION parse_roster_json(p_roster JSONB)
+RETURNS NUMERIC(8, 4)[]
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+    v_roster NUMERIC(8, 4)[];
+    v_elem JSONB;
+    v_i INT := 1;
+BEGIN
+    IF p_roster IS NULL OR jsonb_typeof(p_roster) <> 'array' OR jsonb_array_length(p_roster) <> 7 THEN
+        RAISE EXCEPTION 'roster must be a JSON array of length 7 (Mon..Sun)';
+    END IF;
+
+    v_roster := ARRAY[]::NUMERIC(8, 4)[];
+    FOR v_elem IN SELECT value FROM jsonb_array_elements(p_roster)
+    LOOP
+        IF jsonb_typeof(v_elem) NOT IN ('number') THEN
+            RAISE EXCEPTION 'roster[%] must be a number', v_i;
+        END IF;
+        IF (v_elem::TEXT)::NUMERIC < 0 THEN
+            RAISE EXCEPTION 'roster[%] must be >= 0', v_i;
+        END IF;
+        v_roster := array_append(v_roster, (v_elem::TEXT)::NUMERIC(8, 4));
+        v_i := v_i + 1;
+    END LOOP;
+
+    RETURN v_roster;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION publish_lab_requests(
     p_type TEXT,
     p_payload JSONB
@@ -7,12 +38,15 @@ AS $$
 DECLARE
     v_log_id UUID;
     v_elem JSONB;
-    v_week JSONB;
     v_ref_id TEXT;
     v_request_id UUID;
     v_upserted_count INT := 0;
     v_cleared_count INT := 0;
     v_row_cleared INT;
+    v_start DATE;
+    v_end DATE;
+    v_unit schedule_unit;
+    v_roster NUMERIC(8, 4)[];
 BEGIN
     IF p_type IS NULL OR trim(p_type) = '' THEN
         RAISE EXCEPTION 'type is required';
@@ -33,20 +67,34 @@ BEGIN
             RAISE EXCEPTION 'each payload item must have a non-empty id (reference_id)';
         END IF;
 
-        IF v_elem->'weeks' IS NULL OR jsonb_typeof(v_elem->'weeks') <> 'array'
-           OR jsonb_array_length(v_elem->'weeks') = 0 THEN
-            RAISE EXCEPTION 'each payload item must include a non-empty weeks array';
+        IF v_elem ? 'weeks' OR v_elem ? 'days_per_week' OR v_elem ? 'billable_percent' THEN
+            RAISE EXCEPTION 'payload must use start/end/unit/roster; weeks and days_per_week are not supported';
         END IF;
 
-        IF v_elem ? 'start_date' OR v_elem ? 'end_date' OR v_elem ? 'billable_percent' THEN
-            RAISE EXCEPTION 'payload must use weeks array; start_date, end_date, and billable_percent are not supported';
+        v_start := COALESCE(
+            NULLIF(v_elem->>'start', '')::DATE,
+            NULLIF(v_elem->>'start_date', '')::DATE
+        );
+        v_end := COALESCE(
+            NULLIF(v_elem->>'end', '')::DATE,
+            NULLIF(v_elem->>'end_date', '')::DATE
+        );
+        IF v_start IS NULL OR v_end IS NULL THEN
+            RAISE EXCEPTION 'each payload item must include start and end dates';
         END IF;
+        IF v_end < v_start THEN
+            RAISE EXCEPTION 'end must be on or after start for %', v_ref_id;
+        END IF;
+
+        v_unit := COALESCE((v_elem->>'unit')::schedule_unit, 'utilization');
+        v_roster := parse_roster_json(COALESCE(v_elem->'roster', '[1,1,1,1,1,0,0]'::jsonb));
 
         INSERT INTO request (
             reference_id, project_id, person_id,
             billable_type, booking_type, probability, status,
             request_name, notes,
-            consulting_unit_id, practice_area_id, competency_center_id, site_id, job_category
+            consulting_unit_id, practice_area_id, competency_center_id, site_id, job_level_id,
+            start_date, end_date, unit, roster
         ) VALUES (
             v_ref_id,
             (v_elem->>'project_id')::UUID,
@@ -55,13 +103,17 @@ BEGIN
             COALESCE((v_elem->>'booking_type')::booking_type, 'hard'),
             COALESCE((v_elem->>'probability')::SMALLINT, 100),
             COALESCE((v_elem->>'status')::approval_status, 'Pending'),
-            COALESCE(NULLIF(v_elem->>'request_name', ''), NULLIF(v_elem->>'required_skill', '')),
+            COALESCE(NULLIF(v_elem->>'request_name', ''), NULLIF(v_elem->>'required_skill', ''), NULLIF(v_elem->>'title', '')),
             NULLIF(v_elem->>'notes', ''),
             NULLIF(v_elem->>'consulting_unit_id', '')::UUID,
             NULLIF(v_elem->>'practice_area_id', '')::UUID,
             NULLIF(v_elem->>'competency_center_id', '')::UUID,
             NULLIF(v_elem->>'site_id', '')::UUID,
-            NULLIF(v_elem->>'job_category', '')
+            NULLIF(v_elem->>'job_level_id', '')::UUID,
+            v_start,
+            v_end,
+            v_unit,
+            v_roster
         )
         ON CONFLICT (reference_id) DO UPDATE SET
             project_id = EXCLUDED.project_id,
@@ -76,22 +128,13 @@ BEGIN
             practice_area_id = EXCLUDED.practice_area_id,
             competency_center_id = EXCLUDED.competency_center_id,
             site_id = EXCLUDED.site_id,
-            job_category = EXCLUDED.job_category,
+            job_level_id = EXCLUDED.job_level_id,
+            start_date = EXCLUDED.start_date,
+            end_date = EXCLUDED.end_date,
+            unit = EXCLUDED.unit,
+            roster = EXCLUDED.roster,
             updated_at = NOW()
         RETURNING id INTO v_request_id;
-
-        DELETE FROM request_week WHERE request_id = v_request_id;
-
-        FOR v_week IN SELECT value FROM jsonb_array_elements(v_elem->'weeks')
-        LOOP
-            INSERT INTO request_week (request_id, iso_year, iso_week, days_per_week)
-            VALUES (
-                v_request_id,
-                (v_week->>'iso_year')::SMALLINT,
-                (v_week->>'iso_week')::SMALLINT,
-                (v_week->>'days_per_week')::SMALLINT
-            );
-        END LOOP;
 
         v_upserted_count := v_upserted_count + 1;
 

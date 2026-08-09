@@ -4,11 +4,63 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import type { AllocationBlock, BillableType, BookingCommitmentType, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
-import { Search, ShieldAlert, Check, Calendar, Plus, X, UserMinus, UserCheck, Trash2 } from 'lucide-react';
+import type {
+  AllocationBlock,
+  BillableType,
+  BookingCommitmentType,
+  BookingRequest,
+  Project,
+  Resource,
+  Roster,
+  ScheduleAssignment,
+  ScheduleUnit,
+} from '../types';
+import { DEFAULT_ROSTER } from '../types';
+import { Search, Calendar, Plus, X, Trash2 } from 'lucide-react';
 import { getProjectCategory, getProjectCategoryIconClass, getBillableTypeFromProject, getProjectCategoryLabel } from '../lib/projectCategory';
-import { dateRangeToWeeks, isoWeekToDateRange } from '../lib/weekUtils';
+import {
+  blockHoursOnDate,
+  countWeekdaysInRange,
+  datesOverlap,
+  expandDates,
+  isoWeekdayIndex,
+  normalizeRoster,
+  personDailyCapacityHours,
+  weekdayAllocationValue,
+  weekdayRoster,
+} from '../lib/rosterUtils';
+import { addDays } from '../lib/dateUtils';
 import { useLookups } from '../hooks/useLookups';
+
+export type BookingEndsMode = 'on' | 'after';
+
+export type ScheduleEditPatch = {
+  title?: string;
+  startDate: string;
+  endDate: string;
+  unit: ScheduleUnit;
+  roster: Roster;
+};
+
+/** End date covering `occurrences` weekly periods starting at startDate. */
+function endDateAfterWeeklyOccurrences(startDate: string, occurrences: number): string {
+  const n = Math.max(1, Math.floor(occurrences));
+  // N full ISO weeks from the Monday of start → Sunday of week N
+  const startMondayOffset = isoWeekdayIndex(startDate); // 0=Mon
+  const firstWeekEnd = addDays(startDate, 6 - startMondayOffset);
+  if (n === 1) return firstWeekEnd < startDate ? startDate : firstWeekEnd;
+  return addDays(firstWeekEnd, (n - 1) * 7);
+}
+
+/** Smallest week count whose weekly end covers `endDate`. */
+function weeklyOccurrencesForEndDate(startDate: string, endDate: string): number {
+  if (!startDate || !endDate || endDate < startDate) return 1;
+  let n = 1;
+  while (n < 520 && endDateAfterWeeklyOccurrences(startDate, n) < endDate) {
+    n += 1;
+  }
+  return n;
+}
 
 const safeConfirm = (msg: string): boolean => {
   try {
@@ -18,6 +70,81 @@ const safeConfirm = (msg: string): boolean => {
     return true;
   }
 };
+
+/** Single allocation by % or hours/day; weekends always free. Total hours is derived. */
+function AllocationFields({
+  unit,
+  roster,
+  onChange,
+  dailyCapacity = 8,
+  startDate,
+  endDate,
+}: {
+  unit: ScheduleUnit;
+  roster: Roster;
+  onChange: (next: { unit: ScheduleUnit; roster: Roster }) => void;
+  dailyCapacity?: number;
+  startDate?: string;
+  endDate?: string;
+}) {
+  const cap = dailyCapacity > 0 ? dailyCapacity : 8;
+  const raw = weekdayAllocationValue(roster);
+  const hoursPerDay = unit === 'hours' ? raw : raw * cap;
+  const displayValue =
+    unit === 'utilization'
+      ? Math.round(raw * 1000) / 10
+      : Math.round(hoursPerDay * 10) / 10;
+  const weekdayCount =
+    startDate && endDate ? countWeekdaysInRange(startDate, endDate) : 0;
+  const totalHours = Math.round(hoursPerDay * weekdayCount * 10) / 10;
+
+  const setUnit = (next: ScheduleUnit) => {
+    if (next === unit) return;
+    if (next === 'hours') {
+      onChange({ unit: next, roster: weekdayRoster(hoursPerDay) });
+    } else {
+      onChange({ unit: next, roster: weekdayRoster(cap > 0 ? hoursPerDay / cap : 0) });
+    }
+  };
+
+  const setValue = (value: number) => {
+    const safe = Math.max(0, Number.isFinite(value) ? value : 0);
+    if (unit === 'utilization') {
+      onChange({ unit, roster: weekdayRoster(safe / 100) });
+    } else {
+      onChange({ unit, roster: weekdayRoster(safe) });
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-sm font-semibold text-secondary">Allocation</label>
+      <div className="flex items-stretch border border-default rounded-lg focus-within:ring-2 focus-within:ring-emerald-500 overflow-hidden">
+        <input
+          type="number"
+          min={0}
+          max={unit === 'utilization' ? 200 : 24}
+          step={unit === 'utilization' ? 5 : 0.5}
+          value={displayValue}
+          onChange={(e) => setValue(Number(e.target.value))}
+          className="min-w-0 flex-1 text-sm p-2.5 bg-transparent focus:outline-none"
+        />
+        <select
+          value={unit}
+          onChange={(e) => setUnit(e.target.value as ScheduleUnit)}
+          className="shrink-0 border-l border-default bg-surface-muted text-sm font-medium text-secondary px-2.5 focus:outline-none cursor-pointer"
+          aria-label="Allocation unit"
+        >
+          <option value="utilization">%</option>
+          <option value="hours">hrs / day</option>
+        </select>
+      </div>
+      <p className="text-xs text-tertiary">
+        Total hours: <span className="font-semibold text-secondary">{totalHours}</span>
+      </p>
+    </div>
+  );
+}
 
 interface CapacityFinderModalProps {
   isOpen: boolean;
@@ -43,25 +170,30 @@ export const CapacityFinderModal: React.FC<CapacityFinderModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Calculate available capacity per resource in the selected date range
-  const weekKeysInRange = dateRangeToWeeks(startDate, endDate);
-
+  // Peak weekday utilization in range → approximate free days/wk
+  const daysInRange = expandDates(startDate, endDate);
   const resourceAvailabilities = resources.map((res) => {
-    let maxAssignedDays = 0;
-    weekKeysInRange.forEach((wk) => {
-      let weekTotal = 0;
-      assignments.filter((a) => a.resourceId === res.id).forEach((a) => {
-        const match = a.weeks.find((w) => w.isoYear === wk.isoYear && w.isoWeek === wk.isoWeek);
-        if (match) weekTotal += match.daysPerWeek;
+    const dailyCap = personDailyCapacityHours(res.weeklyHours, res.fte);
+    const relevant = assignments.filter(
+      (a) => a.resourceId === res.id && datesOverlap(a.startDate, a.endDate, startDate, endDate),
+    );
+
+    let maxUtil = 0;
+    daysInRange.forEach((day) => {
+      if (isoWeekdayIndex(day) >= 5) return;
+      let hours = 0;
+      relevant.forEach((a) => {
+        hours += blockHoursOnDate(a, day, dailyCap);
       });
-      maxAssignedDays = Math.max(maxAssignedDays, weekTotal);
+      maxUtil = Math.max(maxUtil, dailyCap > 0 ? hours / dailyCap : 0);
     });
 
-    const availableDays = 5 - maxAssignedDays;
+    const peakAssignedDays = Math.min(5, maxUtil * 5);
+    const availableDays = Math.max(0, 5 - peakAssignedDays);
     return {
       resource: res,
-      assignedDays: maxAssignedDays,
-      availableDays,
+      assignedDays: Math.round(peakAssignedDays * 100) / 100,
+      availableDays: Math.round(availableDays * 100) / 100,
     };
   });
 
@@ -74,7 +206,7 @@ export const CapacityFinderModal: React.FC<CapacityFinderModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4" id="capacity-finder-modal-container">
+    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="capacity-finder-modal-container">
       <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-2xl w-full flex flex-col overflow-hidden max-h-[90vh]">
         <div className="app-card-header px-6 py-4 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
@@ -197,7 +329,9 @@ interface ScheduleModalProps {
     projectId: string;
     startDate: string;
     endDate: string;
-    daysPerWeek: number;
+    unit: ScheduleUnit;
+    roster: Roster;
+    title?: string;
     billableType: BillableType;
     bookingType: BookingCommitmentType;
   }) => void;
@@ -225,16 +359,28 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
   const [resourceId, setResourceId] = useState(initialResourceId);
   const [projectId, setProjectId] = useState(initialProjectId);
   const [startDate, setStartDate] = useState(initialStartDate);
-  const [endDate, setEndDate] = useState(initialEndDate);
-  const [daysPerWeek, setDaysPerWeek] = useState(5);
+  const [title, setTitle] = useState('');
+  const [unit, setUnit] = useState<ScheduleUnit>('utilization');
+  const [roster, setRoster] = useState<Roster>([...DEFAULT_ROSTER] as Roster);
+  const [bookingType, setBookingType] = useState<BookingCommitmentType>('hard');
+  const [endsMode, setEndsMode] = useState<BookingEndsMode>('on');
+  const [endsOnDate, setEndsOnDate] = useState(initialEndDate);
+  const [occurrences, setOccurrences] = useState(
+    () => weeklyOccurrencesForEndDate(initialStartDate, initialEndDate),
+  );
 
   useEffect(() => {
     if (isOpen) {
       setResourceId(initialResourceId);
       setProjectId(initialProjectId);
       setStartDate(initialStartDate);
-      setEndDate(initialEndDate);
-      setDaysPerWeek(5);
+      setTitle('');
+      setUnit('utilization');
+      setRoster([...DEFAULT_ROSTER] as Roster);
+      setBookingType('hard');
+      setEndsMode('on');
+      setEndsOnDate(initialEndDate);
+      setOccurrences(weeklyOccurrencesForEndDate(initialStartDate, initialEndDate));
     }
   }, [isOpen, initialResourceId, initialProjectId, initialStartDate, initialEndDate]);
 
@@ -248,39 +394,81 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
     ? getProjectCategoryLabel(getProjectCategory(billingProject))
     : '—';
 
+  const allocationResourceId = fromProject ? resourceId : initialResourceId;
+  const allocationResource =
+    resources.find((r) => r.id === allocationResourceId) || fixedResource || null;
+  const dailyCapacity = personDailyCapacityHours(
+    allocationResource?.weeklyHours,
+    allocationResource?.fte,
+  );
+
+  const resolveEndDate = (): string => {
+    if (endsMode === 'after') return endDateAfterWeeklyOccurrences(startDate, occurrences);
+    return endsOnDate || startDate;
+  };
+
+  const syncFromEndsOnDate = (nextEnd: string) => {
+    const safeEnd = startDate && nextEnd < startDate ? startDate : nextEnd;
+    setEndsOnDate(safeEnd);
+    setOccurrences(weeklyOccurrencesForEndDate(startDate, safeEnd));
+  };
+
+  const syncFromOccurrences = (nextOccurrences: number) => {
+    const n = Math.max(1, nextOccurrences);
+    setOccurrences(n);
+    setEndsOnDate(endDateAfterWeeklyOccurrences(startDate, n));
+  };
+
+  const syncFromStartDate = (nextStart: string) => {
+    setStartDate(nextStart);
+    if (endsMode === 'after') {
+      setEndsOnDate(endDateAfterWeeklyOccurrences(nextStart, occurrences));
+      return;
+    }
+    const safeEnd = endsOnDate && endsOnDate < nextStart ? nextStart : endsOnDate;
+    setEndsOnDate(safeEnd);
+    setOccurrences(weeklyOccurrencesForEndDate(nextStart, safeEnd || nextStart));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const resolvedResourceId = fromProject ? resourceId : initialResourceId;
     const resolvedProjectId = fromResource ? projectId : initialProjectId;
     const project = projects.find((p) => p.id === resolvedProjectId);
-    if (!resolvedResourceId || !resolvedProjectId || !project || !startDate || !endDate) return;
+    const resolvedEnd = resolveEndDate();
+    if (!resolvedResourceId || !resolvedProjectId || !project || !startDate || !resolvedEnd) return;
+    if (startDate > resolvedEnd) return;
 
     onSave({
       resourceId: resolvedResourceId,
       projectId: resolvedProjectId,
       startDate,
-      endDate,
-      daysPerWeek,
+      endDate: resolvedEnd,
+      unit,
+      roster: weekdayRoster(weekdayAllocationValue(roster)),
+      title: title.trim() || undefined,
       billableType: getBillableTypeFromProject(project),
-      bookingType: 'hard',
+      bookingType,
     });
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4" id="schedule-modal-container">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden">
-        <div className="app-card-header px-6 py-4 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-blue-500" />
-            {fromProject ? 'Assign Resource' : fromResource ? 'Assign Project' : 'Schedule Allocation'}
-          </h3>
+    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="schedule-modal-container">
+      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-2xl w-full flex flex-col overflow-hidden max-h-[92vh]">
+        <div className="app-card-header px-6 py-4 flex justify-between items-start gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-primary">Schedule Resource</h3>
+            <p className="text-xs text-secondary mt-0.5">
+              {fromProject ? 'Assign a Resource on a Project' : fromResource ? 'Assign a Project to a Resource' : 'Schedule a Resource on a Project'}
+            </p>
+          </div>
           <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           {fromBoth && fixedResource && fixedProject && (
             <div className="p-3 bg-surface-muted rounded-lg border border-subtle space-y-2">
               <div>
@@ -362,58 +550,95 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                required
-              />
+          <div>
+            <label className="block text-sm font-semibold text-secondary mb-1">Title (optional)</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Sprint support"
+              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            />
+          </div>
+
+          <AllocationFields
+            unit={unit}
+            roster={roster}
+            dailyCapacity={dailyCapacity}
+            startDate={startDate}
+            endDate={resolveEndDate()}
+            onChange={({ unit: nextUnit, roster: nextRoster }) => {
+              setUnit(nextUnit);
+              setRoster(nextRoster);
+            }}
+          />
+
+          <div>
+            <label className="block text-sm font-semibold text-secondary mb-1">Start</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => syncFromStartDate(e.target.value)}
+              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              required
+            />
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-secondary mb-2">Ends</p>
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 text-sm text-secondary">
+                <input type="radio" name="create-ends-mode" checked={endsMode === 'on'} onChange={() => setEndsMode('on')} />
+                <span className="w-12 font-medium">On</span>
+                <input
+                  type="date"
+                  value={endsOnDate}
+                  disabled={endsMode !== 'on'}
+                  onChange={(e) => syncFromEndsOnDate(e.target.value)}
+                  className="text-sm border border-default rounded-lg p-1.5 disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </label>
+              <label className="flex items-center gap-3 text-sm text-secondary">
+                <input type="radio" name="create-ends-mode" checked={endsMode === 'after'} onChange={() => setEndsMode('after')} />
+                <span className="w-12 font-medium">After</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={occurrences}
+                  disabled={endsMode !== 'after'}
+                  onChange={(e) => syncFromOccurrences(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-20 text-sm border border-default rounded-lg p-1.5 text-center disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+                <span className="text-xs text-tertiary">Occurrences (weeks)</span>
+              </label>
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Days per week (0–5)</label>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min="0"
-                max="5"
-                step="1"
-                value={daysPerWeek}
-                onChange={(e) => setDaysPerWeek(Number(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-              />
-              <span className="text-sm font-bold text-primary w-12 text-right">{daysPerWeek}d</span>
-            </div>
+            <label className="block text-sm font-semibold text-secondary mb-1">Booking</label>
+            <select
+              value={bookingType}
+              onChange={(e) => setBookingType(e.target.value as BookingCommitmentType)}
+              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            >
+              <option value="hard">Hard</option>
+              <option value="soft">Soft</option>
+            </select>
           </div>
 
           <div className="pt-4 flex justify-end gap-3 border-t border-subtle">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 border border-default text-secondary hover:bg-gray-50 rounded-lg text-sm font-medium cursor-pointer"
+              className="px-4 py-2 text-emerald-800 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer"
+              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-sm font-semibold cursor-pointer"
             >
-              Save Allocation
+              Schedule
             </button>
           </div>
         </form>
@@ -442,7 +667,8 @@ export const RequestModal: React.FC<RequestModalProps> = ({
   const [projectId, setProjectId] = useState('');
   const [startDate, setStartDate] = useState('2026-06-15');
   const [endDate, setEndDate] = useState('2026-06-30');
-  const [daysPerWeek, setDaysPerWeek] = useState(5);
+  const [unit, setUnit] = useState<ScheduleUnit>('utilization');
+  const [roster, setRoster] = useState<Roster>([...DEFAULT_ROSTER] as Roster);
   const [billableType, setBillableType] = useState<BillableType>('Billable');
   const [notes, setNotes] = useState('');
   const [consultingUnitId, setConsultingUnitId] = useState('');
@@ -458,7 +684,8 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       setProjectId(projects[0]?.id || '');
       setStartDate('2026-06-15');
       setEndDate('2026-06-30');
-      setDaysPerWeek(5);
+      setUnit('utilization');
+      setRoster([...DEFAULT_ROSTER] as Roster);
       setBillableType('Billable');
       setNotes('');
       setConsultingUnitId('');
@@ -475,10 +702,16 @@ export const RequestModal: React.FC<RequestModalProps> = ({
     (entry) => !practiceAreaId || entry.practice_area_id === practiceAreaId,
   );
 
+  const requestResource = resources.find((r) => r.id === resourceId);
+  const dailyCapacity = personDailyCapacityHours(
+    requestResource?.weeklyHours,
+    requestResource?.fte,
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!resourceId || !projectId || !startDate || !endDate) return;
-    const weeks = dateRangeToWeeks(startDate, endDate).map((w) => ({ ...w, daysPerWeek }));
+    if (startDate > endDate) return;
     onSave({
       resourceId,
       projectId,
@@ -492,13 +725,16 @@ export const RequestModal: React.FC<RequestModalProps> = ({
       competencyCenterId: competencyCenterId || null,
       siteId: siteId || null,
       jobLevelId: jobLevelId || null,
-      weeks,
+      startDate,
+      endDate,
+      unit,
+      roster: weekdayRoster(weekdayAllocationValue(roster)),
     });
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4" id="request-modal-container">
+    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="request-modal-container">
       <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-lg w-full flex flex-col overflow-hidden max-h-[90vh]">
         <div className="app-card-header px-6 py-4 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
@@ -566,33 +802,30 @@ export const RequestModal: React.FC<RequestModalProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Type</label>
-              <select
-                value={billableType}
-                onChange={(e) => setBillableType(e.target.value as BillableType)}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-              >
-                <option value="Billable">Billable</option>
-                <option value="Non-billable">Non-billable</option>
-                <option value="Opportunity">Opportunity</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Days per week</label>
-              <input
-                type="number"
-                min="0"
-                max="5"
-                step="0.5"
-                value={daysPerWeek}
-                onChange={(e) => setDaysPerWeek(Number(e.target.value))}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-                required
-              />
-            </div>
+          <div>
+            <label className="block text-sm font-semibold text-secondary mb-1">Type</label>
+            <select
+              value={billableType}
+              onChange={(e) => setBillableType(e.target.value as BillableType)}
+              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+            >
+              <option value="Billable">Billable</option>
+              <option value="Non-billable">Non-billable</option>
+              <option value="Opportunity">Opportunity</option>
+            </select>
           </div>
+
+          <AllocationFields
+            unit={unit}
+            roster={roster}
+            dailyCapacity={dailyCapacity}
+            startDate={startDate}
+            endDate={endDate}
+            onChange={({ unit: nextUnit, roster: nextRoster }) => {
+              setUnit(nextUnit);
+              setRoster(nextRoster);
+            }}
+          />
 
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -704,8 +937,8 @@ interface EditAllocationModalProps {
   block: AllocationBlock | null;
   projects: Project[];
   resources: Resource[];
-  onUpdate: (block: AllocationBlock, applyStartDate: string, applyEndDate: string, daysPerWeek: number) => void;
-  onDelete: (block: AllocationBlock, applyStartDate: string, applyEndDate: string) => void;
+  onUpdate: (block: AllocationBlock, updated: ScheduleEditPatch) => void | Promise<void>;
+  onDelete: (block: AllocationBlock) => void;
 }
 
 export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
@@ -717,37 +950,24 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   onUpdate,
   onDelete,
 }) => {
-  const [applyStartDate, setApplyStartDate] = useState('');
-  const [applyEndDate, setApplyEndDate] = useState('');
-  const [useFullBlock, setUseFullBlock] = useState(true);
-  const [daysPerWeek, setDaysPerWeek] = useState(5);
-  const [daysInput, setDaysInput] = useState('5');
-
-  const minDays = 0;
-  const maxDays = 5;
-  const dayStep = 0.25;
-
-  const clampDays = (value: number) => Math.max(minDays, Math.min(maxDays, value));
-
-  const normalizeDays = (value: number) => {
-    const clamped = clampDays(value);
-    return Math.round(clamped / dayStep) * dayStep;
-  };
-
-  const formatDays = (value: number) => {
-    const text = normalizeDays(value).toFixed(2);
-    return text.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
-  };
+  const [title, setTitle] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [unit, setUnit] = useState<ScheduleUnit>('utilization');
+  const [roster, setRoster] = useState<Roster>([...DEFAULT_ROSTER] as Roster);
+  const [endsMode, setEndsMode] = useState<BookingEndsMode>('on');
+  const [endsOnDate, setEndsOnDate] = useState('');
+  const [occurrences, setOccurrences] = useState(4);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (isOpen && block) {
-      setApplyStartDate(block.startDate);
-      setApplyEndDate(block.endDate);
-      setUseFullBlock(true);
-      const normalized = normalizeDays(block.daysPerWeek);
-      setDaysPerWeek(normalized);
-      setDaysInput(formatDays(normalized));
-    }
+    if (!isOpen || !block) return;
+    setTitle(block.title || '');
+    setUnit(block.unit);
+    setRoster(weekdayRoster(weekdayAllocationValue(normalizeRoster(block.roster))));
+    setStartDate(block.startDate);
+    setEndsMode('on');
+    setEndsOnDate(block.endDate);
+    setOccurrences(weeklyOccurrencesForEndDate(block.startDate, block.endDate));
   }, [isOpen, block]);
 
   if (!isOpen || !block) return null;
@@ -755,148 +975,173 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   const resource = resources.find((r) => r.id === block.resourceId);
   const project = projects.find((p) => p.id === block.projectId);
   const billingLabel = project ? getProjectCategoryLabel(getProjectCategory(project)) : block.billableType;
+  const dailyCapacity = personDailyCapacityHours(resource?.weeklyHours, resource?.fte);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const resolveEndDate = (): string => {
+    if (endsMode === 'after') return endDateAfterWeeklyOccurrences(startDate, occurrences);
+    return endsOnDate || startDate;
+  };
+
+  const syncFromEndsOnDate = (nextEnd: string) => {
+    const safeEnd = startDate && nextEnd < startDate ? startDate : nextEnd;
+    setEndsOnDate(safeEnd);
+    setOccurrences(weeklyOccurrencesForEndDate(startDate, safeEnd));
+  };
+
+  const syncFromOccurrences = (nextOccurrences: number) => {
+    const n = Math.max(1, nextOccurrences);
+    setOccurrences(n);
+    setEndsOnDate(endDateAfterWeeklyOccurrences(startDate, n));
+  };
+
+  const syncFromStartDate = (nextStart: string) => {
+    setStartDate(nextStart);
+    if (endsMode === 'after') {
+      setEndsOnDate(endDateAfterWeeklyOccurrences(nextStart, occurrences));
+      return;
+    }
+    const safeEnd = endsOnDate && endsOnDate < nextStart ? nextStart : endsOnDate;
+    setEndsOnDate(safeEnd);
+    setOccurrences(weeklyOccurrencesForEndDate(nextStart, safeEnd || nextStart));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!applyStartDate || !applyEndDate) return;
-    const normalized = normalizeDays(daysPerWeek);
-    onUpdate(block, applyStartDate, applyEndDate, normalized);
-    onClose();
+    const resolvedEnd = resolveEndDate();
+    if (!startDate || !resolvedEnd || startDate > resolvedEnd) return;
+    setSaving(true);
+    try {
+      await onUpdate(block, {
+        title: title.trim() || undefined,
+        startDate,
+        endDate: resolvedEnd,
+        unit,
+        roster: weekdayRoster(weekdayAllocationValue(roster)),
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4" id="edit-allocation-modal-container">
-      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden">
-        <div className="app-card-header px-6 py-4 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-blue-500" />
-            Edit Allocation
-          </h3>
+    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" id="edit-allocation-modal-container">
+      <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-2xl w-full flex flex-col overflow-hidden max-h-[92vh]">
+        <div className="app-card-header px-6 py-4 flex justify-between items-start gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-primary">Schedule Resource</h3>
+            <p className="text-xs text-secondary mt-0.5">Edit allocation on a project</p>
+          </div>
           <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg transition-colors text-tertiary hover:text-secondary">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="p-3 bg-surface-muted rounded-lg border border-subtle space-y-2">
+        <form onSubmit={(e) => void handleSubmit(e)} className="p-6 space-y-5 overflow-y-auto">
+          <div className="p-3 bg-surface-muted rounded-lg border border-subtle grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Resource</p>
               <p className="text-sm font-bold text-primary">{resource?.name || 'Unknown'}</p>
+              <p className="text-xs text-secondary">{resource?.role}</p>
             </div>
-            <div className="border-t border-subtle pt-2">
+            <div>
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Project</p>
               <p className="text-sm font-bold text-primary">{project?.name || 'Unknown'}</p>
-            </div>
-            <div className="border-t border-subtle pt-2">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wider mb-0.5">Block span</p>
-              <p className="text-sm text-primary">{block.startDate} – {block.endDate}</p>
-              <p className="text-xs text-secondary">{block.weeks.length} week(s) @ {block.daysPerWeek}d/wk · {billingLabel}</p>
-            </div>
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-secondary cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useFullBlock}
-              onChange={(e) => {
-                setUseFullBlock(e.target.checked);
-                if (e.target.checked) {
-                  setApplyStartDate(block.startDate);
-                  setApplyEndDate(block.endDate);
-                }
-              }}
-            />
-            Use full block span
-          </label>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Apply from</label>
-              <input
-                type="date"
-                value={applyStartDate}
-                onChange={(e) => { setApplyStartDate(e.target.value); setUseFullBlock(false); }}
-                min={block.startDate}
-                max={block.endDate}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1">Apply to</label>
-              <input
-                type="date"
-                value={applyEndDate}
-                onChange={(e) => { setApplyEndDate(e.target.value); setUseFullBlock(false); }}
-                min={block.startDate}
-                max={block.endDate}
-                className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                required
-              />
+              <p className="text-xs text-secondary">{billingLabel} · {block.bookingType}</p>
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-secondary mb-1">Days per week (0–5)</label>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min="0"
-                max="5"
-                step="0.25"
-                value={daysPerWeek}
-                onChange={(e) => {
-                  const next = normalizeDays(Number(e.target.value));
-                  setDaysPerWeek(next);
-                  setDaysInput(formatDays(next));
-                }}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-              />
-              <input
-                type="number"
-                min={minDays}
-                max={maxDays}
-                step={dayStep}
-                value={daysInput}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  setDaysInput(raw);
-                  const parsed = Number(raw);
-                  if (!Number.isNaN(parsed)) {
-                    setDaysPerWeek(normalizeDays(parsed));
-                  }
-                }}
-                onBlur={() => {
-                  const parsed = Number(daysInput);
-                  const normalized = Number.isNaN(parsed) ? normalizeDays(daysPerWeek) : normalizeDays(parsed);
-                  setDaysPerWeek(normalized);
-                  setDaysInput(formatDays(normalized));
-                }}
-                className="w-20 text-sm font-semibold text-primary border border-default rounded-lg px-2 py-1 text-right focus:ring-2 focus:ring-blue-400 focus:outline-none"
-              />
+            <label className="block text-sm font-semibold text-secondary mb-1">Title (optional)</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Sprint support"
+              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            />
+          </div>
+
+          <AllocationFields
+            unit={unit}
+            roster={roster}
+            dailyCapacity={dailyCapacity}
+            startDate={startDate}
+            endDate={resolveEndDate()}
+            onChange={({ unit: nextUnit, roster: nextRoster }) => {
+              setUnit(nextUnit);
+              setRoster(nextRoster);
+            }}
+          />
+
+          <div>
+            <label className="block text-sm font-semibold text-secondary mb-1">Start</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => syncFromStartDate(e.target.value)}
+              className="w-full text-sm border border-default rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-secondary mb-2">Ends</p>
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 text-sm text-secondary">
+                <input type="radio" name="ends-mode" checked={endsMode === 'on'} onChange={() => setEndsMode('on')} />
+                <span className="w-12 font-medium">On</span>
+                <input
+                  type="date"
+                  value={endsOnDate}
+                  disabled={endsMode !== 'on'}
+                  onChange={(e) => syncFromEndsOnDate(e.target.value)}
+                  className="text-sm border border-default rounded-lg p-1.5 disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </label>
+              <label className="flex items-center gap-3 text-sm text-secondary">
+                <input type="radio" name="ends-mode" checked={endsMode === 'after'} onChange={() => setEndsMode('after')} />
+                <span className="w-12 font-medium">After</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={occurrences}
+                  disabled={endsMode !== 'after'}
+                  onChange={(e) => syncFromOccurrences(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-20 text-sm border border-default rounded-lg p-1.5 text-center disabled:opacity-50 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+                <span className="text-xs text-tertiary">Occurrences (weeks)</span>
+              </label>
             </div>
           </div>
 
-          <div className="pt-4 flex justify-between items-center border-t border-subtle">
+          <div className="pt-2 flex flex-wrap justify-between items-center gap-3 border-t border-subtle">
             <button
               type="button"
               onClick={() => {
-                if (safeConfirm('Delete weeks in the selected apply range?')) {
-                  onDelete(block, applyStartDate, applyEndDate);
+                if (safeConfirm('Delete this entire allocation?')) {
+                  onDelete(block);
                   onClose();
                 }
               }}
               className="px-3 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium flex items-center gap-1 cursor-pointer"
             >
-              <Trash2 className="w-4 h-4" /> Delete range
+              <Trash2 className="w-4 h-4" /> Delete
             </button>
 
-            <div className="flex gap-3">
-              <button type="button" onClick={onClose} className="px-4 py-2 border border-default text-secondary hover:bg-gray-50 rounded-lg text-sm font-medium cursor-pointer">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-emerald-800 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer"
+              >
                 Cancel
               </button>
-              <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer">
-                Save Changes
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-60"
+              >
+                Update
               </button>
             </div>
           </div>
@@ -972,7 +1217,7 @@ export const ResourceFormModal: React.FC<ResourceFormModalProps> = ({ isOpen, on
   };
 
   return (
-    <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4">
       <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden">
         <div className="app-card-header px-6 py-4 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-primary flex items-center gap-2">
@@ -1111,7 +1356,7 @@ export const ProjectFormModal: React.FC<ProjectFormModalProps> = ({ isOpen, onCl
   };
 
   return (
-    <div className="fixed inset-0 modal-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4">
       <div className="bg-surface rounded-xl shadow-app-md border border-subtle max-w-md w-full flex flex-col overflow-hidden">
         <div className="app-card-header px-6 py-4 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-primary flex items-center gap-2">

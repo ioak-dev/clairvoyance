@@ -65,25 +65,29 @@ router.post('/publish', async (req: Request, res: Response) => {
     return;
   }
 
-  // Normalize weeks keys: accept both camelCase and snake_case from the UI.
-  const normalizedWeeksPayload = body.payload.map((item: Record<string, unknown>) => {
-    if (!Array.isArray(item.weeks)) return item;
-    return {
-      ...item,
-      weeks: (item.weeks as Record<string, unknown>[]).map((w) => ({
-        iso_year: w.iso_year ?? w.isoYear,
-        iso_week: w.iso_week ?? w.isoWeek,
-        days_per_week: w.days_per_week ?? w.daysPerWeek,
-      })),
-    };
-  });
-
   try {
+    // Normalize date-range keys; reject legacy weeks payloads.
+    const normalizedRangePayload = body.payload.map((item: Record<string, unknown>) => {
+      if (!item || typeof item !== 'object') return item;
+      if ('weeks' in item || 'days_per_week' in item || 'billable_percent' in item) {
+        throw new Error('payload must use start/end/unit/roster; weeks and days_per_week are not supported');
+      }
+
+      const next = { ...item };
+      if (next.start == null && next.start_date != null) next.start = next.start_date;
+      if (next.end == null && next.end_date != null) next.end = next.end_date;
+      if (next.start_date == null && next.start != null) next.start_date = next.start;
+      if (next.end_date == null && next.end != null) next.end_date = next.end;
+      if (next.unit == null) next.unit = 'utilization';
+      if (next.roster == null) next.roster = [1, 1, 1, 1, 1, 0, 0];
+      return next;
+    });
+
     const simulationType = body.type.trim();
     const normalizedPayload =
       simulationType.toLowerCase() === 'request'
-        ? await normalizeRequestJobLevelIds(normalizedWeeksPayload)
-        : normalizedWeeksPayload;
+        ? await normalizeRequestJobLevelIds(normalizedRangePayload)
+        : normalizedRangePayload;
 
     const functionName =
       simulationType.toLowerCase() === 'project' ? 'publish_lab_projects' : 'publish_lab_requests';

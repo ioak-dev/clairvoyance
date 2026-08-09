@@ -57,7 +57,7 @@ export function matchesRequest(
   if (criteria.status && request.status !== criteria.status) {
     return false;
   }
-  if (criteria.billable_type && request.project?.billableType !== criteria.billable_type) {
+  if (criteria.billable_type && request.billableType !== criteria.billable_type) {
     return false;
   }
   if (criteria.unassigned_only === true && request.resourceId) {

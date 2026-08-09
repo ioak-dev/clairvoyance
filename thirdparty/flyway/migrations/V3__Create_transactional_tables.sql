@@ -1,3 +1,18 @@
+-- Shared roster validation: length 7, all elements >= 0.
+CREATE OR REPLACE FUNCTION validate_roster(p_roster NUMERIC[])
+RETURNS BOOLEAN
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT
+        p_roster IS NOT NULL
+        AND array_length(p_roster, 1) = 7
+        AND array_lower(p_roster, 1) = 1
+        AND NOT EXISTS (
+            SELECT 1 FROM unnest(p_roster) AS v(val) WHERE val IS NULL OR val < 0
+        );
+$$;
+
 CREATE TABLE request (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reference_id TEXT NOT NULL UNIQUE,
@@ -14,43 +29,32 @@ CREATE TABLE request (
     competency_center_id UUID REFERENCES competency_center(id) ON DELETE SET NULL,
     site_id UUID REFERENCES site(id) ON DELETE SET NULL,
     job_level_id UUID REFERENCES job_level(id) ON DELETE SET NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    unit schedule_unit NOT NULL DEFAULT 'utilization',
+    roster NUMERIC(8, 4)[7] NOT NULL DEFAULT ARRAY[1, 1, 1, 1, 1, 0, 0]::NUMERIC(8, 4)[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE request_week (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    request_id UUID NOT NULL REFERENCES request(id) ON DELETE CASCADE,
-    iso_year SMALLINT NOT NULL,
-    iso_week SMALLINT NOT NULL,
-    days_per_week SMALLINT NOT NULL CHECK (days_per_week BETWEEN 0 AND 5),
-    CONSTRAINT request_week_calendar_fk
-        FOREIGN KEY (iso_year, iso_week) REFERENCES calendar_week(iso_year, iso_week),
-    CONSTRAINT request_week_unique UNIQUE (request_id, iso_year, iso_week)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT request_date_range CHECK (end_date >= start_date),
+    CONSTRAINT request_roster_valid CHECK (validate_roster(roster))
 );
 
 CREATE TABLE schedule (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT,
     project_id UUID NOT NULL REFERENCES project(id) ON DELETE CASCADE,
     person_id UUID NOT NULL REFERENCES person(id) ON DELETE CASCADE,
     request_id UUID REFERENCES request(id) ON DELETE SET NULL,
     billable_type billable_type NOT NULL,
     booking_type booking_type NOT NULL DEFAULT 'hard',
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    unit schedule_unit NOT NULL DEFAULT 'utilization',
+    roster NUMERIC(8, 4)[7] NOT NULL DEFAULT ARRAY[1, 1, 1, 1, 1, 0, 0]::NUMERIC(8, 4)[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE schedule_week (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    schedule_id UUID NOT NULL REFERENCES schedule(id) ON DELETE CASCADE,
-    person_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    iso_year SMALLINT NOT NULL,
-    iso_week SMALLINT NOT NULL,
-    days_per_week SMALLINT NOT NULL CHECK (days_per_week BETWEEN 0 AND 5),
-    CONSTRAINT schedule_week_calendar_fk
-        FOREIGN KEY (iso_year, iso_week) REFERENCES calendar_week(iso_year, iso_week),
-    CONSTRAINT schedule_week_unique UNIQUE (person_id, project_id, iso_year, iso_week)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT schedule_date_range CHECK (end_date >= start_date),
+    CONSTRAINT schedule_roster_valid CHECK (validate_roster(roster))
 );
 
 CREATE TABLE vacation (
@@ -90,6 +94,6 @@ CREATE TRIGGER simulation_log_set_updated_at
     BEFORE UPDATE ON simulation_log
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-GRANT SELECT ON request, request_week, schedule, schedule_week, vacation, simulation_log TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON request, request_week, schedule, schedule_week, vacation, simulation_log
+GRANT SELECT ON request, schedule, vacation, simulation_log TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON request, schedule, vacation, simulation_log
     TO authenticated, service_role;

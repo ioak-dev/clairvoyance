@@ -1,3 +1,2 @@
--- V11__Seed_dev_data.sql
--- Seed data migration file (currently empty for fresh database)
--- All seed data will be imported via API from Excel files
+-- Dev seed is loaded via Excel import APIs; no SQL seed rows required.
+SELECT 1;

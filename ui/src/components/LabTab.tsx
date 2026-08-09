@@ -17,8 +17,8 @@ import { requestQueryKeys, useRequests } from '../hooks/useRequests';
 import { requestsService } from '../lib/services/requests';
 import type { ApprovalStatus } from '../types/api';
 import { requestDateBounds, toLabRequestPayloadItem } from '../types/api';
-import type { BookingRequest, WeekAllocation } from '../types';
-import { avgDaysPerWeek } from '../lib/weekUtils';
+import { DEFAULT_ROSTER, type BookingRequest, type Roster, type ScheduleUnit } from '../types';
+import { normalizeRoster, rosterSummaryLabel } from '../lib/rosterUtils';
 
 function normalizeSimulationType(value: string): SimulationType {
   return value.trim().toLowerCase() === 'project' ? 'Project' : 'Request';
@@ -39,33 +39,26 @@ function toEditablePayloadObject(row: SimulationRow): Record<string, unknown> {
   return { ...item };
 }
 
-function parseWeeksFromPayload(value: unknown): WeekAllocation[] {
+function parseRosterFromPayload(value: unknown): Roster {
   let raw = value;
   if (typeof raw === 'string') {
     raw = JSON.parse(raw.trim());
   }
-  if (!Array.isArray(raw)) {
-    throw new Error('Weeks must be a JSON array.');
+  if (!Array.isArray(raw) || raw.length !== 7) {
+    throw new Error('Roster must be a JSON array of length 7 (Mon–Sun).');
   }
-  return raw.map((entry) => {
-    if (!entry || typeof entry !== 'object') {
-      throw new Error('Each week entry must be an object.');
-    }
-    const row = entry as Record<string, unknown>;
-    return {
-      isoYear: Number(row.iso_year),
-      isoWeek: Number(row.iso_week),
-      daysPerWeek: Number(row.days_per_week),
-    };
-  });
+  return normalizeRoster(raw);
 }
 
-function weeksToEditValue(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return JSON.stringify(value, null, 2);
+function rosterToEditValue(value: unknown): string {
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(normalizeRoster(JSON.parse(value)));
+    } catch {
+      return JSON.stringify(DEFAULT_ROSTER);
+    }
   }
-  return '[]';
+  return JSON.stringify(normalizeRoster(value));
 }
 
 function toFieldValue(value: unknown): string {
@@ -82,6 +75,10 @@ function parseFieldValue(field: EditField, rawValue: string): unknown {
     }
     const parsed = Number(rawValue);
     return Number.isNaN(parsed) ? rawValue : parsed;
+  }
+
+  if (field.type === 'roster') {
+    return parseRosterFromPayload(rawValue);
   }
 
   if (!rawValue.trim() && field.nullable) {
@@ -109,6 +106,12 @@ function toSimulationRow(entry: SimulationLogEntry): SimulationRow {
     recordCount: entry.recordCount,
     rawPayloadText: toRawPayloadText(entry.simulationType, entry.payload),
   };
+}
+
+function resolveStartEnd(payload: Record<string, unknown>): { start: string; end: string } {
+  const start = toFieldValue(payload.start ?? payload.start_date);
+  const end = toFieldValue(payload.end ?? payload.end_date);
+  return { start, end };
 }
 
 export const LabTab: React.FC = () => {
@@ -157,11 +160,11 @@ export const LabTab: React.FC = () => {
   const requestPrefillOptions = useMemo(() => {
     return requests.map((request) => {
       const bounds = requestDateBounds(request);
-      const days = avgDaysPerWeek(request.weeks);
-      const rangeLabel = bounds ? `${bounds.startDate} to ${bounds.endDate}` : 'no weeks';
+      const summary = rosterSummaryLabel(request.unit, request.roster);
+      const rangeLabel = bounds ? `${bounds.startDate} to ${bounds.endDate}` : 'no dates';
       return {
         value: request.id,
-        label: `${request.requestName || 'Request'} (${rangeLabel}, ${days}d/wk)`,
+        label: `${request.requestName || 'Request'} (${rangeLabel}, ${summary})`,
       };
     });
   }, [requests]);
@@ -185,12 +188,25 @@ export const LabTab: React.FC = () => {
     const firstPayload = toEditablePayloadObject(row);
     const nextValues: Record<string, string> = {};
     Object.entries(firstPayload).forEach(([key, value]) => {
-      if (key === 'weeks') {
-        nextValues.weeks = weeksToEditValue(value);
+      if (key === 'weeks' || key === 'days_per_week') {
+        return;
+      }
+      if (key === 'roster') {
+        nextValues.roster = rosterToEditValue(value);
+      } else if (key === 'start_date') {
+        nextValues.start = toFieldValue(value);
+      } else if (key === 'end_date') {
+        nextValues.end = toFieldValue(value);
       } else {
         nextValues[key] = toFieldValue(value);
       }
     });
+
+    const { start, end } = resolveStartEnd(firstPayload);
+    if (start) nextValues.start = start;
+    if (end) nextValues.end = end;
+    if (!nextValues.unit) nextValues.unit = 'utilization';
+    if (!nextValues.roster) nextValues.roster = JSON.stringify(DEFAULT_ROSTER);
 
     if (simulationType === 'Request') {
       nextValues.booking_type = 'soft';
@@ -206,8 +222,8 @@ export const LabTab: React.FC = () => {
 
   const toRequestPatch = (
     payload: Record<string, unknown>,
-    weeks: WeekAllocation[],
   ): Partial<BookingRequest> & { status?: ApprovalStatus } => {
+    const { start, end } = resolveStartEnd(payload);
     return {
       referenceId: toFieldValue(payload.id),
       projectId: toFieldValue(payload.project_id),
@@ -222,14 +238,17 @@ export const LabTab: React.FC = () => {
       competencyCenterId: toFieldValue(payload.competency_center_id) || null,
       siteId: toFieldValue(payload.site_id) || null,
       jobLevelId: toFieldValue(payload.job_level_id) || null,
-      weeks,
+      startDate: start,
+      endDate: end,
+      unit: (toFieldValue(payload.unit) || 'utilization') as ScheduleUnit,
+      roster: normalizeRoster(payload.roster),
     };
   };
 
   const toRequestCreateInput = (
     payload: Record<string, unknown>,
-    weeks: WeekAllocation[],
   ): Omit<BookingRequest, 'id' | 'status'> => {
+    const { start, end } = resolveStartEnd(payload);
     return {
       referenceId: toFieldValue(payload.id),
       resourceId: toFieldValue(payload.person_id),
@@ -244,7 +263,10 @@ export const LabTab: React.FC = () => {
       competencyCenterId: toFieldValue(payload.competency_center_id) || null,
       siteId: toFieldValue(payload.site_id) || null,
       jobLevelId: toFieldValue(payload.job_level_id) || null,
-      weeks,
+      startDate: start,
+      endDate: end,
+      unit: (toFieldValue(payload.unit) || 'utilization') as ScheduleUnit,
+      roster: normalizeRoster(payload.roster),
     };
   };
 
@@ -264,8 +286,8 @@ export const LabTab: React.FC = () => {
     const payloadItem = toLabRequestPayloadItem(selectedRequest);
     const nextValues: Record<string, string> = {};
     Object.entries(payloadItem).forEach(([key, value]) => {
-      if (key === 'weeks') {
-        nextValues.weeks = weeksToEditValue(value);
+      if (key === 'roster') {
+        nextValues.roster = rosterToEditValue(value);
       } else {
         nextValues[key] = toFieldValue(value);
       }
@@ -281,7 +303,7 @@ export const LabTab: React.FC = () => {
 
   const handleCreate = async (
     input: { type: string; payload: Record<string, unknown>[] },
-    rawText: string,
+    _rawText: string,
   ) => {
     const simulationType = normalizeSimulationType(input.type);
     const payload = Array.isArray(input.payload) && input.payload.length > 0 ? input.payload : [{}];
@@ -311,16 +333,31 @@ export const LabTab: React.FC = () => {
         }
       }
 
-      payloadObject[field.key] = parseFieldValue(field, rawValue);
+      try {
+        payloadObject[field.key] = parseFieldValue(field, rawValue);
+      } catch (err) {
+        setEditError(err instanceof Error ? err.message : `Invalid ${field.label}.`);
+        return;
+      }
     }
 
     if (editingType === 'Request') {
       payloadObject.billable_type = 'Opportunity';
       payloadObject.booking_type = 'soft';
-      try {
-        payloadObject.weeks = parseWeeksFromPayload(payloadObject.weeks ?? editValues.weeks);
-      } catch (err) {
-        setEditError(err instanceof Error ? err.message : 'Invalid weeks JSON.');
+
+      const start = toFieldValue(payloadObject.start);
+      const end = toFieldValue(payloadObject.end);
+      if (!start || !end) {
+        setEditError('Start and End dates are required.');
+        return;
+      }
+      if (start > end) {
+        setEditError('End must be on or after Start.');
+        return;
+      }
+
+      if ('weeks' in payloadObject || 'days_per_week' in payloadObject) {
+        setEditError('payload must use start/end/unit/roster; weeks are not supported.');
         return;
       }
     }
@@ -330,19 +367,16 @@ export const LabTab: React.FC = () => {
       setEditError('');
 
       if (editingType === 'Request' && selectedPrefillRequestId) {
-        const weeks = payloadObject.weeks as WeekAllocation[];
         const nextReferenceId = toFieldValue(payloadObject.id).trim();
         const originalReferenceId = prefilledRequestReferenceId.trim();
         const shouldCreateNewRequest = nextReferenceId !== originalReferenceId;
 
         if (shouldCreateNewRequest) {
-          const input = toRequestCreateInput(payloadObject, weeks);
-          const { weeks: weekRows, ...header } = input;
-          await requestsService.create(header, weekRows);
+          await requestsService.create(toRequestCreateInput(payloadObject));
         } else {
           await requestsService.update(
             selectedPrefillRequestId,
-            toRequestPatch(payloadObject, weeks),
+            toRequestPatch(payloadObject),
           );
         }
 

@@ -7,7 +7,6 @@ import React from 'react';
 import { BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
 import { Download, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { isoWeekToDateRange } from '../lib/weekUtils';
 import { scheduleAuditService } from '../lib/services/scheduleAudit';
 import type { ScheduleAuditReportRow } from '../types/api';
 
@@ -23,9 +22,14 @@ type ReportKey =
   | 'scheduleAuditLog'
   | 'resources'
   | 'projects'
-  | 'scheduleByWeek'
-  | 'requestsByWeek'
+  | 'schedules'
+  | 'requests'
   | 'vacations';
+
+function rosterExportValue(roster: number[] | null | undefined): string {
+  if (!roster || !Array.isArray(roster)) return '';
+  return JSON.stringify(roster);
+}
 
 type AuditFilterMode = 'project' | 'resource';
 
@@ -53,10 +57,14 @@ function toScheduleAuditWorkbookRow(row: ScheduleAuditReportRow): Record<string,
     project_name: row.project_name || '',
     person_employee_id: row.person_employee_id || '',
     person_name: row.person_name || '',
-    iso_year: row.iso_year ?? '',
-    iso_week: row.iso_week ?? '',
-    days_per_week_before: row.days_per_week_before ?? '',
-    days_per_week_after: row.days_per_week_after ?? '',
+    start_date_before: row.start_date_before || '',
+    start_date_after: row.start_date_after || '',
+    end_date_before: row.end_date_before || '',
+    end_date_after: row.end_date_after || '',
+    unit_before: row.unit_before || '',
+    unit_after: row.unit_after || '',
+    roster_before: rosterExportValue(row.roster_before),
+    roster_after: rosterExportValue(row.roster_after),
   };
 }
 
@@ -148,72 +156,60 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
           })),
       },
       {
-        key: 'scheduleByWeek',
-        title: 'Schedule by Week',
-        filePrefix: 'schedule_by_week',
+        key: 'schedules',
+        title: 'Schedules',
+        filePrefix: 'schedules',
         buildRows: () =>
           assignments
-            .flatMap((assignment) =>
-              assignment.weeks.map((week) => {
-                const range = isoWeekToDateRange(week.isoYear, week.isoWeek);
-                return {
-                  schedule_id: assignment.id,
-                  resource_id: assignment.resourceId,
-                  resource_name: resourceNameById.get(assignment.resourceId) || assignment.resourceId,
-                  project_id: assignment.projectId,
-                  project_name: projectNameById.get(assignment.projectId) || assignment.projectId,
-                  request_id: assignment.requestId || '',
-                  billable_type: assignment.billableType,
-                  booking_type: assignment.bookingType,
-                  iso_year: week.isoYear,
-                  iso_week: week.isoWeek,
-                  week_start: range.start,
-                  week_end: range.end,
-                  days_per_week: week.daysPerWeek,
-                };
-              }),
-            )
+            .map((assignment) => ({
+              schedule_id: assignment.id,
+              resource_id: assignment.resourceId,
+              resource_name: resourceNameById.get(assignment.resourceId) || assignment.resourceId,
+              project_id: assignment.projectId,
+              project_name: projectNameById.get(assignment.projectId) || assignment.projectId,
+              request_id: assignment.requestId || '',
+              billable_type: assignment.billableType,
+              booking_type: assignment.bookingType,
+              start: assignment.startDate,
+              end: assignment.endDate,
+              unit: assignment.unit,
+              roster: rosterExportValue(assignment.roster),
+            }))
             .sort((a, b) => {
-              if (a.iso_year !== b.iso_year) return Number(a.iso_year) - Number(b.iso_year);
-              if (a.iso_week !== b.iso_week) return Number(a.iso_week) - Number(b.iso_week);
+              if (a.start !== b.start) return String(a.start).localeCompare(String(b.start));
+              if (a.end !== b.end) return String(a.end).localeCompare(String(b.end));
               return String(a.resource_name).localeCompare(String(b.resource_name));
             }),
       },
       {
-        key: 'requestsByWeek',
-        title: 'Requests by Week',
-        filePrefix: 'requests_by_week',
+        key: 'requests',
+        title: 'Requests',
+        filePrefix: 'requests',
         buildRows: () =>
           requests
-            .flatMap((request) =>
-              request.weeks.map((week) => {
-                const range = isoWeekToDateRange(week.isoYear, week.isoWeek);
-                return {
-                  request_id: request.id,
-                  reference_id: request.referenceId,
-                  request_name: request.requestName || '',
-                  status: request.status,
-                  probability: request.probability,
-                  resource_id: request.resourceId || '',
-                  resource_name: request.resourceId
-                    ? resourceNameById.get(request.resourceId) || request.resourceId
-                    : '',
-                  project_id: request.projectId,
-                  project_name: projectNameById.get(request.projectId) || request.projectId,
-                  billable_type: request.billableType,
-                  booking_type: request.bookingType,
-                  iso_year: week.isoYear,
-                  iso_week: week.isoWeek,
-                  week_start: range.start,
-                  week_end: range.end,
-                  days_per_week: week.daysPerWeek,
-                  notes: request.notes || '',
-                };
-              }),
-            )
+            .map((request) => ({
+              request_id: request.id,
+              reference_id: request.referenceId,
+              request_name: request.requestName || '',
+              status: request.status,
+              probability: request.probability,
+              resource_id: request.resourceId || '',
+              resource_name: request.resourceId
+                ? resourceNameById.get(request.resourceId) || request.resourceId
+                : '',
+              project_id: request.projectId,
+              project_name: projectNameById.get(request.projectId) || request.projectId,
+              billable_type: request.billableType,
+              booking_type: request.bookingType,
+              start: request.startDate,
+              end: request.endDate,
+              unit: request.unit,
+              roster: rosterExportValue(request.roster),
+              notes: request.notes || '',
+            }))
             .sort((a, b) => {
-              if (a.iso_year !== b.iso_year) return Number(a.iso_year) - Number(b.iso_year);
-              if (a.iso_week !== b.iso_week) return Number(a.iso_week) - Number(b.iso_week);
+              if (a.start !== b.start) return String(a.start).localeCompare(String(b.start));
+              if (a.end !== b.end) return String(a.end).localeCompare(String(b.end));
               return String(a.request_name || a.reference_id).localeCompare(String(b.request_name || b.reference_id));
             }),
       },

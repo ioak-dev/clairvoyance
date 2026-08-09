@@ -14,7 +14,7 @@ docker compose up -d
 | Layer | Managed by |
 |-------|------------|
 | Roles, auth helpers (`auth`, `api` schemas) | `thirdparty/sql/init/` (first DB boot only) |
-| Application tables (`project`, `person`, `schedule`, etc.) | Flyway `migrations/` in **`public`** |
+| Application tables (`project`, `person`, `schedule`, `request`, etc.) | Flyway `migrations/` in **`public`** |
 
 ## Commands
 
@@ -58,7 +58,7 @@ Host Postgres port: **5433** (see `thirdparty/README.md`).
 
 | Consumer | Endpoint |
 |----------|----------|
-| UI (PostgREST) | `http://localhost:4001/project`, `/person`, `/schedule`, etc. |
+| UI (PostgREST) | `http://localhost:4001/project`, `/person`, `/schedule`, `/request`, etc. |
 | Node (`pg`) | `DATABASE_URL` → same tables in `public` |
 
 ## Reset database

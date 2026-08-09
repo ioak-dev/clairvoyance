@@ -7,7 +7,7 @@ import React from 'react';
 import { Resource, Project, BookingRequest } from '../types';
 import { Check, X, ShieldAlert, BadgeInfo, FileSliders, UserCheck, Trash2, HelpCircle } from 'lucide-react';
 import { getProjectCategoryDotClassForProject } from '../lib/projectCategory';
-import { avgDaysPerWeek, maxDaysPerWeek } from '../lib/weekUtils';
+import { rosterSummaryLabel } from '../lib/rosterUtils';
 import { requestDateBounds } from '../types/api';
 
 interface RequestsTabProps {
@@ -35,7 +35,6 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
 
   return (
     <div className="space-y-6" id="requests-tab-container">
-      {/* Intro section */}
       <div className="app-card p-6">
         <div className="flex items-center gap-3">
           <div className="p-2 tint-purple rounded-lg">
@@ -51,8 +50,6 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Main interactive pending list (spanning 2 columns) */}
         <div className="lg:col-span-2 space-y-4">
           <h3 className="text-xs font-bold text-tertiary uppercase tracking-widest pl-1">
             Pending Resource Proposals ({pendingRequests.length})
@@ -60,7 +57,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
 
           {pendingRequests.length === 0 ? (
             <div className="app-card border-dashed p-12 text-center text-tertiary text-sm">
-              All booking allocations requests have been resolved! 🌟
+              All booking allocations requests have been resolved!
             </div>
           ) : (
             <div className="space-y-4">
@@ -68,14 +65,13 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                 const res = getResource(req.resourceId);
                 const proj = getProject(req.projectId);
                 const bounds = requestDateBounds(req);
-                const avgDays = avgDaysPerWeek(req.weeks);
+                const summary = rosterSummaryLabel(req.unit, req.roster);
 
                 return (
                   <div
                     key={req.id}
                     className="app-card hover:shadow-app-md transition-shadow duration-200 overflow-hidden flex flex-col"
                   >
-                    {/* Header bar within request */}
                     <div className="px-6 py-4 bg-surface-muted/70 border-b border-subtle flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-3">
                         {res?.avatarUrl ? (
@@ -96,13 +92,11 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                         </div>
                       </div>
 
-                      {/* Pill Badge */}
                       <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-xs font-bold uppercase tracking-wider scale-95">
                         PENDING APPROVAL
                       </span>
                     </div>
 
-                    {/* Request Details */}
                     <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold text-tertiary uppercase">Target Project</span>
@@ -115,14 +109,14 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold text-tertiary uppercase">Proposal Period</span>
                         <p className="text-sm font-medium text-secondary mt-1">
-                          {bounds ? `${bounds.startDate} to ${bounds.endDate}` : 'No weeks'}
+                          {bounds ? `${bounds.startDate} to ${bounds.endDate}` : '—'}
                         </p>
                       </div>
 
                       <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-tertiary uppercase">Days per Week</span>
+                        <span className="text-[10px] font-bold text-tertiary uppercase">Roster</span>
                         <p className="text-sm font-bold text-primary mt-1 flex items-center gap-1.5">
-                          <span>{avgDays}d/wk avg</span>
+                          <span>{summary}</span>
                           <span className={`px-1.5 py-0.2 rounded text-[10px] ${
                             (() => {
                               const type = getProject(req.projectId)?.billableType || req.billableType;
@@ -148,7 +142,6 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                       )}
                     </div>
 
-                    {/* Interactive Action Bar */}
                     <div className="px-6 py-3.5 bg-surface-muted border-t border-subtle flex justify-end gap-3">
                       <button
                         onClick={() => onRejectRequest(req.id)}
@@ -170,7 +163,6 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
           )}
         </div>
 
-        {/* Audit history sidebar (spanning 1 column) */}
         <div className="space-y-4">
           <h3 className="text-xs font-bold text-tertiary uppercase tracking-widest pl-1">
             Historical Requests Log
@@ -188,7 +180,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                   const proj = getProject(req.projectId);
                   const isApproved = req.status === 'Approved';
                   const bounds = requestDateBounds(req);
-                  const peakDays = maxDaysPerWeek(req.weeks);
+                  const summary = rosterSummaryLabel(req.unit, req.roster);
 
                   return (
                     <div key={req.id} className="py-3 first:pt-0 last:pb-0 text-left">
@@ -205,7 +197,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                         </span>
                       </div>
                       <p className="text-[11px] text-secondary mt-1 font-medium">
-                        Project: <span className="text-primary font-semibold">{proj?.name || 'TMS'}</span> ({peakDays}d/wk peak)
+                        Project: <span className="text-primary font-semibold">{proj?.name || 'TMS'}</span> ({summary})
                       </p>
                       <p className="text-[10px] text-tertiary mt-0.5">
                         Dates: {bounds ? `${bounds.startDate} to ${bounds.endDate}` : '—'}
@@ -225,9 +217,23 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                 })}
               </div>
             )}
+
+            <div className="pt-4 border-t border-subtle flex items-start gap-2 text-[10px] text-tertiary">
+              <HelpCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <p>
+                Approved requests create schedule blocks. Rejected ones stay in this log for audit.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-tertiary">
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Only managers with booking rights can approve.</span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-tertiary">
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>Assigned resources appear on the timeline after approval.</span>
+            </div>
           </div>
         </div>
-
       </div>
     </div>
   );

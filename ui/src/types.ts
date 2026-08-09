@@ -66,30 +66,22 @@ export interface Project {
 
 export type BillableType = 'Billable' | 'Non-billable' | 'Opportunity';
 export type BookingCommitmentType = 'hard' | 'soft';
+export type ScheduleUnit = 'utilization' | 'hours';
+
+/** Mon→Sun roster values (utilization fraction or hours/day). */
+export type Roster = [number, number, number, number, number, number, number];
+
+export const DEFAULT_ROSTER: Roster = [1, 1, 1, 1, 1, 0, 0];
 
 export interface WeekKey {
   isoYear: number;
   isoWeek: number;
 }
 
-export interface WeekAllocation extends WeekKey {
-  daysPerWeek: number;
-}
-
-/** Schedule assignment header + week rows. */
+/** First-class schedule block (date range + roster). */
 export interface ScheduleAssignment {
   id: string;
-  resourceId: string;
-  projectId: string;
-  requestId?: string;
-  billableType: BillableType;
-  bookingType: BookingCommitmentType;
-  weeks: WeekAllocation[];
-}
-
-/** Derived contiguous block for timeline display. */
-export interface AllocationBlock {
-  scheduleId: string;
+  title?: string;
   resourceId: string;
   projectId: string;
   requestId?: string;
@@ -97,8 +89,23 @@ export interface AllocationBlock {
   bookingType: BookingCommitmentType;
   startDate: string;
   endDate: string;
-  weeks: WeekAllocation[];
-  daysPerWeek: number;
+  unit: ScheduleUnit;
+  roster: Roster;
+}
+
+/** Timeline display alias — same as schedule row. */
+export interface AllocationBlock {
+  scheduleId: string;
+  title?: string;
+  resourceId: string;
+  projectId: string;
+  requestId?: string;
+  billableType: BillableType;
+  bookingType: BookingCommitmentType;
+  startDate: string;
+  endDate: string;
+  unit: ScheduleUnit;
+  roster: Roster;
 }
 
 export interface Vacation {
@@ -110,7 +117,7 @@ export interface Vacation {
   reason?: string;
 }
 
-/** Request header + week rows. */
+/** Request block with same range+roster model. */
 export interface BookingRequest {
   id: string;
   referenceId: string;
@@ -127,15 +134,18 @@ export interface BookingRequest {
   competencyCenterId?: string | null;
   siteId?: string | null;
   jobLevelId?: string | null;
-  weeks: WeekAllocation[];
+  startDate: string;
+  endDate: string;
+  unit: ScheduleUnit;
+  roster: Roster;
 }
 
 export type AvailabilityMode = 'complete' | 'partial' | 'everyone';
 
 export interface UtilizationSegment {
-  isoYear: number;
-  isoWeek: number;
-  /** Allocated days in this ISO week (raw from RPC; 5 = fully booked). */
+  date: string;
+  hours: number;
+  /** Fraction of daily capacity (1 = fully booked). */
   utilization: number;
 }
 
@@ -157,8 +167,8 @@ export interface PersonUtilizationResult {
   competencyCenter?: string;
   site?: string;
   utilization: UtilizationSegment[];
-  /** Average allocated days/week over the period (5 = fully booked). */
+  /** Average utilization fraction over the period (1 = fully booked). */
   avgUtilization: number;
-  /** Average available days/week over the period (5 = fully free). */
+  /** Average available capacity fraction over the period (1 = fully free). */
   avgAvailability: number;
 }

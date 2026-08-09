@@ -4,7 +4,6 @@ import type {
   Resource,
   ScheduleAssignment,
   Vacation,
-  WeekAllocation,
 } from '../types';
 import {
   countOverlapWeekdays,
@@ -17,7 +16,12 @@ import {
   getProjectCategoryDotClass,
   type ProjectCategory,
 } from './projectCategory';
-import { isoWeekToDateRange } from './weekUtils';
+import {
+  blockHoursOnDate,
+  expandDates,
+  personDailyCapacityHours,
+} from './rosterUtils';
+import { getIsoWeekKey, isoWeekToDateRange } from './weekUtils';
 
 export type CategoryHours = {
   category: ProjectCategory;
@@ -80,49 +84,10 @@ export type DashboardSnapshot = {
   underUtilized: PersonUtilization[];
 };
 
-function hoursPerWeekday(resource: Resource | undefined): number {
-  if (resource?.weeklyHours) return resource.weeklyHours / 5;
-  return 8;
-}
-
-function resourceFte(resource: Resource | undefined): number {
-  return resource?.fte ?? 1;
-}
-
-function weekHoursInPeriod(
-  week: WeekAllocation,
-  resource: Resource | undefined,
-  period: DashboardPeriod,
-): number {
-  const { start, end } = isoWeekToDateRange(week.isoYear, week.isoWeek);
-  const overlapDays = countOverlapWeekdays(start, end, period.start, period.end);
-  if (overlapDays === 0) return 0;
-  const dailyHours = hoursPerWeekday(resource) * resourceFte(resource);
-  const effectiveDays = Math.min(overlapDays, week.daysPerWeek);
-  return effectiveDays * dailyHours;
-}
-
-function addWeekToBuckets(
-  week: WeekAllocation,
-  resource: Resource | undefined,
-  period: DashboardPeriod,
-  weeklyMap: Map<string, number>,
-): void {
-  const { start, end } = isoWeekToDateRange(week.isoYear, week.isoWeek);
-  const overlapDays = countOverlapWeekdays(start, end, period.start, period.end);
-  if (overlapDays === 0) return;
-
-  const dailyHours = hoursPerWeekday(resource) * resourceFte(resource);
-  const effectiveDays = Math.min(overlapDays, week.daysPerWeek);
-  const hours = effectiveDays * dailyHours;
-  const weekKey = `${week.isoYear}-W${String(week.isoWeek).padStart(2, '0')}`;
-  weeklyMap.set(weekKey, (weeklyMap.get(weekKey) ?? 0) + hours);
-}
-
 function capacityHoursInPeriod(resource: Resource, period: DashboardPeriod): number {
   const overlapDays = countWeekdays(period.start, period.end);
   if (overlapDays === 0) return 0;
-  return overlapDays * hoursPerWeekday(resource) * resourceFte(resource);
+  return overlapDays * personDailyCapacityHours(resource.weeklyHours, resource.fte);
 }
 
 function weekLabel(isoYear: number, isoWeek: number): string {
@@ -131,9 +96,43 @@ function weekLabel(isoYear: number, isoWeek: number): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function blockHoursInPeriod(
+  block: Pick<ScheduleAssignment, 'startDate' | 'endDate' | 'unit' | 'roster'>,
+  resource: Resource | undefined,
+  period: DashboardPeriod,
+): number {
+  const start = block.startDate > period.start ? block.startDate : period.start;
+  const end = block.endDate < period.end ? block.endDate : period.end;
+  if (start > end) return 0;
+  const capacity = personDailyCapacityHours(resource?.weeklyHours, resource?.fte);
+  let hours = 0;
+  for (const dateStr of expandDates(start, end)) {
+    hours += blockHoursOnDate(block, dateStr, capacity);
+  }
+  return hours;
+}
+
+function addBlockToWeeklyBuckets(
+  block: Pick<ScheduleAssignment, 'startDate' | 'endDate' | 'unit' | 'roster'>,
+  resource: Resource | undefined,
+  period: DashboardPeriod,
+  weeklyMap: Map<string, number>,
+): void {
+  const start = block.startDate > period.start ? block.startDate : period.start;
+  const end = block.endDate < period.end ? block.endDate : period.end;
+  if (start > end) return;
+  const capacity = personDailyCapacityHours(resource?.weeklyHours, resource?.fte);
+  for (const dateStr of expandDates(start, end)) {
+    const hours = blockHoursOnDate(block, dateStr, capacity);
+    if (hours <= 0) continue;
+    const { isoYear, isoWeek } = getIsoWeekKey(dateStr);
+    const weekKey = `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
+    weeklyMap.set(weekKey, (weeklyMap.get(weekKey) ?? 0) + hours);
+  }
+}
+
 const CATEGORY_ORDER: ProjectCategory[] = [
   'Billable',
-  'Internal',
   'Non-billable',
   'Opportunity',
 ];
@@ -169,31 +168,28 @@ export function buildDashboardSnapshot(
   assignments.forEach((assignment) => {
     const resource = resourceMap.get(assignment.resourceId);
     const project = projectMap.get(assignment.projectId);
+    const hours = blockHoursInPeriod(assignment, resource, period);
+    if (hours <= 0) return;
 
-    assignment.weeks.forEach((week) => {
-      const hours = weekHoursInPeriod(week, resource, period);
-      if (hours <= 0) return;
+    totalPlannedHours += hours;
+    const billableType = project?.billableType || assignment.billableType;
+    if (billableType === 'Billable') billableHours += hours;
 
-      totalPlannedHours += hours;
-      const billableType = project?.billableType || assignment.billableType;
-      if (billableType === 'Billable') billableHours += hours;
+    const category = project ? getProjectCategory(project) : 'Billable';
+    categoryMap.set(category, (categoryMap.get(category) ?? 0) + hours);
+    projectHoursMap.set(
+      assignment.projectId,
+      (projectHoursMap.get(assignment.projectId) ?? 0) + hours,
+    );
 
-      const category = project ? getProjectCategory(project) : 'Billable';
-      categoryMap.set(category, (categoryMap.get(category) ?? 0) + hours);
-      projectHoursMap.set(
-        assignment.projectId,
-        (projectHoursMap.get(assignment.projectId) ?? 0) + hours,
+    addBlockToWeeklyBuckets(assignment, resource, period, weeklyMap);
+
+    if (assignment.resourceId) {
+      personPlanned.set(
+        assignment.resourceId,
+        (personPlanned.get(assignment.resourceId) ?? 0) + hours,
       );
-
-      addWeekToBuckets(week, resource, period, weeklyMap);
-
-      if (assignment.resourceId) {
-        personPlanned.set(
-          assignment.resourceId,
-          (personPlanned.get(assignment.resourceId) ?? 0) + hours,
-        );
-      }
-    });
+    }
   });
 
   let totalCapacityHours = 0;
@@ -224,10 +220,7 @@ export function buildDashboardSnapshot(
     .map((req) => {
       const project = projectMap.get(req.projectId);
       const resource = req.resourceId ? resourceMap.get(req.resourceId) : undefined;
-      const hours = req.weeks.reduce(
-        (sum, week) => sum + weekHoursInPeriod(week, resource, period),
-        0,
-      );
+      const hours = blockHoursInPeriod(req, resource, period);
       return {
         id: req.id,
         projectName: project?.name ?? 'Unknown',

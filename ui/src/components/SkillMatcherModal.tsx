@@ -5,11 +5,17 @@ import type {
   BookingRequest,
   PersonUtilizationResult,
   Project,
-  WeekAllocation,
+  UtilizationSegment,
 } from '../types';
 import { useLookups } from '../hooks/useLookups';
 import { personUtilizationService } from '../lib/services/personUtilization';
-import { maxDaysPerWeek } from '../lib/weekUtils';
+import {
+  blockHoursOnDate,
+  expandDates,
+  personDailyCapacityHours,
+  rosterSlotHours,
+  rosterSummaryLabel,
+} from '../lib/rosterUtils';
 import { requestDateBounds } from '../types/api';
 
 interface SkillMatcherModalProps {
@@ -37,73 +43,98 @@ const defaultFilters: FilterState = {
   level: 'all',
 };
 
-type WeekGap = {
-  isoYear: number;
-  isoWeek: number;
-  requiredDays: number;
-  allocatedDays: number;
-  availableDays: number;
-  /** Days short vs request; 0 when available >= required. */
-  shortfallDays: number;
+type DayGap = {
+  date: string;
+  requiredHours: number;
+  allocatedHours: number;
+  availableHours: number;
+  /** Hours short vs request; 0 when available >= required. */
+  shortfallHours: number;
 };
 
 type UtilizationChartProps = {
-  gaps: WeekGap[];
+  gaps: DayGap[];
 };
 
 type UtilizationDetailsResource = {
   name: string;
   role: string;
-  gaps: WeekGap[];
-  avgShortfallDays: number;
+  gaps: DayGap[];
+  avgShortfallHours: number;
 };
 
-function availableDaysFromAllocated(allocatedDays: number): number {
-  return Math.max(0, 5 - (Number(allocatedDays) || 0));
+/** Average Mon–Fri roster need in hours (search threshold). */
+function averageWeekdayRequiredHours(request: BookingRequest): number {
+  const dailyCapacity = personDailyCapacityHours();
+  const weekday = request.roster.slice(0, 5);
+  const total = weekday.reduce(
+    (sum, raw) => sum + rosterSlotHours(request.unit, raw, dailyCapacity),
+    0,
+  );
+  return total / 5;
+}
+
+function availableHoursFromSegment(
+  seg: UtilizationSegment | undefined,
+  fallbackCapacity: number,
+): number {
+  if (!seg) return fallbackCapacity;
+  const util = Number(seg.utilization) || 0;
+  const booked = Number(seg.hours) || 0;
+  if (util > 0) {
+    const capacity = booked / util;
+    return Math.max(0, capacity - booked);
+  }
+  return Math.max(0, fallbackCapacity * (1 - util));
 }
 
 /** Remaining shortfall vs request; 0 when availability covers the request. */
-function shortfallDays(requiredDays: number, allocatedDays: number): number {
-  const available = availableDaysFromAllocated(allocatedDays);
-  return available >= requiredDays ? 0 : requiredDays - available;
+function shortfallHours(requiredHours: number, availableHours: number): number {
+  return availableHours >= requiredHours ? 0 : requiredHours - availableHours;
 }
 
-function matchRequestWeekGaps(
-  requestWeeks: WeekAllocation[],
-  personWeeks: PersonUtilizationResult['utilization'],
-): WeekGap[] {
-  const byKey = new Map(
-    personWeeks.map((w) => [`${w.isoYear}-${w.isoWeek}`, Number(w.utilization) || 0]),
-  );
+function matchRequestDayGaps(
+  request: BookingRequest,
+  personUtilization: UtilizationSegment[],
+): DayGap[] {
+  const bounds = requestDateBounds(request);
+  if (!bounds) return [];
 
-  return [...requestWeeks]
-    .sort((a, b) => a.isoYear - b.isoYear || a.isoWeek - b.isoWeek)
-    .map((rw) => {
-      const allocatedDays = byKey.get(`${rw.isoYear}-${rw.isoWeek}`) ?? 0;
-      const availableDays = availableDaysFromAllocated(allocatedDays);
-      return {
-        isoYear: rw.isoYear,
-        isoWeek: rw.isoWeek,
-        requiredDays: rw.daysPerWeek,
-        allocatedDays,
-        availableDays,
-        shortfallDays: shortfallDays(rw.daysPerWeek, allocatedDays),
-      };
-    });
+  const dailyCapacity = personDailyCapacityHours();
+  const byDate = new Map(personUtilization.map((seg) => [seg.date, seg]));
+
+  return expandDates(bounds.startDate, bounds.endDate).map((date) => {
+    const required = blockHoursOnDate(request, date, dailyCapacity);
+    const seg = byDate.get(date);
+    const allocated = Number(seg?.hours) || 0;
+    const available = availableHoursFromSegment(seg, dailyCapacity);
+    return {
+      date,
+      requiredHours: required,
+      allocatedHours: allocated,
+      availableHours: available,
+      shortfallHours: shortfallHours(required, available),
+    };
+  });
 }
 
-function avgShortfallDays(gaps: WeekGap[]): number {
-  if (gaps.length === 0) return 0;
-  return gaps.reduce((sum, g) => sum + g.shortfallDays, 0) / gaps.length;
+function avgShortfallHours(gaps: DayGap[]): number {
+  const relevant = gaps.filter((g) => g.requiredHours > 0);
+  if (relevant.length === 0) return 0;
+  return relevant.reduce((sum, g) => sum + g.shortfallHours, 0) / relevant.length;
 }
 
-function formatWeekLabel(isoYear: number, isoWeek: number): string {
-  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
-}
-
-function formatDays(value: number): string {
+function formatHours(value: number): string {
   const normalized = Number(value) || 0;
-  return `${normalized} day${Math.abs(normalized) === 1 ? '' : 's'}`;
+  const rounded = Math.abs(normalized - Math.round(normalized)) < 0.05
+    ? String(Math.round(normalized))
+    : normalized.toFixed(1);
+  return `${rounded}h`;
+}
+
+function formatShortfallLabel(avgShort: number): string {
+  if (avgShort === 0) return '0h short';
+  return `${avgShort % 1 === 0 ? avgShort : avgShort.toFixed(1)}h short`;
 }
 
 const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) => {
@@ -114,26 +145,30 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
 
     const width = 320;
     const height = 100;
-    const maxDays = 5;
+    const maxHours = Math.max(
+      personDailyCapacityHours(),
+      ...gaps.map((g) => g.requiredHours),
+      1,
+    );
     const slot = width / gaps.length;
 
     const segments = gaps.map((gap, index) => {
       const x = index * slot;
       const segmentWidth = slot;
-      const requestedDays = Math.max(0, Math.min(maxDays, gap.requiredDays));
-      const fulfillableDays = Math.max(0, Math.min(requestedDays, gap.availableDays));
-      const unfulfillableDays = Math.max(0, requestedDays - fulfillableDays);
-      const fulfillableTopY = height - (fulfillableDays / maxDays) * height;
-      const requestedTopY = height - (requestedDays / maxDays) * height;
-      const fulfillableHeight = (fulfillableDays / maxDays) * height;
-      const unfulfillableHeight = (unfulfillableDays / maxDays) * height;
+      const requestedHours = Math.max(0, Math.min(maxHours, gap.requiredHours));
+      const fulfillableHours = Math.max(0, Math.min(requestedHours, gap.availableHours));
+      const unfulfillableHours = Math.max(0, requestedHours - fulfillableHours);
+      const fulfillableTopY = height - (fulfillableHours / maxHours) * height;
+      const requestedTopY = height - (requestedHours / maxHours) * height;
+      const fulfillableHeight = (fulfillableHours / maxHours) * height;
+      const unfulfillableHeight = (unfulfillableHours / maxHours) * height;
       return {
         gap,
         x,
         width: segmentWidth,
-        requestedDays,
-        fulfillableDays,
-        unfulfillableDays,
+        requestedHours,
+        fulfillableHours,
+        unfulfillableHours,
         fulfillableTopY,
         requestedTopY,
         fulfillableHeight,
@@ -141,7 +176,7 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
       };
     });
 
-    return { width, height, segments };
+    return { width, height, maxHours, segments };
   }, [gaps]);
 
   if (!chart) return null;
@@ -158,7 +193,7 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
       >
         {chart.segments.map((segment) => (
           <rect
-            key={`amber-${segment.gap.isoYear}-${segment.gap.isoWeek}`}
+            key={`amber-${segment.gap.date}`}
             x={segment.x}
             y={segment.requestedTopY}
             width={segment.width}
@@ -169,7 +204,7 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
         ))}
         {chart.segments.map((segment) => (
           <rect
-            key={`green-${segment.gap.isoYear}-${segment.gap.isoWeek}`}
+            key={`green-${segment.gap.date}`}
             x={segment.x}
             y={segment.fulfillableTopY}
             width={segment.width}
@@ -180,7 +215,7 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
         ))}
         {chart.segments.map((segment, index) => (
           <rect
-            key={`${segment.gap.isoYear}-${segment.gap.isoWeek}`}
+            key={segment.gap.date}
             x={segment.x}
             y={0}
             width={segment.width}
@@ -198,12 +233,13 @@ const ResourceAvailabilityOverlay: React.FC<UtilizationChartProps> = ({ gaps }) 
             left: `calc(${((hovered.x + hovered.width / 2) / chart.width) * 100}% - 36px)`,
           }}
         >
-          <div>{formatWeekLabel(hovered.gap.isoYear, hovered.gap.isoWeek)}</div>
+          <div>{hovered.gap.date}</div>
           <div className="text-tertiary">
-            Fulfillable {formatDays(hovered.fulfillableDays)} · Unfulfillable {formatDays(hovered.unfulfillableDays)}
+            Fulfillable {formatHours(hovered.fulfillableHours)} · Unfulfillable{' '}
+            {formatHours(hovered.unfulfillableHours)}
           </div>
           <div className="text-tertiary">
-            Requested {formatDays(hovered.requestedDays)} on a 5 days/week scale
+            Requested {formatHours(hovered.requestedHours)} on a {formatHours(chart.maxHours)}/day scale
           </div>
         </div>
       )}
@@ -220,7 +256,7 @@ const ResourceAvailabilityDetailsModal: React.FC<{
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center modal-overlay backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center modal-overlay p-4">
       <div className="bg-surface border border-subtle rounded-xl shadow-app-md w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh]">
         <div className="app-card-header px-6 py-4 border-b border-subtle">
           <div className="flex items-start justify-between gap-4">
@@ -231,10 +267,10 @@ const ResourceAvailabilityDetailsModal: React.FC<{
               </div>
               <p className="mt-1 text-sm text-secondary truncate">{resource.name} · {resource.role}</p>
               <p className="mt-1 text-xs text-tertiary">
-                Avg shortfall across request weeks:{' '}
-                {resource.avgShortfallDays === 0
-                  ? '0 days/wk (covers request)'
-                  : `${resource.avgShortfallDays.toFixed(1)} days/wk`}
+                Avg shortfall across request days:{' '}
+                {resource.avgShortfallHours === 0
+                  ? '0h (covers request)'
+                  : `${resource.avgShortfallHours.toFixed(1)}h/day`}
               </p>
             </div>
             <button
@@ -249,12 +285,12 @@ const ResourceAvailabilityDetailsModal: React.FC<{
         <div className="p-5 overflow-y-auto">
           {resource.gaps.length === 0 ? (
             <div className="rounded-lg border border-subtle bg-surface-muted/30 px-4 py-8 text-sm text-tertiary text-center">
-              No request weeks to compare.
+              No request days to compare.
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-subtle">
               <div className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 bg-surface-muted/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-secondary">
-                <span>Week</span>
+                <span>Date</span>
                 <span className="text-right">Required</span>
                 <span className="text-right">Available</span>
                 <span className="text-right">Shortfall</span>
@@ -262,14 +298,14 @@ const ResourceAvailabilityDetailsModal: React.FC<{
               <div>
                 {resource.gaps.map((gap) => (
                   <div
-                    key={`${gap.isoYear}-${gap.isoWeek}`}
+                    key={gap.date}
                     className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] gap-3 px-4 py-3 text-sm text-primary"
                   >
-                    <span>{formatWeekLabel(gap.isoYear, gap.isoWeek)}</span>
-                    <span className="text-right">{formatDays(gap.requiredDays)}</span>
-                    <span className="text-right">{formatDays(gap.availableDays)}</span>
+                    <span>{gap.date}</span>
+                    <span className="text-right">{formatHours(gap.requiredHours)}</span>
+                    <span className="text-right">{formatHours(gap.availableHours)}</span>
                     <span className="text-right font-semibold">
-                      {formatDays(gap.shortfallDays)}
+                      {formatHours(gap.shortfallHours)}
                     </span>
                   </div>
                 ))}
@@ -322,15 +358,16 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
         if (!bounds) {
           setResults([]);
           setHasSearched(true);
-          setError('Request has no week allocations.');
+          setError('Request has no date range.');
           return;
         }
 
+        const requiredHours = averageWeekdayRequiredHours(request);
         const rows = await personUtilizationService.search({
           from: bounds.startDate,
           to: bounds.endDate,
           availability: availabilityMode,
-          requiredDays: maxDaysPerWeek(request.weeks),
+          requiredHours,
           consultingUnitId: filters.cu === 'all' ? null : filters.cu,
           practiceAreaId: filters.practice === 'all' ? null : filters.practice,
           competencyCenterId: filters.cc === 'all' ? null : filters.cc,
@@ -417,7 +454,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
   }
 
   const requestBounds = requestDateBounds(request);
-  const requiredDays = maxDaysPerWeek(request.weeks);
+  const capacityLabel = rosterSummaryLabel(request.unit, request.roster);
 
   const updateFilter = (key: keyof FilterState, value: string) => {
     setSelectedFilters((current) => ({ ...current, [key]: value }));
@@ -449,7 +486,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
     'w-full rounded-lg border border-default bg-surface px-3 py-2 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-blue-400';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay backdrop-blur-sm p-4 overflow-y-auto animate-fade-in" id="resources-skills-popup">
+    <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 overflow-y-auto animate-fade-in" id="resources-skills-popup">
       <div className="bg-surface border border-subtle rounded-xl shadow-app-md w-full max-w-5xl overflow-hidden flex flex-col h-[650px] transform transition-all animate-scale-up">
         <div className="app-card-header px-6 py-3.5 border-b border-subtle">
           <div className="flex items-start justify-between gap-4">
@@ -466,10 +503,10 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                 <span className="font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
                   {request.requestName || 'General request'}
                 </span>
-                <span className="text-secondary">{requiredDays}d/wk required</span>
+                <span className="text-secondary">{capacityLabel} required</span>
                 <span className="text-tertiary">·</span>
                 <span className="text-secondary">
-                  {requestBounds ? `${requestBounds.startDate} – ${requestBounds.endDate}` : 'No weeks'}
+                  {requestBounds ? `${requestBounds.startDate} – ${requestBounds.endDate}` : 'No dates'}
                 </span>
               </div>
               {request.notes && (
@@ -607,8 +644,8 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                 </div>
               ) : (
                 filteredResults.map((res) => {
-                  const gaps = matchRequestWeekGaps(request.weeks, res.utilization);
-                  const avgShort = avgShortfallDays(gaps);
+                  const gaps = matchRequestDayGaps(request, res.utilization);
+                  const avgShort = avgShortfallHours(gaps);
 
                   return (
                   <div
@@ -627,14 +664,12 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                         <span className="text-xs text-tertiary">·</span>
                         <span className="text-xs text-secondary truncate">{res.role}</span>
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface/60 text-secondary border border-subtle backdrop-blur-[1px]">
-                          {avgShort === 0
-                            ? '0d/wk short'
-                            : `${avgShort % 1 === 0 ? avgShort : avgShort.toFixed(1)}d/wk short`}
+                          {formatShortfallLabel(avgShort)}
                         </span>
                       </div>
 
                       <div className="mt-2 text-[11px] text-tertiary">
-                        Green = fulfillable request days, amber = unfulfillable request days (5d/week scale)
+                        Green = fulfillable request hours, amber = unfulfillable request hours
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-tertiary">
@@ -676,7 +711,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
                             name: res.name,
                             role: res.role,
                             gaps,
-                            avgShortfallDays: avgShort,
+                            avgShortfallHours: avgShort,
                           })
                         }
                         className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-default bg-surface text-secondary transition-all hover:bg-surface-hover"
