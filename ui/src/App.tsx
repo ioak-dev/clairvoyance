@@ -251,7 +251,6 @@ export default function App() {
   const [isEntityDrawerOpen, setIsEntityDrawerOpen] = useState(false);
   const [focusedEntityId, setFocusedEntityId] = useState<string | null>(null);
   const [hideUnbooked, setHideUnbooked] = useState(false);
-  const [isFilterApplying, setIsFilterApplying] = useState(false);
   const [activeProjectFilterId, setActiveProjectFilterId] = useState<string | null>(null);
   const [activePersonFilterId, setActivePersonFilterId] = useState<string | null>(null);
   const [activeRequestFilterId, setActiveRequestFilterId] = useState<string | null>(null);
@@ -280,7 +279,6 @@ export default function App() {
   }, [activeFilterId, sidebarFilters]);
 
   const handleSelectFilter = useCallback((filter: SavedFilter | null) => {
-    setIsFilterApplying(true);
     setFocusedEntityId(null);
     const id = filter?.id ?? null;
     if (filterViewContext === 'projects') setActiveProjectFilterId(id);
@@ -291,14 +289,6 @@ export default function App() {
   useEffect(() => {
     setFocusedEntityId(null);
   }, [filterViewContext]);
-
-  useEffect(() => {
-    if (!isFilterApplying) return;
-    const timer = window.setTimeout(() => {
-      setIsFilterApplying(false);
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [isFilterApplying, activeFilterId, filterViewContext]);
 
   // Auto-select first available filter when entering a tab with no active filter
   useEffect(() => {
@@ -968,7 +958,6 @@ export default function App() {
                 filterCriteria={filterCriteria}
                 focusedEntityId={focusedEntityId}
                 hideUnbooked={hideUnbooked}
-                isFilterApplying={isFilterApplying}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
                 onEditBlock={handleEditBlock}
                 onSplitBlock={handleSplitBlock}

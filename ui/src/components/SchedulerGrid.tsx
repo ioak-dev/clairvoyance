@@ -60,6 +60,8 @@ const ROW_PADDING_Y_PX = 24;
 const VIRTUAL_OVERSCAN = 8;
 /** Extra timeline px beyond the viewport for sticky day headers. */
 const HEADER_OVERSCAN_PX = weekPatternWidthPx(WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH) * 2;
+/** Delay before showing cold-load indicator — avoids flash on fast responses. */
+const SCHEDULE_LOADING_INDICATOR_DELAY_MS = 300;
 
 function estimateRowHeight(laneCount: number): number {
   const lanes = Math.max(1, laneCount);
@@ -82,7 +84,6 @@ interface SchedulerGridProps {
   filterCriteria?: Record<string, unknown> | null;
   focusedEntityId?: string | null;
   hideUnbooked?: boolean;
-  isFilterApplying?: boolean;
   viewMode?: 'resources' | 'projects' | 'requests';
   onEditBlock: (block: AllocationBlock, options?: EditBlockOptions) => void;
   onSplitBlock?: (block: AllocationBlock, splitDate: string) => void | Promise<void>;
@@ -333,7 +334,6 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   filterCriteria = null,
   focusedEntityId = null,
   hideUnbooked = false,
-  isFilterApplying = false,
   viewMode = 'resources',
   onEditBlock,
   onSplitBlock,
@@ -463,9 +463,20 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     isFetching: isFetchingSchedules,
   } = useSchedulesInRange(scheduleQuery, scheduleFetchEnabled);
 
-  // Full-grid overlay only for true empty/pending loads — not background refetches.
-  const showScheduleLoading =
-    isFilterApplying || (isPendingSchedules && isFetchingSchedules);
+  // Cold load only (no cached/placeholder data). Background refetches stay silent.
+  const schedulesColdLoading = isPendingSchedules && isFetchingSchedules;
+  const [showScheduleLoading, setShowScheduleLoading] = useState(false);
+
+  useEffect(() => {
+    if (!schedulesColdLoading) {
+      setShowScheduleLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setShowScheduleLoading(true);
+    }, SCHEDULE_LOADING_INDICATOR_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [schedulesColdLoading]);
 
   const onTimelineScroll = useCallback(() => {
     scheduleHeaderViewportSync();
@@ -981,12 +992,14 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   return (
     <div className="relative flex flex-col h-full min-h-0">
     <Card className="overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
-      {(showScheduleLoading) && (
-        <div className="absolute inset-0 z-20 bg-black/20 pointer-events-none flex items-center justify-center">
-          <div className="flex items-center gap-2 rounded-full bg-surface border border-subtle px-4 py-2 text-xs font-medium text-secondary shadow-app-md">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
-            {isFilterApplying ? 'Applying filter…' : 'Loading schedules…'}
-          </div>
+      {showScheduleLoading && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="absolute bottom-3 right-3 z-20 pointer-events-none flex items-center gap-1.5 rounded-md bg-surface/95 border border-subtle px-2.5 py-1.5 text-[11px] font-medium text-secondary shadow-app-sm"
+        >
+          <Loader2 className="w-3 h-3 animate-spin text-blue-500" aria-hidden />
+          Loading schedules…
         </div>
       )}
       <div
