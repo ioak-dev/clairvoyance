@@ -7,7 +7,7 @@ import React from 'react';
 import { BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
 import { Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { scheduleAuditService } from '../lib/services/scheduleAudit';
+import { useScheduleAuditExport } from '../hooks/useScheduleAudit';
 import type { ScheduleAuditReportRow } from '../types/api';
 import { Button, Card, ErrorMessage, Field, Input, Label, Select } from './ui';
 import { getEffectiveBillableType } from '../lib/projectCategory';
@@ -83,6 +83,7 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
   const [auditChangedFrom, setAuditChangedFrom] = React.useState('');
   const [auditChangedTo, setAuditChangedTo] = React.useState('');
   const [auditError, setAuditError] = React.useState<string | null>(null);
+  const { mutateAsync: exportScheduleAudit, isPending: isAuditExporting } = useScheduleAuditExport();
 
   const resourceNameById = React.useMemo(() => {
     return new Map(resources.map((resource) => [resource.id, resource.name]));
@@ -276,7 +277,7 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
     setDownloading('scheduleAuditLog');
 
     try {
-      const rows = await scheduleAuditService.list({
+      const rows = await exportScheduleAudit({
         projectIds: auditFilterMode === 'project' ? selectedAuditIds : undefined,
         personIds: auditFilterMode === 'resource' ? selectedAuditIds : undefined,
         changedFrom: auditChangedFrom || undefined,
@@ -308,8 +309,8 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({
             variant="primary"
             size="sm"
             onClick={handleAuditDownload}
-            loading={downloading === 'scheduleAuditLog'}
-            disabled={Boolean(downloading) || auditOptions.length === 0}
+            loading={downloading === 'scheduleAuditLog' || isAuditExporting}
+            disabled={Boolean(downloading) || isAuditExporting || auditOptions.length === 0}
             leftIcon={<Download className="w-3.5 h-3.5" />}
           >
             {downloading === 'scheduleAuditLog' ? 'Downloading...' : 'Download Audit Log'}

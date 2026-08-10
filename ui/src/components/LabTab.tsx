@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { FlaskConical, Plus } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
 import { LabCreateModal } from './LabCreateModal.tsx';
 import { LabEditModal, type EditField, type SimulationType } from './LabEditModal.tsx';
 import {
@@ -22,12 +21,12 @@ import {
   getFilteredCompetencyCenterOptions,
   type ValidationEditField,
 } from './labEditFieldConfig';
-import { labService, type SimulationLogEntry } from '../lib/services/lab';
+import type { SimulationLogEntry } from '../lib/services/lab';
+import { useLabSimulations, usePublishLab } from '../hooks/useLab';
 import { useLookups } from '../hooks/useLookups';
 import { usePeople } from '../hooks/usePeople';
 import { useProjects } from '../hooks/useProjects';
-import { requestQueryKeys, useRequests } from '../hooks/useRequests';
-import { requestsService } from '../lib/services/requests';
+import { useCreateRequest, useRequests, useUpdateRequest } from '../hooks/useRequests';
 import type { ApprovalStatus } from '../types/api';
 import { requestDateBounds, toLabRequestPayloadItem } from '../types/api';
 import { DEFAULT_ROSTER, type BookingRequest, type Roster, type ScheduleUnit } from '../types';
@@ -128,9 +127,7 @@ function resolveStartEnd(payload: Record<string, unknown>): { start: string; end
 }
 
 export const LabTab: React.FC = () => {
-  const queryClient = useQueryClient();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [simulationRows, setSimulationRows] = useState<SimulationRow[]>([]);
   const [selectedRow, setSelectedRow] = useState<SimulationRow | null>(null);
   const [editingRow, setEditingRow] = useState<SimulationRow | null>(null);
   const [selectedPrefillRequestId, setSelectedPrefillRequestId] = useState('');
@@ -138,15 +135,28 @@ export const LabTab: React.FC = () => {
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState('');
   const [isPublishingEdit, setIsPublishingEdit] = useState(false);
-  const [loadError, setLoadError] = useState('');
   const { data: lookups } = useLookups();
   const { data: projects = [] } = useProjects();
   const { data: people = [] } = usePeople();
   const { data: requests = [] } = useRequests();
+  const {
+    data: simulationEntries = [],
+    error: simulationsError,
+  } = useLabSimulations();
+  const publishLab = usePublishLab();
+  const createRequest = useCreateRequest();
+  const updateRequest = useUpdateRequest();
 
-  const rows = useMemo(() => {
-    return simulationRows;
-  }, [simulationRows]);
+  const rows = useMemo(
+    () => simulationEntries.map(toSimulationRow),
+    [simulationEntries],
+  );
+  const loadError =
+    simulationsError instanceof Error
+      ? simulationsError.message
+      : simulationsError
+        ? 'Failed to load simulations.'
+        : '';
 
   const editingType = useMemo<SimulationType | null>(() => {
     if (!editingRow) return null;
@@ -181,20 +191,6 @@ export const LabTab: React.FC = () => {
       };
     });
   }, [requests]);
-
-  const refreshSimulations = useCallback(async () => {
-    try {
-      setLoadError('');
-      const entries = await labService.listSimulations();
-      setSimulationRows(entries.map(toSimulationRow));
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load simulations.');
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshSimulations();
-  }, [refreshSimulations]);
 
   const openEdit = (row: SimulationRow) => {
     const simulationType = normalizeSimulationType(row.simulationType);
@@ -321,8 +317,7 @@ export const LabTab: React.FC = () => {
     const simulationType = normalizeSimulationType(input.type);
     const payload = Array.isArray(input.payload) && input.payload.length > 0 ? input.payload : [{}];
 
-    await labService.publish({ type: simulationType, payload });
-    await refreshSimulations();
+    await publishLab.mutateAsync({ type: simulationType, payload });
   };
 
   const handlePublishEdit = async () => {
@@ -385,23 +380,19 @@ export const LabTab: React.FC = () => {
         const shouldCreateNewRequest = nextReferenceId !== originalReferenceId;
 
         if (shouldCreateNewRequest) {
-          await requestsService.create(toRequestCreateInput(payloadObject));
+          await createRequest.mutateAsync(toRequestCreateInput(payloadObject));
         } else {
-          await requestsService.update(
-            selectedPrefillRequestId,
-            toRequestPatch(payloadObject),
-          );
+          await updateRequest.mutateAsync({
+            id: selectedPrefillRequestId,
+            patch: toRequestPatch(payloadObject),
+          });
         }
-
-        await queryClient.invalidateQueries({ queryKey: requestQueryKeys.all });
       }
 
-      await labService.publish({
+      await publishLab.mutateAsync({
         type: editingType,
         payload: [payloadObject],
       });
-
-      await refreshSimulations();
 
       setEditingRow(null);
       setSelectedPrefillRequestId('');

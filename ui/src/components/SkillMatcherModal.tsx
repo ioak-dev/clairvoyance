@@ -8,7 +8,7 @@ import type {
   UtilizationSegment,
 } from '../types';
 import { useLookups } from '../hooks/useLookups';
-import { personUtilizationService } from '../lib/services/personUtilization';
+import { usePersonUtilizationSearch } from '../hooks/usePersonUtilization';
 import {
   blockHoursOnDate,
   expandDates,
@@ -333,19 +333,18 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
   const [availability, setAvailability] = useState<AvailabilityMode>('complete');
   const [nameQuery, setNameQuery] = useState('');
   const [results, setResults] = useState<PersonUtilizationResult[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [assigningResourceId, setAssigningResourceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [detailsResource, setDetailsResource] = useState<UtilizationDetailsResource | null>(null);
   const { data: lookups } = useLookups();
+  const { mutateAsync: searchUtilization, isPending: isLoading } = usePersonUtilizationSearch();
   const isAssigning = assigningResourceId !== null;
 
   const runSearch = useCallback(
     async (filters: FilterState, availabilityMode: AvailabilityMode) => {
       if (!request) return;
 
-      setIsLoading(true);
       setError(null);
       try {
         const bounds = requestDateBounds(request);
@@ -357,7 +356,7 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
         }
 
         const requiredHours = averageWeekdayRequiredHours(request);
-        const rows = await personUtilizationService.search({
+        const rows = await searchUtilization({
           from: bounds.startDate,
           to: bounds.endDate,
           availability: availabilityMode,
@@ -384,11 +383,9 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
         setResults([]);
         setHasSearched(true);
         setError(err instanceof Error ? err.message : 'Search failed');
-      } finally {
-        setIsLoading(false);
       }
     },
-    [request],
+    [request, searchUtilization],
   );
 
   useEffect(() => {
@@ -399,7 +396,6 @@ export const SkillMatcherModal: React.FC<SkillMatcherModalProps> = ({
       setResults([]);
       setError(null);
       setHasSearched(false);
-      setIsLoading(false);
       setAssigningResourceId(null);
       setDetailsResource(null);
       return;

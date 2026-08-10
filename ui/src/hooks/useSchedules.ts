@@ -1,16 +1,30 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import {
   schedulesService,
+  type ListSchedulesInRangeParams,
   type ReplaceScheduleRangeParams,
   type SplitScheduleParams,
   type UpsertScheduleParams,
 } from '../lib/services/schedules';
 
+function sortedIdsKey(ids: string[] | undefined): string {
+  if (ids == null) return '*';
+  if (ids.length === 0) return '-';
+  return [...ids].sort().join(',');
+}
+
 export const scheduleQueryKeys = {
   all: ['schedules'] as const,
   list: () => [...scheduleQueryKeys.all, 'list'] as const,
-  range: (startDate: string, endDate: string) =>
-    [...scheduleQueryKeys.all, 'range', startDate, endDate] as const,
+  range: (params: ListSchedulesInRangeParams) =>
+    [
+      ...scheduleQueryKeys.all,
+      'range',
+      params.startDate,
+      params.endDate,
+      sortedIdsKey(params.resourceIds),
+      sortedIdsKey(params.projectIds),
+    ] as const,
 };
 
 export function useSchedules() {
@@ -20,12 +34,26 @@ export function useSchedules() {
   });
 }
 
-export function useSchedulesInRange(startDate: string, endDate: string, enabled = true) {
+/**
+ * Viewport-scoped schedule load. Shows previous viewport data only while the next
+ * request is in flight, then replaces it (no merge/accumulation across ranges).
+ */
+export function useSchedulesInRange(params: ListSchedulesInRangeParams, enabled = true) {
+  const { startDate, endDate, resourceIds, projectIds } = params;
+  const hasValidDates = Boolean(startDate && endDate && startDate <= endDate);
+  const hasEntityScope =
+    resourceIds === undefined && projectIds === undefined
+      ? true
+      : (resourceIds != null && resourceIds.length > 0) ||
+        (projectIds != null && projectIds.length > 0);
+
   return useQuery({
-    queryKey: scheduleQueryKeys.range(startDate, endDate),
-    queryFn: () => schedulesService.listInDateRange(startDate, endDate),
-    enabled: enabled && Boolean(startDate && endDate && startDate <= endDate),
-    staleTime: 30_000,
+    queryKey: scheduleQueryKeys.range(params),
+    queryFn: () => schedulesService.listInDateRange(params),
+    enabled: enabled && hasValidDates && hasEntityScope,
+    staleTime: 0,
+    gcTime: 0,
+    placeholderData: keepPreviousData,
   });
 }
 

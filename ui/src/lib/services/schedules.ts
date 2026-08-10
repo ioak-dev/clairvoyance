@@ -1,6 +1,5 @@
 import { env } from '../shared/env';
 import { http } from '../shared/http';
-import { datesOverlap } from '../rosterUtils';
 import type {
   BillableType,
   BookingCommitmentType,
@@ -11,6 +10,9 @@ import type {
 import { type ScheduleRow, toScheduleAssignment } from '../../types/api';
 
 const baseUrl = `${env.postgrestUrl}/schedule`;
+
+/** PostgREST URL length safety — beyond this, fall back to date-only server filter. */
+const MAX_IN_FILTER_IDS = 200;
 
 export interface UpsertScheduleParams {
   id?: string;
@@ -40,7 +42,20 @@ export interface SplitScheduleParams {
   splitDate: string;
 }
 
+export interface ListSchedulesInRangeParams {
+  startDate: string;
+  endDate: string;
+  /** When set (including empty), restricts to these people. Empty → no rows. */
+  resourceIds?: string[];
+  /** When set (including empty), restricts to these projects. Empty → no rows. */
+  projectIds?: string[];
+}
+
 export type ScheduleRangeResult = { ids: string[] };
+
+function buildInFilter(column: string, ids: string[]): string {
+  return `${column}=in.(${ids.map((id) => encodeURIComponent(id)).join(',')})`;
+}
 
 export const schedulesService = {
   async list(): Promise<ScheduleAssignment[]> {
@@ -48,9 +63,45 @@ export const schedulesService = {
     return rows.map(toScheduleAssignment);
   },
 
-  async listInDateRange(startDate: string, endDate: string): Promise<ScheduleAssignment[]> {
-    const all = await this.list();
-    return all.filter((s) => datesOverlap(s.startDate, s.endDate, startDate, endDate));
+  /**
+   * Load schedules overlapping [startDate, endDate], optionally scoped to people and/or projects.
+   * Overlap: end_date >= startDate AND start_date <= endDate.
+   */
+  async listInDateRange(params: ListSchedulesInRangeParams): Promise<ScheduleAssignment[]> {
+    const { startDate, endDate, resourceIds, projectIds } = params;
+    if (!startDate || !endDate || startDate > endDate) return [];
+
+    if (resourceIds && resourceIds.length === 0) return [];
+    if (projectIds && projectIds.length === 0) return [];
+
+    const applyResourceFilter =
+      resourceIds != null && resourceIds.length > 0 && resourceIds.length <= MAX_IN_FILTER_IDS;
+    const applyProjectFilter =
+      projectIds != null && projectIds.length > 0 && projectIds.length <= MAX_IN_FILTER_IDS;
+
+    // Build URL manually so PostgREST `in.()` filters stay unencoded.
+    const parts = [
+      `select=*`,
+      `and=(end_date.gte.${startDate},start_date.lte.${endDate})`,
+      `limit=100000`,
+    ];
+    if (applyResourceFilter) parts.push(buildInFilter('person_id', resourceIds!));
+    if (applyProjectFilter) parts.push(buildInFilter('project_id', projectIds!));
+
+    const rows = await http.get<ScheduleRow[]>(`${baseUrl}?${parts.join('&')}`);
+    let assignments = rows.map(toScheduleAssignment);
+
+    // Client-side entity filter when ID lists were too large for the URL.
+    if (resourceIds != null && resourceIds.length > MAX_IN_FILTER_IDS) {
+      const allowed = new Set(resourceIds);
+      assignments = assignments.filter((s) => allowed.has(s.resourceId));
+    }
+    if (projectIds != null && projectIds.length > MAX_IN_FILTER_IDS) {
+      const allowed = new Set(projectIds);
+      assignments = assignments.filter((s) => allowed.has(s.projectId));
+    }
+
+    return assignments;
   },
 
   async upsert(params: UpsertScheduleParams): Promise<string> {

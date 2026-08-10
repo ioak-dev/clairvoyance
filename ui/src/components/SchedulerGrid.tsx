@@ -13,6 +13,7 @@ import React, {
   forwardRef,
   memo,
 } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
 import { Calendar, Loader2, MoreVertical, Plus, User, UserCheck } from 'lucide-react';
 import {
@@ -42,7 +43,17 @@ import {
 } from '../lib/rosterUtils';
 import { requestDateBounds } from '../types/api';
 import { useSchedulesInRange } from '../hooks/useSchedules';
-import { useHorizontalTimelineWindow } from '../hooks/useHorizontalTimelineWindow';
+import {
+  centeredFetchRange,
+  dateAtTimelineCenter,
+  entityIdFromRow,
+  sampleEntitiesFromVirtualRange,
+  shouldRefetchDates,
+  useHorizontalTimelineWindow,
+  VERTICAL_REFETCH_PX,
+  viewportCoveredByFetch,
+} from '../hooks/useHorizontalTimelineWindow';
+import type { ListSchedulesInRangeParams } from '../lib/services/schedules';
 import { SkillMatcherModal } from './SkillMatcherModal';
 import {
   Card,
@@ -55,8 +66,20 @@ import {
 
 const WEEKDAY_COL_WIDTH = 52;
 const WEEKEND_COL_WIDTH = 28;
-const FETCH_BUFFER_DAYS = 14;
+/** Schedule data window loaded per scroll-settle (inclusive days). */
+const SCHEDULE_FETCH_DAYS = 30;
 const SIDEBAR_WIDTH = 190;
+/** Sticky month + day header rows (h-9 + h-10). */
+const STICKY_HEADER_HEIGHT_PX = 76;
+const LANE_HEIGHT_PX = 56;
+const LANE_GAP_PX = 4;
+const ROW_PADDING_Y_PX = 24;
+const VIRTUAL_OVERSCAN = 8;
+
+function estimateRowHeight(laneCount: number): number {
+  const lanes = Math.max(1, laneCount);
+  return Math.max(72, lanes * LANE_HEIGHT_PX + (lanes - 1) * LANE_GAP_PX + ROW_PADDING_Y_PX);
+}
 
 export type SchedulerGridHandle = {
   scrollByWeeks: (weeks: number) => void;
@@ -114,6 +137,28 @@ function formatDayHours(hours: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
+function sortedIdsEqual(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a === b;
+  if (a.length !== b.length) return false;
+  const as = [...a].sort();
+  const bs = [...b].sort();
+  return as.every((id, i) => id === bs[i]);
+}
+
+/** Clip a block to the loaded schedule window so bars only paint in the 30-day fetch range. */
+function clipBlockToFetchRange(
+  block: AllocationBlock,
+  fetchStart: string,
+  fetchEnd: string,
+): AllocationBlock | null {
+  const startDate = block.startDate > fetchStart ? block.startDate : fetchStart;
+  const endDate = block.endDate < fetchEnd ? block.endDate : fetchEnd;
+  if (startDate > endDate) return null;
+  if (startDate === block.startDate && endDate === block.endDate) return block;
+  return { ...block, startDate, endDate };
+}
+
 function DailyTotalStrip({
   columns,
   totals,
@@ -125,15 +170,15 @@ function DailyTotalStrip({
   onDayMouseDown,
   onDayMouseEnter,
 }: {
-  columns: DayColumnLayout[];
+  columns: Array<DayColumnLayout & { fullIndex: number }>;
   totals: Map<string, number>;
   capacity: number;
   label: string;
   selectionStartIdx?: number | null;
   selectionEndIdx?: number | null;
   selectionActive?: boolean;
-  onDayMouseDown?: (index: number) => void;
-  onDayMouseEnter?: (index: number) => void;
+  onDayMouseDown?: (fullIndex: number) => void;
+  onDayMouseEnter?: (fullIndex: number) => void;
 }) {
   const hasSelection =
     selectionActive &&
@@ -144,10 +189,10 @@ function DailyTotalStrip({
 
   return (
     <div data-date-select-strip className="absolute inset-x-0 top-[2px] h-[18px] z-[6]">
-      {columns.map((col, index) => {
+      {columns.map((col) => {
         const hours = totals.get(col.dateStr) || 0;
         const inSelection =
-          hasSelection && index >= selectionStartIdx! && index <= selectionEndIdx!;
+          hasSelection && col.fullIndex >= selectionStartIdx! && col.fullIndex <= selectionEndIdx!;
         const util = capacity > 0 ? hours / capacity : 0;
         const over = util > 1.01;
         const showBar = !col.isWeekend;
@@ -161,14 +206,15 @@ function DailyTotalStrip({
         return (
           <div
             key={`util-${col.dateStr}`}
+            data-full-index={col.fullIndex}
             style={{ left: `${col.left}px`, width: `${col.width}px` }}
             onMouseDown={(event) => {
               if (event.button !== 0 || !onDayMouseDown) return;
               event.preventDefault();
               event.stopPropagation();
-              onDayMouseDown(index);
+              onDayMouseDown(col.fullIndex);
             }}
-            onMouseEnter={() => onDayMouseEnter?.(index)}
+            onMouseEnter={() => onDayMouseEnter?.(col.fullIndex)}
             className={`absolute top-0 h-[18px] cursor-ew-resize ${
               inSelection ? 'bg-sky-400/35' : 'hover:bg-sky-400/15'
             }`}
@@ -219,7 +265,13 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   const [isSelectingDates, setIsSelectingDates] = useState(false);
   const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
   const isSelectingDatesRef = useRef(false);
+  const dateSelectionRef = useRef<{
+    anchorIndex: number;
+    focusIndex: number;
+    entityId: string;
+  } | null>(null);
   const selectionMenuRef = useRef<HTMLDivElement>(null);
+  const selectionOverlayRef = useRef<HTMLDivElement | null>(null);
 
   const {
     scrollRef,
@@ -229,6 +281,8 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     scrollByWeeks,
     focusOnDate,
     focusToday,
+    setOnScrollSettle,
+    setScrollSettlePaused,
   } = useHorizontalTimelineWindow(CURRENT_DATE_STRING);
 
   useImperativeHandle(ref, () => ({
@@ -237,21 +291,68 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     focusToday,
   }), [scrollByWeeks, focusOnDate, focusToday]);
 
-  const fetchStart = addDays(windowStart, -FETCH_BUFFER_DAYS);
-  const fetchEnd = addDays(windowEnd, FETCH_BUFFER_DAYS);
-  const { data: rangeAssignments = [], isFetching: isFetchingSchedules } = useSchedulesInRange(
-    fetchStart,
-    fetchEnd,
+  const { columns: dayColumns, totalWidth: gridWidth } = useMemo(
+    () => buildDayColumnLayout(windowStart, windowEnd, WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH),
+    [windowStart, windowEnd],
   );
+
+  const dayColumnsRef = useRef(dayColumns);
+  dayColumnsRef.current = dayColumns;
+
+  const initialFetch = centeredFetchRange(CURRENT_DATE_STRING, SCHEDULE_FETCH_DAYS);
+  const [scheduleQuery, setScheduleQuery] = useState<ListSchedulesInRangeParams>({
+    startDate: initialFetch.start,
+    endDate: initialFetch.end,
+    resourceIds: viewMode === 'resources' ? [] : undefined,
+    projectIds: viewMode === 'projects' ? [] : undefined,
+  });
+  const scheduleQueryRef = useRef(scheduleQuery);
+  scheduleQueryRef.current = scheduleQuery;
+  const fetchAnchorScrollTopRef = useRef(0);
+
+  const filteredEntityIds = useMemo(() => {
+    if (viewMode === 'projects') {
+      return filterProjects(projects, filterCriteria)
+        .filter((p) => !focusedEntityId || p.id === focusedEntityId)
+        .map((p) => p.id);
+    }
+    if (viewMode === 'resources') {
+      return filterPeople(resources, filterCriteria)
+        .filter((r) => !focusedEntityId || r.id === focusedEntityId)
+        .map((r) => r.id);
+    }
+    return [] as string[];
+  }, [viewMode, projects, resources, filterCriteria, focusedEntityId]);
+
+  const scheduleFetchEnabled = viewMode !== 'requests';
+  const {
+    data: rangeAssignments = [],
+    isPending: isPendingSchedules,
+    isFetching: isFetchingSchedules,
+  } = useSchedulesInRange(scheduleQuery, scheduleFetchEnabled);
+
+  // Full-grid overlay only for true empty/pending loads — not background refetches.
+  const showScheduleLoading =
+    isFilterApplying || (isPendingSchedules && isFetchingSchedules);
 
   const onTimelineScroll = useCallback(() => {
     handleScroll();
   }, [handleScroll]);
 
-  const { columns: dayColumns, totalWidth: gridWidth } = useMemo(
-    () => buildDayColumnLayout(windowStart, windowEnd, WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH),
-    [windowStart, windowEnd],
-  );
+  const applyOverlayBounds = useCallback((anchorIndex: number, focusIndex: number) => {
+    const overlay = selectionOverlayRef.current;
+    if (!overlay) return;
+    const columns = dayColumnsRef.current;
+    const startIdx = Math.min(anchorIndex, focusIndex);
+    const endIdx = Math.max(anchorIndex, focusIndex);
+    const startDate = columns[startIdx]?.dateStr;
+    const endDate = columns[endIdx]?.dateStr;
+    if (!startDate || !endDate) return;
+    const bounds = getDateRangeBounds(columns, startDate, endDate);
+    if (!bounds) return;
+    overlay.style.left = `${bounds.left}px`;
+    overlay.style.width = `${bounds.width}px`;
+  }, []);
 
   const selectedDateRange = useMemo(() => {
     if (!dateSelection || dayColumns.length === 0) return null;
@@ -274,28 +375,43 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
 
   const clearDateSelection = useCallback(() => {
     isSelectingDatesRef.current = false;
+    dateSelectionRef.current = null;
+    selectionOverlayRef.current = null;
+    setScrollSettlePaused(false);
     setIsSelectingDates(false);
     setSelectionMenuOpen(false);
     setDateSelection(null);
-  }, []);
+  }, [setScrollSettlePaused]);
 
-  const beginDateSelection = useCallback((index: number, entityId: string) => {
+  const beginDateSelection = useCallback((fullIndex: number, entityId: string) => {
+    const next = { anchorIndex: fullIndex, focusIndex: fullIndex, entityId };
     isSelectingDatesRef.current = true;
+    dateSelectionRef.current = next;
+    setScrollSettlePaused(true);
     setIsSelectingDates(true);
     setSelectionMenuOpen(false);
-    setDateSelection({ anchorIndex: index, focusIndex: index, entityId });
-  }, []);
+    setDateSelection(next);
+  }, [setScrollSettlePaused]);
 
-  const updateDateSelection = useCallback((index: number) => {
-    if (!isSelectingDatesRef.current) return;
-    setDateSelection((prev) => (prev ? { ...prev, focusIndex: index } : prev));
-  }, []);
+  // During drag: update overlay via DOM only (no React re-render of the 2-year grid).
+  const updateDateSelection = useCallback((fullIndex: number) => {
+    if (!isSelectingDatesRef.current || !dateSelectionRef.current) return;
+    if (dateSelectionRef.current.focusIndex === fullIndex) return;
+    dateSelectionRef.current = { ...dateSelectionRef.current, focusIndex: fullIndex };
+    applyOverlayBounds(dateSelectionRef.current.anchorIndex, fullIndex);
+  }, [applyOverlayBounds]);
 
   const endDateSelection = useCallback(() => {
     if (!isSelectingDatesRef.current) return;
     isSelectingDatesRef.current = false;
+    setScrollSettlePaused(false);
     setIsSelectingDates(false);
-  }, []);
+    // Commit live focus index once so the schedule menu uses the final range.
+    const live = dateSelectionRef.current;
+    if (live) {
+      setDateSelection({ ...live });
+    }
+  }, [setScrollSettlePaused]);
 
   useEffect(() => {
     const onMouseUp = () => endDateSelection();
@@ -349,6 +465,17 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     return groups;
   }, [dayColumns]);
 
+  const fetchDayColumns = useMemo(
+    () =>
+      dayColumns
+        .map((col, fullIndex) => ({ ...col, fullIndex }))
+        .filter(
+          (col) =>
+            col.dateStr >= scheduleQuery.startDate && col.dateStr <= scheduleQuery.endDate,
+        ),
+    [dayColumns, scheduleQuery.startDate, scheduleQuery.endDate],
+  );
+
   const assignmentRows = useMemo(() => {
     interface Lane {
       project?: Project;
@@ -364,7 +491,12 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
       projectLanes: Lane[];
     }[] = [];
 
-    const allBlocks = rangeAssignments.flatMap(assignmentToBlocks);
+    const allBlocks = rangeAssignments
+      .flatMap(assignmentToBlocks)
+      .map((block) =>
+        clipBlockToFetchRange(block, scheduleQuery.startDate, scheduleQuery.endDate),
+      )
+      .filter((block): block is AllocationBlock => block != null);
 
     if (viewMode === 'requests') {
       projects.forEach((proj) => {
@@ -438,7 +570,128 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     }
 
     return rows;
-  }, [resources, projects, rangeAssignments, requests, filterCriteria, focusedEntityId, hideUnbooked, viewMode]);
+  }, [
+    resources,
+    projects,
+    rangeAssignments,
+    requests,
+    filterCriteria,
+    focusedEntityId,
+    hideUnbooked,
+    viewMode,
+    scheduleQuery.startDate,
+    scheduleQuery.endDate,
+  ]);
+
+  const assignmentRowsRef = useRef(assignmentRows);
+  assignmentRowsRef.current = assignmentRows;
+
+  const rowVirtualizer = useVirtualizer({
+    count: assignmentRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) =>
+      estimateRowHeight(assignmentRows[index]?.projectLanes.length ?? 1),
+    overscan: VIRTUAL_OVERSCAN,
+    scrollMargin: STICKY_HEADER_HEIGHT_PX,
+    getItemKey: (index) => assignmentRows[index]?.id ?? index,
+  });
+
+  const rowVirtualizerRef = useRef(rowVirtualizer);
+  rowVirtualizerRef.current = rowVirtualizer;
+
+  const refreshScheduleViewport = useCallback((force = false) => {
+    if (viewMode === 'requests') return;
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const prev = scheduleQueryRef.current;
+    const rows = assignmentRowsRef.current;
+    const centerDate =
+      dateAtTimelineCenter(el, dayColumnsRef.current, SIDEBAR_WIDTH) ?? CURRENT_DATE_STRING;
+    const centered = centeredFetchRange(centerDate, SCHEDULE_FETCH_DAYS);
+    let start = centered.start;
+    let end = centered.end;
+
+    let ids: string[];
+    const scrollTop = el.scrollTop;
+
+    if (hideUnbooked) {
+      ids = filteredEntityIds;
+      if (!force) {
+        const datesNeedRefresh = shouldRefetchDates(prev.startDate, prev.endDate, start, end);
+        if (!datesNeedRefresh) {
+          return;
+        }
+      }
+    } else {
+      const range = rowVirtualizerRef.current.range;
+      const sample = sampleEntitiesFromVirtualRange(rows, range);
+      ids =
+        sample.fetchIds.length > 0
+          ? sample.fetchIds
+          : filteredEntityIds.slice(0, 40);
+
+      if (!force) {
+        const prevIds = viewMode === 'projects' ? prev.projectIds : prev.resourceIds;
+        const datesNeedRefresh = shouldRefetchDates(prev.startDate, prev.endDate, start, end);
+        const covered = viewportCoveredByFetch(sample.visibleIds, prevIds);
+        const verticalMoved =
+          Math.abs(scrollTop - fetchAnchorScrollTopRef.current) >= VERTICAL_REFETCH_PX;
+
+        if (!datesNeedRefresh && covered && !verticalMoved) {
+          return;
+        }
+        if (!datesNeedRefresh) {
+          start = prev.startDate;
+          end = prev.endDate;
+        }
+      }
+    }
+
+    setScheduleQuery((current) => {
+      const next: ListSchedulesInRangeParams =
+        viewMode === 'projects'
+          ? { startDate: start, endDate: end, projectIds: ids, resourceIds: undefined }
+          : { startDate: start, endDate: end, resourceIds: ids, projectIds: undefined };
+
+      if (
+        current.startDate === next.startDate &&
+        current.endDate === next.endDate &&
+        sortedIdsEqual(current.resourceIds, next.resourceIds) &&
+        sortedIdsEqual(current.projectIds, next.projectIds)
+      ) {
+        return current;
+      }
+      fetchAnchorScrollTopRef.current = scrollTop;
+      return next;
+    });
+  }, [viewMode, hideUnbooked, filteredEntityIds, scrollRef]);
+
+  useEffect(() => {
+    setOnScrollSettle(() => refreshScheduleViewport(false));
+    return () => setOnScrollSettle(null);
+  }, [setOnScrollSettle, refreshScheduleViewport]);
+
+  useEffect(() => {
+    if (viewMode === 'requests') return;
+    const id = requestAnimationFrame(() => refreshScheduleViewport(true));
+    return () => cancelAnimationFrame(id);
+  }, [viewMode, hideUnbooked, filteredEntityIds, windowStart, windowEnd, assignmentRows.length, refreshScheduleViewport]);
+
+  // Drop date selection when the selected row is virtualized away.
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const virtualRangeStart = rowVirtualizer.range?.startIndex ?? 0;
+  const virtualRangeEnd = rowVirtualizer.range?.endIndex ?? -1;
+  useEffect(() => {
+    if (!dateSelection || isSelectingDatesRef.current) return;
+    const mounted = virtualItems.some((item) => {
+      const row = assignmentRows[item.index];
+      return entityIdFromRow(row) === dateSelection.entityId;
+    });
+    if (!mounted) clearDateSelection();
+    // virtualItems identity changes every render; range indexes are the stable signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [virtualRangeStart, virtualRangeEnd, assignmentRows, dateSelection, clearDateSelection]);
 
   const resourceDailyTotals = useMemo(() => {
     if (viewMode !== 'resources') return null;
@@ -447,10 +700,10 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
       if (!row.resource) continue;
       const capacity = personDailyCapacityHours(row.resource.weeklyHours, row.resource.fte);
       const blocks = row.projectLanes.flatMap((lane) => lane.blocks);
-      map.set(row.resource.id, buildDailyTotals(blocks, windowStart, windowEnd, capacity));
+      map.set(row.resource.id, buildDailyTotals(blocks, scheduleQuery.startDate, scheduleQuery.endDate, capacity));
     }
     return map;
-  }, [assignmentRows, viewMode, windowStart, windowEnd]);
+  }, [assignmentRows, viewMode, scheduleQuery.startDate, scheduleQuery.endDate]);
 
   const projectDailyTotals = useMemo(() => {
     if (viewMode !== 'projects') return null;
@@ -462,7 +715,12 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         if (!lane.resource || lane.resource.id === 'none') continue;
         const capacity = personDailyCapacityHours(lane.resource.weeklyHours, lane.resource.fte);
         for (const block of lane.blocks) {
-          const blockTotals = buildDailyTotals([block], windowStart, windowEnd, capacity);
+          const blockTotals = buildDailyTotals(
+            [block],
+            scheduleQuery.startDate,
+            scheduleQuery.endDate,
+            capacity,
+          );
           for (const [date, hours] of blockTotals) {
             totals.set(date, (totals.get(date) || 0) + hours);
           }
@@ -471,7 +729,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
       map.set(row.project.id, totals);
     }
     return map;
-  }, [assignmentRows, viewMode, windowStart, windowEnd]);
+  }, [assignmentRows, viewMode, scheduleQuery.startDate, scheduleQuery.endDate]);
 
   const getApprovedVacationsForResource = (resourceId: string) =>
     vacations.filter((v) => v.status === 'Approved' && v.resourceId === resourceId);
@@ -693,7 +951,12 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
       !!selectedDateRange && !!rowEntityId && selectedDateRange.entityId === rowEntityId;
 
     return (
-      <div key={row.id} className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[72px]">
+      <div
+        key={row.id}
+        data-schedule-row
+        data-entity-id={rowEntityId ?? undefined}
+        className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[72px]"
+      >
         <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[72px]">
           <div className="flex items-center gap-2 overflow-hidden py-3 w-full">
             {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
@@ -741,20 +1004,23 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         <div style={{ width: `${gridWidth}px` }} className="relative flex flex-col justify-center py-3 shrink-0 min-h-[72px]">
           {dailyTotals && rowEntityId && (
             <DailyTotalStrip
-              columns={dayColumns}
+              columns={fetchDayColumns}
               totals={dailyTotals}
               capacity={capacity}
               label={rowEntityLabel}
-              selectionActive={selectionActive}
-              selectionStartIdx={selectedDateRange?.startIdx}
-              selectionEndIdx={selectedDateRange?.endIdx}
-              onDayMouseDown={(index) => beginDateSelection(index, rowEntityId)}
+              selectionActive={selectionActive && !isSelectingDates}
+              selectionStartIdx={selectedDateRange?.startIdx ?? null}
+              selectionEndIdx={selectedDateRange?.endIdx ?? null}
+              onDayMouseDown={(fullIndex) => beginDateSelection(fullIndex, rowEntityId)}
               onDayMouseEnter={updateDateSelection}
             />
           )}
 
           {selectionActive && selectedDateRange && (
               <div
+                ref={(node) => {
+                  selectionOverlayRef.current = node;
+                }}
                 data-date-selection-overlay
                 className="absolute inset-y-0 z-[12] pointer-events-none"
                 style={{
@@ -865,8 +1131,8 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
 
   return (
     <Card className="overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
-      {(isFetchingSchedules || isFilterApplying) && (
-        <div className="absolute inset-0 z-20 bg-surface/55 backdrop-blur-[1px] pointer-events-none flex items-center justify-center">
+      {(showScheduleLoading) && (
+        <div className="absolute inset-0 z-20 bg-black/20 pointer-events-none flex items-center justify-center">
           <div className="flex items-center gap-2 rounded-full bg-surface border border-subtle px-4 py-2 text-xs font-medium text-secondary shadow-app-md">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
             {isFilterApplying ? 'Applying filter…' : 'Loading schedules…'}
@@ -890,12 +1156,6 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         }}
         className="flex-1 min-h-0 overflow-auto select-none relative scrollbar-thin"
       >
-        {isFetchingSchedules && (
-          <div className="absolute top-2 right-3 z-30 flex items-center gap-1.5 rounded-full bg-surface/95 border border-subtle px-2.5 py-1 text-[10px] font-medium text-secondary shadow-app-sm pointer-events-none">
-            <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
-            Loading…
-          </div>
-        )}
         <div style={{ width: `calc(${SIDEBAR_WIDTH}px + ${gridWidth}px)` }} className="flex flex-col relative">
           {/* Month header row */}
           <div className="flex bg-grid-header border-b border-subtle text-xs font-bold text-secondary uppercase tracking-wider h-9 items-center sticky top-0 z-30">
@@ -954,13 +1214,34 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
             })}
           </div>
 
-          <div className="divide-y divide-[var(--app-border-subtle)]">
+          <div className="relative w-full">
             {assignmentRows.length === 0 ? (
               <div className="flex items-center justify-center py-20 bg-surface-muted text-tertiary text-sm">
                 No rows match the current filters.
               </div>
             ) : (
-              assignmentRows.map((row) => renderRow(row))
+              <div
+                className="relative w-full"
+                style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+              >
+                {virtualItems.map((virtualRow) => {
+                  const row = assignmentRows[virtualRow.index];
+                  if (!row) return null;
+                  return (
+                    <div
+                      key={row.id}
+                      data-index={virtualRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      className="absolute top-0 left-0 w-full"
+                      style={{
+                        transform: `translateY(${virtualRow.start - rowVirtualizer.options.scrollMargin}px)`,
+                      }}
+                    >
+                      {renderRow(row)}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>

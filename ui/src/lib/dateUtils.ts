@@ -34,7 +34,7 @@ export interface TimelineDay {
   monthName: string;
 }
 
-export function buildDateRange(startStr: string, endStr: string, maxDays = 366): TimelineDay[] {
+export function buildDateRange(startStr: string, endStr: string, maxDays = 730): TimelineDay[] {
   let start = parseDateString(startStr);
   let end = parseDateString(endStr);
 

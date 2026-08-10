@@ -115,7 +115,7 @@ export function buildDayColumnLayout(
   weekdayWidth = 52,
   weekendWidth = 28,
 ): { columns: DayColumnLayout[]; totalWidth: number } {
-  const days = buildDateRange(startDate, endDate);
+  const days = buildDateRange(startDate, endDate, 730);
   let left = 0;
   const columns: DayColumnLayout[] = days.map((day) => {
     const width = day.isWeekend ? weekendWidth : weekdayWidth;

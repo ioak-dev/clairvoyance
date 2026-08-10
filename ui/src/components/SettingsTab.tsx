@@ -6,14 +6,9 @@
 import React, { useState, useRef } from 'react';
 import { Resource, Project } from '../types';
 import { Upload, FileUp, AlertCircle, CheckCircle } from 'lucide-react';
-import { env } from '../lib/shared/env';
+import { useImportTemplateDownload, useImportUpload } from '../hooks/useImport';
+import type { ImportResult } from '../lib/services/import';
 import { Button, Card } from './ui';
-
-interface ImportResult {
-  status: 'success' | 'error';
-  count: number;
-  errors: string[];
-}
 
 interface UploadState {
   isLoading: boolean;
@@ -46,6 +41,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
     schedules: { isLoading: false, isDownloading: false, result: null, error: null },
   });
 
+  const { mutateAsync: uploadImport } = useImportUpload();
+  const { mutateAsync: downloadTemplate } = useImportTemplateDownload();
+
   const handleFileUpload = async (type: 'persons' | 'projects' | 'opportunities' | 'schedules', file: File) => {
     if (!file) return;
 
@@ -55,21 +53,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
     }));
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      // Construct API URL: in dev, Node runs on 4000 (env.apiUrl); in prod same
-      const apiBaseUrl = env.apiUrl;
-      const response = await fetch(`${apiBaseUrl}/api/import/${type}`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data: ImportResult = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.errors?.[0] || 'Upload failed');
-      }
+      const data = await uploadImport({ type, file });
 
       setUploadStates((prev) => ({
         ...prev,
@@ -98,16 +82,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = () => {
     }));
 
     try {
-      const apiBaseUrl = env.apiUrl;
-      const response = await fetch(`${apiBaseUrl}/api/import/${type}/download`);
-      if (!response.ok) {
-        throw new Error('Download failed');
-      }
-
-      const blob = await response.blob();
-      const contentDisposition = response.headers.get('content-disposition') || '';
-      const match = contentDisposition.match(/filename="?([^\"]+)"?/i);
-      const fileName = match?.[1] || `${type}_import_template.xlsx`;
+      const { blob, fileName } = await downloadTemplate(type);
 
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement('a');
