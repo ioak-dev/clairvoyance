@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addDays, daysBetween, CURRENT_DATE_STRING } from '../lib/dateUtils';
-import { buildDayColumnLayout, getWeekMonday, type DayColumnLayout } from '../lib/weekUtils';
+import {
+  buildDayColumnLayout,
+  columnIndexAtOffset,
+  getWeekMonday,
+  lowerBoundColumnIndex,
+  type DayColumnLayout,
+} from '../lib/weekUtils';
 
 /** Fixed display timeline span — sliding window of date headers (Hub Planner–style). */
 const WINDOW_DAYS = 730; // exactly 2 years (inclusive)
@@ -65,11 +71,10 @@ function scrollLeftForDate(
     WEEKDAY_COL_WIDTH,
     WEEKEND_COL_WIDTH,
   );
-  const col =
-    columns.find((c) => c.dateStr === dateStr) ??
-    columns.find((c) => c.dateStr >= dateStr) ??
-    columns[columns.length - 1];
-
+  if (columns.length === 0) return 0;
+  let idx = lowerBoundColumnIndex(columns, dateStr);
+  if (idx >= columns.length) idx = columns.length - 1;
+  const col = columns[idx];
   if (!col) return 0;
 
   const target = center
@@ -87,12 +92,11 @@ export function dateAtTimelineCenter(
 ): string | null {
   if (columns.length === 0) return null;
   const timelineViewportWidth = Math.max(0, el.clientWidth - sidebarWidth);
+  // Sticky sidebar occupies [0, sidebarWidth) in content; column.left is timeline-relative.
+  // Viewport point under timeline center → timeline x = scrollLeft + timelineViewportWidth/2.
   const timelineX = el.scrollLeft + timelineViewportWidth / 2;
-  const col =
-    columns.find((c) => timelineX >= c.left && timelineX < c.left + c.width) ??
-    columns.find((c) => c.left + c.width > timelineX) ??
-    columns[columns.length - 1];
-  return col?.dateStr ?? null;
+  const idx = columnIndexAtOffset(columns, Math.max(0, timelineX));
+  return columns[idx]?.dateStr ?? null;
 }
 
 /** Inclusive 30-day window centered on focusDate. */

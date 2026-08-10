@@ -63,6 +63,18 @@ export const schedulesService = {
     return rows.map(toScheduleAssignment);
   },
 
+  /** All schedules for one person + project (edit-modal sibling clamps). */
+  async listByPersonAndProject(
+    personId: string,
+    projectId: string,
+  ): Promise<ScheduleAssignment[]> {
+    if (!personId || !projectId) return [];
+    const rows = await http.get<ScheduleRow[]>(
+      `${baseUrl}?select=*&person_id=eq.${encodeURIComponent(personId)}&project_id=eq.${encodeURIComponent(projectId)}&limit=100000`,
+    );
+    return rows.map(toScheduleAssignment);
+  },
+
   /**
    * Load schedules overlapping [startDate, endDate], optionally scoped to people and/or projects.
    * Overlap: end_date >= startDate AND start_date <= endDate.

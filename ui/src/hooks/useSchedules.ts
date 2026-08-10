@@ -16,6 +16,8 @@ function sortedIdsKey(ids: string[] | undefined): string {
 export const scheduleQueryKeys = {
   all: ['schedules'] as const,
   list: () => [...scheduleQueryKeys.all, 'list'] as const,
+  siblings: (personId: string, projectId: string) =>
+    [...scheduleQueryKeys.all, 'siblings', personId, projectId] as const,
   range: (params: ListSchedulesInRangeParams) =>
     [
       ...scheduleQueryKeys.all,
@@ -27,10 +29,34 @@ export const scheduleQueryKeys = {
     ] as const,
 };
 
-export function useSchedules() {
+/** Soft cache for viewport range queries — scroll-back reuses fresh data. */
+const RANGE_STALE_TIME_MS = 30_000;
+const RANGE_GC_TIME_MS = 5 * 60_000;
+
+export function useSchedules(enabled = true) {
   return useQuery({
     queryKey: scheduleQueryKeys.list(),
     queryFn: schedulesService.list,
+    enabled,
+  });
+}
+
+/**
+ * Schedules for one person+project — sibling date clamps in the edit modal.
+ * Avoids loading the full schedule list on the scheduler path.
+ */
+export function useScheduleSiblings(
+  personId: string | null | undefined,
+  projectId: string | null | undefined,
+  enabled = true,
+) {
+  const canFetch = Boolean(personId && projectId);
+  return useQuery({
+    queryKey: scheduleQueryKeys.siblings(personId ?? '', projectId ?? ''),
+    queryFn: () => schedulesService.listByPersonAndProject(personId!, projectId!),
+    enabled: enabled && canFetch,
+    staleTime: RANGE_STALE_TIME_MS,
+    gcTime: RANGE_GC_TIME_MS,
   });
 }
 
@@ -51,8 +77,8 @@ export function useSchedulesInRange(params: ListSchedulesInRangeParams, enabled 
     queryKey: scheduleQueryKeys.range(params),
     queryFn: () => schedulesService.listInDateRange(params),
     enabled: enabled && hasValidDates && hasEntityScope,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: RANGE_STALE_TIME_MS,
+    gcTime: RANGE_GC_TIME_MS,
     placeholderData: keepPreviousData,
   });
 }

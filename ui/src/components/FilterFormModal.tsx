@@ -8,7 +8,7 @@ import { Trash2 } from 'lucide-react';
 import type { FilterKind, SavedFilter } from '../types';
 import type { Lookups } from '../lib/services/lookups';
 import type { LifecycleStatus, PersonStatus } from '../types';
-import { Modal, Button, Input, Select, Field, Label, Checkbox } from './ui';
+import { Modal, ConfirmDialog, Button, Input, Select, Field, Label, Checkbox } from './ui';
 
 export interface FilterFormValues {
   name: string;
@@ -321,26 +321,15 @@ export const FilterFormModal: React.FC<FilterFormModalProps> = ({
         </div>
       </Modal>
 
-      <Modal
+      <ConfirmDialog
         open={confirmDeleteOpen}
         onClose={() => setConfirmDeleteOpen(false)}
-        size="sm"
-        title="Delete filter?"
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setConfirmDeleteOpen(false)} disabled={isDeleting}>
-              Cancel
-            </Button>
-            <Button variant="danger" onClick={() => void handleConfirmDelete()} loading={isDeleting}>
-              {isDeleting ? 'Deleting…' : 'Delete'}
-            </Button>
-          </>
-        }
+        confirmLabel="Delete"
+        loading={isDeleting}
+        onConfirm={handleConfirmDelete}
       >
-        <p className="text-sm text-secondary">
-          Delete filter &quot;{filter?.name}&quot;? This cannot be undone.
-        </p>
-      </Modal>
+        Delete filter &quot;{filter?.name}&quot;? This cannot be undone.
+      </ConfirmDialog>
     </>
   );
 };

@@ -8,6 +8,7 @@ import React, {
   useState,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useImperativeHandle,
   forwardRef,
@@ -15,33 +16,21 @@ import React, {
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
-import { Calendar, Loader2, MoreVertical, Plus, User, UserCheck } from 'lucide-react';
-import {
-  getProjectCategory,
-  getAllocationBlockChrome,
-  getAllocationBlockBackgroundFromDays,
-  getRequestBlockChrome,
-  getRequestBlockBackground,
-  getEffectiveBillableType,
-  type ProjectCategory,
-  type AllocationBlockChrome,
-} from '../lib/projectCategory';
-import { filterPeople, filterProjects, filterRequests } from '../lib/filterEngine';
+import { Calendar, Loader2 } from 'lucide-react';
 import { addDays, CURRENT_DATE_STRING } from '../lib/dateUtils';
+import { filterPeople, filterProjects, filterRequests } from '../lib/filterEngine';
 import {
+  buildDateColumnIndex,
   buildDayColumnLayout,
+  buildSchedulerDayChromeStyle,
   getDateRangeBounds,
-  type DayColumnLayout,
+  visibleColumnIndexRange,
+  weekPatternWidthPx,
 } from '../lib/weekUtils';
 import {
   assignmentToBlock,
-  buildDailyTotals,
-  personDailyCapacityHours,
-  rosterSummaryLabel,
-  splitBlockIntoWeekSegments,
-  weekSegmentLabel,
+  type WeekDisplaySegment,
 } from '../lib/rosterUtils';
-import { requestDateBounds } from '../types/api';
 import { useSchedulesInRange } from '../hooks/useSchedules';
 import {
   centeredFetchRange,
@@ -55,14 +44,8 @@ import {
 } from '../hooks/useHorizontalTimelineWindow';
 import type { ListSchedulesInRangeParams } from '../lib/services/schedules';
 import { SkillMatcherModal } from './SkillMatcherModal';
-import {
-  Card,
-  IconButton,
-  Menu,
-  DropdownMenuButton,
-  DropdownMenuItems,
-  DropdownMenuItem,
-} from './ui';
+import { SchedulerRow, type EditBlockOptions, type SchedulerRowModel } from './SchedulerRow';
+import { Card, ConfirmDialog } from './ui';
 
 const WEEKDAY_COL_WIDTH = 52;
 const WEEKEND_COL_WIDTH = 28;
@@ -75,21 +58,20 @@ const LANE_HEIGHT_PX = 56;
 const LANE_GAP_PX = 4;
 const ROW_PADDING_Y_PX = 24;
 const VIRTUAL_OVERSCAN = 8;
+/** Extra timeline px beyond the viewport for sticky day headers. */
+const HEADER_OVERSCAN_PX = weekPatternWidthPx(WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH) * 2;
 
 function estimateRowHeight(laneCount: number): number {
   const lanes = Math.max(1, laneCount);
   return Math.max(72, lanes * LANE_HEIGHT_PX + (lanes - 1) * LANE_GAP_PX + ROW_PADDING_Y_PX);
 }
 
+export type { EditBlockOptions };
+
 export type SchedulerGridHandle = {
   scrollByWeeks: (weeks: number) => void;
   focusOnDate: (date: string) => void;
   focusToday: () => void;
-};
-
-export type EditBlockOptions = {
-  applyScope?: 'entire' | 'partial';
-  partialRange?: { startDate: string; endDate: string } | null;
 };
 
 interface SchedulerGridProps {
@@ -132,11 +114,6 @@ function requestToBlocks(request: BookingRequest): AllocationBlock[] {
   }];
 }
 
-function formatDayHours(hours: number): string {
-  const rounded = Math.round(hours * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-}
-
 function sortedIdsEqual(a: string[] | undefined, b: string[] | undefined): boolean {
   if (a === b) return true;
   if (a == null || b == null) return a === b;
@@ -159,81 +136,191 @@ function clipBlockToFetchRange(
   return { ...block, startDate, endDate };
 }
 
-function DailyTotalStrip({
-  columns,
-  totals,
-  capacity,
-  label,
-  selectionStartIdx,
-  selectionEndIdx,
-  selectionActive,
-  onDayMouseDown,
-  onDayMouseEnter,
+function rowOwnsBusyBlock(row: SchedulerRowModel, busyBlockId: string | null): boolean {
+  if (!busyBlockId) return false;
+  return row.projectLanes.some((lane) => lane.blocks.some((b) => b.scheduleId === busyBlockId));
+}
+
+const EMPTY_BLOCKS: AllocationBlock[] = [];
+
+function pushBlockIndex(
+  map: Map<string, AllocationBlock[]>,
+  key: string,
+  block: AllocationBlock,
+): void {
+  const list = map.get(key);
+  if (list) list.push(block);
+  else map.set(key, [block]);
+}
+
+function indexBlocksByEntity(blocks: AllocationBlock[]): {
+  byResourceId: Map<string, AllocationBlock[]>;
+  byProjectId: Map<string, AllocationBlock[]>;
+} {
+  const byResourceId = new Map<string, AllocationBlock[]>();
+  const byProjectId = new Map<string, AllocationBlock[]>();
+  for (const block of blocks) {
+    pushBlockIndex(byResourceId, block.resourceId, block);
+    pushBlockIndex(byProjectId, block.projectId, block);
+  }
+  return { byResourceId, byProjectId };
+}
+
+function groupBlocksByKey(
+  blocks: AllocationBlock[],
+  keyOf: (block: AllocationBlock) => string,
+): Map<string, AllocationBlock[]> {
+  const map = new Map<string, AllocationBlock[]>();
+  for (const block of blocks) {
+    pushBlockIndex(map, keyOf(block), block);
+  }
+  return map;
+}
+
+type BlockContextMenuState = {
+  block: AllocationBlock;
+  segment: WeekDisplaySegment;
+  anchorRect: DOMRect;
+};
+
+const BLOCK_MENU_WIDTH_PX = 176;
+const SELECTION_MENU_WIDTH_PX = 144;
+
+function sameBlockMenuTarget(
+  a: BlockContextMenuState | null,
+  block: AllocationBlock,
+  segment: WeekDisplaySegment,
+): boolean {
+  return (
+    !!a &&
+    a.block.scheduleId === block.scheduleId &&
+    a.segment.startDate === segment.startDate &&
+    a.segment.endDate === segment.endDate
+  );
+}
+
+function menuPosition(anchorRect: DOMRect, menuWidth: number): { left: number; top: number } {
+  const isPoint = anchorRect.width === 0 && anchorRect.height === 0;
+  const left = Math.min(
+    Math.max(
+      8,
+      isPoint ? anchorRect.left : anchorRect.left + anchorRect.width / 2 - menuWidth / 2,
+    ),
+    window.innerWidth - menuWidth - 8,
+  );
+  const top = Math.min(
+    (isPoint ? anchorRect.top : anchorRect.bottom) + 4,
+    window.innerHeight - 8,
+  );
+  return { left, top };
+}
+
+function SelectionScheduleMenu({
+  anchorRect,
+  menuRef,
+  onSchedule,
 }: {
-  columns: Array<DayColumnLayout & { fullIndex: number }>;
-  totals: Map<string, number>;
-  capacity: number;
-  label: string;
-  selectionStartIdx?: number | null;
-  selectionEndIdx?: number | null;
-  selectionActive?: boolean;
-  onDayMouseDown?: (fullIndex: number) => void;
-  onDayMouseEnter?: (fullIndex: number) => void;
+  anchorRect: DOMRect;
+  menuRef: React.RefObject<HTMLDivElement | null>;
+  onSchedule: () => void;
 }) {
-  const hasSelection =
-    selectionActive &&
-    selectionStartIdx != null &&
-    selectionEndIdx != null &&
-    selectionStartIdx >= 0 &&
-    selectionEndIdx >= 0;
+  const { left, top } = menuPosition(anchorRect, SELECTION_MENU_WIDTH_PX);
 
   return (
-    <div data-date-select-strip className="absolute inset-x-0 top-[2px] h-[18px] z-[6]">
-      {columns.map((col) => {
-        const hours = totals.get(col.dateStr) || 0;
-        const inSelection =
-          hasSelection && col.fullIndex >= selectionStartIdx! && col.fullIndex <= selectionEndIdx!;
-        const util = capacity > 0 ? hours / capacity : 0;
-        const over = util > 1.01;
-        const showBar = !col.isWeekend;
-        const barClass =
-          hours <= 0
-            ? 'bg-surface-muted text-tertiary border border-subtle'
-            : over
-              ? 'bg-rose-500/45 text-rose-950'
-              : 'bg-emerald-500/40 text-emerald-950';
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label="Schedule actions for selected dates"
+      className="fixed z-[80] rounded-lg border border-default bg-surface-raised shadow-app-md py-1"
+      style={{ left, top, width: SELECTION_MENU_WIDTH_PX }}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer"
+        onClick={onSchedule}
+      >
+        <Calendar className="w-3.5 h-3.5" />
+        Schedule
+      </button>
+    </div>
+  );
+}
 
-        return (
-          <div
-            key={`util-${col.dateStr}`}
-            data-full-index={col.fullIndex}
-            style={{ left: `${col.left}px`, width: `${col.width}px` }}
-            onMouseDown={(event) => {
-              if (event.button !== 0 || !onDayMouseDown) return;
-              event.preventDefault();
-              event.stopPropagation();
-              onDayMouseDown(col.fullIndex);
-            }}
-            onMouseEnter={() => onDayMouseEnter?.(col.fullIndex)}
-            className={`absolute top-0 h-[18px] cursor-ew-resize ${
-              inSelection ? 'bg-sky-400/35' : 'hover:bg-sky-400/15'
-            }`}
-            title={
-              capacity > 0
-                ? `${label} · ${col.dateStr}: ${hours.toFixed(1)}h / ${capacity.toFixed(1)}h (${Math.round(util * 100)}%) — drag to select dates`
-                : `${label} · ${col.dateStr}: ${hours.toFixed(1)}h — drag to select dates`
-            }
-          >
-            {showBar && (
-              <div
-                className={`absolute inset-x-[1px] inset-y-0 rounded-[3px] flex items-center justify-center text-[10px] font-bold tabular-nums leading-none pointer-events-none ${barClass}`}
-              >
-                {formatDayHours(hours)}
-              </div>
-            )}
-          </div>
-        );
-      })}
+function BlockContextMenu({
+  menu,
+  busy,
+  canDelete,
+  canSplit,
+  onEdit,
+  onEditWeek,
+  onSplit,
+  onDelete,
+  menuRef,
+}: {
+  menu: BlockContextMenuState;
+  busy: boolean;
+  canDelete: boolean;
+  canSplit: boolean;
+  onEdit: () => void;
+  onEditWeek: () => void;
+  onSplit: () => void;
+  onDelete: () => void;
+  menuRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  // Bottom-end align to ⋮ / right-click point (matches prior Headless Menu).
+  const left = Math.min(
+    Math.max(8, menu.anchorRect.right - BLOCK_MENU_WIDTH_PX),
+    window.innerWidth - BLOCK_MENU_WIDTH_PX - 8,
+  );
+  const top = Math.min(menu.anchorRect.bottom + 4, window.innerHeight - 8);
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label="Allocation actions"
+      className="fixed z-[80] min-w-[11rem] rounded-lg border border-default bg-surface-raised shadow-app-md py-1"
+      style={{ left, top, width: BLOCK_MENU_WIDTH_PX }}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        disabled={busy}
+        className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={onEdit}
+      >
+        Edit
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={busy}
+        className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={onEditWeek}
+      >
+        Edit this week…
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={!canSplit || busy}
+        className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={onSplit}
+      >
+        Split after this week
+      </button>
+      {canDelete && (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-red-600 dark:text-red-400 hover:bg-surface-hover cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={onDelete}
+        >
+          Delete
+        </button>
+      )}
     </div>
   );
 }
@@ -257,13 +344,17 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
 }, ref) {
   const [selectedRequestForSkills, setSelectedRequestForSkills] = useState<BookingRequest | null>(null);
   const [busyBlockId, setBusyBlockId] = useState<string | null>(null);
+  /** Committed selection — set on mouseup only (not during drag). */
   const [dateSelection, setDateSelection] = useState<{
     anchorIndex: number;
     focusIndex: number;
     entityId: string;
   } | null>(null);
-  const [isSelectingDates, setIsSelectingDates] = useState(false);
-  const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
+  /** Entity row that owns the in-progress drag overlay (mousedown → mouseup). */
+  const [dragEntityId, setDragEntityId] = useState<string | null>(null);
+  const [selectionMenuAnchor, setSelectionMenuAnchor] = useState<DOMRect | null>(null);
+  const [blockMenu, setBlockMenu] = useState<BlockContextMenuState | null>(null);
+  const [confirmDeleteBlock, setConfirmDeleteBlock] = useState<AllocationBlock | null>(null);
   const isSelectingDatesRef = useRef(false);
   const dateSelectionRef = useRef<{
     anchorIndex: number;
@@ -271,6 +362,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     entityId: string;
   } | null>(null);
   const selectionMenuRef = useRef<HTMLDivElement>(null);
+  const blockMenuRef = useRef<HTMLDivElement>(null);
   const selectionOverlayRef = useRef<HTMLDivElement | null>(null);
 
   const {
@@ -296,8 +388,48 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     [windowStart, windowEnd],
   );
 
+  const dateColumnIndex = useMemo(() => buildDateColumnIndex(dayColumns), [dayColumns]);
+
+  const dayChromeStyle = useMemo(
+    () => buildSchedulerDayChromeStyle(windowStart, WEEKDAY_COL_WIDTH, WEEKEND_COL_WIDTH),
+    [windowStart],
+  );
+
   const dayColumnsRef = useRef(dayColumns);
   dayColumnsRef.current = dayColumns;
+  const dateColumnIndexRef = useRef(dateColumnIndex);
+  dateColumnIndexRef.current = dateColumnIndex;
+
+  // Horizontal viewport for day-header virtualization (rAF-coalesced).
+  const [headerViewport, setHeaderViewport] = useState({ scrollLeft: 0, clientWidth: 0 });
+  const headerViewportRafRef = useRef(0);
+  const syncHeaderViewport = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setHeaderViewport((prev) => {
+      if (prev.scrollLeft === el.scrollLeft && prev.clientWidth === el.clientWidth) return prev;
+      return { scrollLeft: el.scrollLeft, clientWidth: el.clientWidth };
+    });
+  }, [scrollRef]);
+  const scheduleHeaderViewportSync = useCallback(() => {
+    if (headerViewportRafRef.current) return;
+    headerViewportRafRef.current = requestAnimationFrame(() => {
+      headerViewportRafRef.current = 0;
+      syncHeaderViewport();
+    });
+  }, [syncHeaderViewport]);
+
+  useLayoutEffect(() => {
+    syncHeaderViewport();
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => scheduleHeaderViewportSync());
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (headerViewportRafRef.current) cancelAnimationFrame(headerViewportRafRef.current);
+    };
+  }, [syncHeaderViewport, scheduleHeaderViewportSync, scrollRef, gridWidth]);
 
   const initialFetch = centeredFetchRange(CURRENT_DATE_STRING, SCHEDULE_FETCH_DAYS);
   const [scheduleQuery, setScheduleQuery] = useState<ListSchedulesInRangeParams>({
@@ -336,19 +468,21 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     isFilterApplying || (isPendingSchedules && isFetchingSchedules);
 
   const onTimelineScroll = useCallback(() => {
+    scheduleHeaderViewportSync();
     handleScroll();
-  }, [handleScroll]);
+  }, [handleScroll, scheduleHeaderViewportSync]);
 
   const applyOverlayBounds = useCallback((anchorIndex: number, focusIndex: number) => {
     const overlay = selectionOverlayRef.current;
     if (!overlay) return;
     const columns = dayColumnsRef.current;
+    const index = dateColumnIndexRef.current;
     const startIdx = Math.min(anchorIndex, focusIndex);
     const endIdx = Math.max(anchorIndex, focusIndex);
     const startDate = columns[startIdx]?.dateStr;
     const endDate = columns[endIdx]?.dateStr;
     if (!startDate || !endDate) return;
-    const bounds = getDateRangeBounds(columns, startDate, endDate);
+    const bounds = getDateRangeBounds(columns, startDate, endDate, index);
     if (!bounds) return;
     overlay.style.left = `${bounds.left}px`;
     overlay.style.width = `${bounds.width}px`;
@@ -361,7 +495,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     const startDate = dayColumns[startIdx]?.dateStr;
     const endDate = dayColumns[endIdx]?.dateStr;
     if (!startDate || !endDate) return null;
-    const bounds = getDateRangeBounds(dayColumns, startDate, endDate);
+    const bounds = getDateRangeBounds(dayColumns, startDate, endDate, dateColumnIndex);
     if (!bounds) return null;
     return {
       startIdx,
@@ -371,29 +505,62 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
       bounds,
       entityId: dateSelection.entityId,
     };
-  }, [dateSelection, dayColumns]);
+  }, [dateSelection, dayColumns, dateColumnIndex]);
 
   const clearDateSelection = useCallback(() => {
     isSelectingDatesRef.current = false;
     dateSelectionRef.current = null;
     selectionOverlayRef.current = null;
     setScrollSettlePaused(false);
-    setIsSelectingDates(false);
-    setSelectionMenuOpen(false);
+    setDragEntityId(null);
+    setSelectionMenuAnchor(null);
     setDateSelection(null);
   }, [setScrollSettlePaused]);
+
+  const closeBlockMenu = useCallback(() => {
+    setBlockMenu(null);
+  }, []);
+
+  const closeSelectionMenu = useCallback(() => {
+    setSelectionMenuAnchor(null);
+  }, []);
+
+  const openSelectionMenu = useCallback((anchorRect: DOMRect, toggle = false) => {
+    setBlockMenu(null);
+    setSelectionMenuAnchor((prev) => (toggle && prev ? null : anchorRect));
+  }, []);
+
+  const openBlockMenu = useCallback(
+    (block: AllocationBlock, segment: WeekDisplaySegment, anchorRect: DOMRect) => {
+      setSelectionMenuAnchor(null);
+      setBlockMenu((prev) =>
+        sameBlockMenuTarget(prev, block, segment) ? null : { block, segment, anchorRect },
+      );
+    },
+    [],
+  );
 
   const beginDateSelection = useCallback((fullIndex: number, entityId: string) => {
     const next = { anchorIndex: fullIndex, focusIndex: fullIndex, entityId };
     isSelectingDatesRef.current = true;
     dateSelectionRef.current = next;
     setScrollSettlePaused(true);
-    setIsSelectingDates(true);
-    setSelectionMenuOpen(false);
-    setDateSelection(next);
+    setSelectionMenuAnchor(null);
+    setBlockMenu(null);
+    setDateSelection(null);
+    // Mount overlay on this row only — no focusIndex React updates during drag.
+    setDragEntityId(entityId);
   }, [setScrollSettlePaused]);
 
-  // During drag: update overlay via DOM only (no React re-render of the 2-year grid).
+  // After drag overlay mounts, position it from refs (DOM only thereafter).
+  useLayoutEffect(() => {
+    if (!dragEntityId) return;
+    const live = dateSelectionRef.current;
+    if (!live) return;
+    applyOverlayBounds(live.anchorIndex, live.focusIndex);
+  }, [dragEntityId, applyOverlayBounds]);
+
+  // During drag: update overlay via DOM only (no React re-render).
   const updateDateSelection = useCallback((fullIndex: number) => {
     if (!isSelectingDatesRef.current || !dateSelectionRef.current) return;
     if (dateSelectionRef.current.focusIndex === fullIndex) return;
@@ -405,13 +572,70 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     if (!isSelectingDatesRef.current) return;
     isSelectingDatesRef.current = false;
     setScrollSettlePaused(false);
-    setIsSelectingDates(false);
-    // Commit live focus index once so the schedule menu uses the final range.
+    setDragEntityId(null);
+    // One React commit with the final range → schedule menu on active row.
     const live = dateSelectionRef.current;
     if (live) {
       setDateSelection({ ...live });
     }
   }, [setScrollSettlePaused]);
+
+  const handleSelectionOverlayRef = useCallback((node: HTMLDivElement | null) => {
+    selectionOverlayRef.current = node;
+  }, []);
+
+  const handleRequestClick = useCallback((request: BookingRequest) => {
+    setSelectedRequestForSkills(request);
+  }, []);
+
+  const handleBlockMenuEdit = useCallback(() => {
+    if (!blockMenu) return;
+    const { block } = blockMenu;
+    closeBlockMenu();
+    onEditBlock(block);
+  }, [blockMenu, closeBlockMenu, onEditBlock]);
+
+  const handleBlockMenuEditWeek = useCallback(() => {
+    if (!blockMenu) return;
+    const { block, segment } = blockMenu;
+    closeBlockMenu();
+    onEditBlock(block, {
+      applyScope: 'partial',
+      partialRange: { startDate: segment.startDate, endDate: segment.endDate },
+    });
+  }, [blockMenu, closeBlockMenu, onEditBlock]);
+
+  const handleBlockMenuSplit = useCallback(() => {
+    if (!blockMenu || !onSplitBlock || busyBlockId) return;
+    const { block, segment } = blockMenu;
+    const splitDate = addDays(segment.endDate, 1);
+    const canSplit = splitDate > block.startDate && splitDate <= block.endDate;
+    if (!canSplit) return;
+    closeBlockMenu();
+    setBusyBlockId(block.scheduleId);
+    void Promise.resolve(onSplitBlock(block, splitDate)).finally(() => {
+      setBusyBlockId(null);
+    });
+  }, [blockMenu, busyBlockId, closeBlockMenu, onSplitBlock]);
+
+  const handleBlockMenuDelete = useCallback(() => {
+    if (!blockMenu || !onDeleteBlock || busyBlockId) return;
+    const { block } = blockMenu;
+    closeBlockMenu();
+    setConfirmDeleteBlock(block);
+  }, [blockMenu, busyBlockId, closeBlockMenu, onDeleteBlock]);
+
+  const handleConfirmDeleteBlock = useCallback(async () => {
+    if (!confirmDeleteBlock || !onDeleteBlock || busyBlockId) return;
+    const block = confirmDeleteBlock;
+    setBusyBlockId(block.scheduleId);
+    try {
+      await onDeleteBlock(block);
+      setConfirmDeleteBlock(null);
+    } finally {
+      setBusyBlockId(null);
+    }
+  }, [confirmDeleteBlock, busyBlockId, onDeleteBlock]);
 
   useEffect(() => {
     const onMouseUp = () => endDateSelection();
@@ -420,29 +644,68 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   }, [endDateSelection]);
 
   useEffect(() => {
-    if (!dateSelection) return;
+    if (!dateSelection && !dragEntityId && !blockMenu && !selectionMenuAnchor) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') clearDateSelection();
+      if (event.key !== 'Escape') return;
+      if (blockMenu) {
+        closeBlockMenu();
+        return;
+      }
+      if (selectionMenuAnchor) {
+        closeSelectionMenu();
+        return;
+      }
+      clearDateSelection();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dateSelection, clearDateSelection]);
+  }, [
+    dateSelection,
+    dragEntityId,
+    blockMenu,
+    selectionMenuAnchor,
+    clearDateSelection,
+    closeBlockMenu,
+    closeSelectionMenu,
+  ]);
 
   useEffect(() => {
-    if (!selectionMenuOpen) return;
+    if (!selectionMenuAnchor && !blockMenu) return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (selectionMenuRef.current?.contains(target)) return;
-      setSelectionMenuOpen(false);
+      if (selectionMenuAnchor && selectionMenuRef.current?.contains(target)) return;
+      if (blockMenu && blockMenuRef.current?.contains(target)) return;
+      // Opener buttons toggle/open on click; skip pointerdown so menu is not closed first.
+      if (
+        target instanceof Element &&
+        target.closest('[data-block-menu], [data-selection-menu-trigger]')
+      ) {
+        return;
+      }
+      if (selectionMenuAnchor) closeSelectionMenu();
+      if (blockMenu) closeBlockMenu();
     };
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [selectionMenuOpen]);
+  }, [selectionMenuAnchor, blockMenu, closeBlockMenu, closeSelectionMenu]);
+
+  // Fixed-position menus drift on scroll — dismiss instead of tracking.
+  useEffect(() => {
+    if (!blockMenu && !selectionMenuAnchor) return;
+    const scroller = scrollRef.current;
+    const onScroll = () => {
+      closeBlockMenu();
+      closeSelectionMenu();
+    };
+    scroller?.addEventListener('scroll', onScroll, { passive: true });
+    return () => scroller?.removeEventListener('scroll', onScroll);
+  }, [blockMenu, selectionMenuAnchor, closeBlockMenu, closeSelectionMenu, scrollRef]);
 
   // Drop selection when the visible timeline window or view changes.
   useEffect(() => {
     clearDateSelection();
-  }, [windowStart, windowEnd, viewMode, clearDateSelection]);
+    closeBlockMenu();
+  }, [windowStart, windowEnd, viewMode, clearDateSelection, closeBlockMenu]);
 
   const handleScheduleSelectedRange = useCallback(() => {
     if (!selectedDateRange) return;
@@ -456,14 +719,33 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   }, [selectedDateRange, onOpenScheduleModalWithRes, clearDateSelection, viewMode]);
 
   const monthsHeader = useMemo(() => {
-    const groups: { monthName: string; width: number }[] = [];
-    dayColumns.forEach((col) => {
-      const existing = groups.find((g) => g.monthName === col.monthName);
-      if (existing) existing.width += col.width;
-      else groups.push({ monthName: col.monthName, width: col.width });
-    });
+    const groups: { monthName: string; left: number; width: number }[] = [];
+    for (const col of dayColumns) {
+      const last = groups[groups.length - 1];
+      if (last && last.monthName === col.monthName) last.width += col.width;
+      else groups.push({ monthName: col.monthName, left: col.left, width: col.width });
+    }
     return groups;
   }, [dayColumns]);
+
+  const visibleDayHeaders = useMemo(() => {
+    const clientWidth = headerViewport.clientWidth || 1200;
+    const timelineViewW = Math.max(0, clientWidth - SIDEBAR_WIDTH);
+    const rangeStart = headerViewport.scrollLeft - HEADER_OVERSCAN_PX;
+    const rangeEnd = headerViewport.scrollLeft + timelineViewW + HEADER_OVERSCAN_PX;
+    const range = visibleColumnIndexRange(dayColumns, rangeStart, rangeEnd);
+    if (!range) return [] as typeof dayColumns;
+    return dayColumns.slice(range.startIndex, range.endIndex + 1);
+  }, [dayColumns, headerViewport.scrollLeft, headerViewport.clientWidth]);
+
+  /** Month chips that intersect the virtualized day-header window (true left/width). */
+  const visibleMonthHeaders = useMemo(() => {
+    if (visibleDayHeaders.length === 0) return monthsHeader;
+    const winStart = visibleDayHeaders[0].left;
+    const last = visibleDayHeaders[visibleDayHeaders.length - 1];
+    const winEnd = last.left + last.width;
+    return monthsHeader.filter((m) => m.left < winEnd && m.left + m.width > winStart);
+  }, [monthsHeader, visibleDayHeaders]);
 
   const fetchDayColumns = useMemo(
     () =>
@@ -476,20 +758,8 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     [dayColumns, scheduleQuery.startDate, scheduleQuery.endDate],
   );
 
-  const assignmentRows = useMemo(() => {
-    interface Lane {
-      project?: Project;
-      resource?: Resource;
-      request?: BookingRequest;
-      blocks: AllocationBlock[];
-    }
-
-    const rows: {
-      id: string;
-      resource?: Resource;
-      project?: Project;
-      projectLanes: Lane[];
-    }[] = [];
+  const assignmentRows = useMemo((): SchedulerRowModel[] => {
+    const rows: SchedulerRowModel[] = [];
 
     const allBlocks = rangeAssignments
       .flatMap(assignmentToBlocks)
@@ -497,6 +767,8 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         clipBlockToFetchRange(block, scheduleQuery.startDate, scheduleQuery.endDate),
       )
       .filter((block): block is AllocationBlock => block != null);
+
+    const { byResourceId, byProjectId } = indexBlocksByEntity(allBlocks);
 
     if (viewMode === 'requests') {
       projects.forEach((proj) => {
@@ -506,7 +778,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
           projects,
         );
 
-        const projectLanes: Lane[] = projRequests.map((req) => ({
+        const projectLanes = projRequests.map((req) => ({
           project: proj,
           request: req,
           blocks: requestToBlocks(req),
@@ -517,19 +789,19 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         }
       });
     } else if (viewMode === 'projects') {
+      const resourcesById = new Map(resources.map((r) => [r.id, r]));
       filterProjects(projects, filterCriteria).forEach((proj) => {
         if (focusedEntityId && proj.id !== focusedEntityId) return;
-        const projBlocks = allBlocks.filter((b) => b.projectId === proj.id);
+        const projBlocks = byProjectId.get(proj.id) ?? EMPTY_BLOCKS;
         if (hideUnbooked && projBlocks.length === 0) return;
-        const resIds = Array.from(new Set(projBlocks.map((b) => b.resourceId)));
 
-        const projectLanes: Lane[] =
-          resIds.length === 0
-            ? [{ resource: { id: 'none', name: 'Unassigned', role: '-' }, blocks: [] }]
-            : resIds
-                .map((rId) => ({
-                  resource: resources.find((r) => r.id === rId) || { id: rId, name: 'Resource', role: 'Role' },
-                  blocks: projBlocks.filter((b) => b.resourceId === rId),
+        const projectLanes =
+          projBlocks.length === 0
+            ? [{ resource: { id: 'none', name: 'Unassigned', role: '-' }, blocks: [] as AllocationBlock[] }]
+            : Array.from(groupBlocksByKey(projBlocks, (b) => b.resourceId).entries())
+                .map(([rId, blocks]) => ({
+                  resource: resourcesById.get(rId) || { id: rId, name: 'Resource', role: 'Role' },
+                  blocks,
                 }))
                 .sort((a, b) =>
                   (a.resource?.name || '').localeCompare(b.resource?.name || '', undefined, {
@@ -540,24 +812,24 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         rows.push({ id: `row-${proj.id}`, project: proj, projectLanes });
       });
     } else {
+      const projectsById = new Map(projects.map((p) => [p.id, p]));
       filterPeople(resources, filterCriteria).forEach((res) => {
         if (focusedEntityId && res.id !== focusedEntityId) return;
-        const resBlocks = allBlocks.filter((b) => b.resourceId === res.id);
+        const resBlocks = byResourceId.get(res.id) ?? EMPTY_BLOCKS;
         if (hideUnbooked && resBlocks.length === 0) return;
-        const projIds = Array.from(new Set(resBlocks.map((b) => b.projectId)));
 
-        const projectLanes: Lane[] =
-          projIds.length === 0
+        const projectLanes =
+          resBlocks.length === 0
             ? [{
                 project: { id: 'none', name: 'Unassigned', client: '-', color: 'bg-gray-400', textColor: 'text-gray-400' },
-                blocks: [],
+                blocks: [] as AllocationBlock[],
               }]
-            : projIds
-                .map((pId) => ({
-                  project: projects.find((p) => p.id === pId) || {
+            : Array.from(groupBlocksByKey(resBlocks, (b) => b.projectId).entries())
+                .map(([pId, blocks]) => ({
+                  project: projectsById.get(pId) || {
                     id: pId, name: 'Project', client: 'Client', color: 'bg-emerald-500', textColor: 'text-white',
                   },
-                  blocks: resBlocks.filter((b) => b.projectId === pId),
+                  blocks,
                 }))
                 .sort((a, b) =>
                   (a.project?.name || '').localeCompare(b.project?.name || '', undefined, {
@@ -693,443 +965,21 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [virtualRangeStart, virtualRangeEnd, assignmentRows, dateSelection, clearDateSelection]);
 
-  const resourceDailyTotals = useMemo(() => {
-    if (viewMode !== 'resources') return null;
-    const map = new Map<string, Map<string, number>>();
-    for (const row of assignmentRows) {
-      if (!row.resource) continue;
-      const capacity = personDailyCapacityHours(row.resource.weeklyHours, row.resource.fte);
-      const blocks = row.projectLanes.flatMap((lane) => lane.blocks);
-      map.set(row.resource.id, buildDailyTotals(blocks, scheduleQuery.startDate, scheduleQuery.endDate, capacity));
-    }
-    return map;
-  }, [assignmentRows, viewMode, scheduleQuery.startDate, scheduleQuery.endDate]);
-
-  const projectDailyTotals = useMemo(() => {
-    if (viewMode !== 'projects') return null;
-    const map = new Map<string, Map<string, number>>();
-    for (const row of assignmentRows) {
-      if (!row.project) continue;
-      const totals = new Map<string, number>();
-      for (const lane of row.projectLanes) {
-        if (!lane.resource || lane.resource.id === 'none') continue;
-        const capacity = personDailyCapacityHours(lane.resource.weeklyHours, lane.resource.fte);
-        for (const block of lane.blocks) {
-          const blockTotals = buildDailyTotals(
-            [block],
-            scheduleQuery.startDate,
-            scheduleQuery.endDate,
-            capacity,
-          );
-          for (const [date, hours] of blockTotals) {
-            totals.set(date, (totals.get(date) || 0) + hours);
-          }
-        }
-      }
-      map.set(row.project.id, totals);
-    }
-    return map;
-  }, [assignmentRows, viewMode, scheduleQuery.startDate, scheduleQuery.endDate]);
-
-  const getApprovedVacationsForResource = (resourceId: string) =>
-    vacations.filter((v) => v.status === 'Approved' && v.resourceId === resourceId);
-
-  const renderBlockSegments = (
-    block: AllocationBlock,
-    lane: { project?: Project; resource?: Resource; request?: BookingRequest },
-    row: (typeof assignmentRows)[0],
-  ) => {
-    const weekSegments = splitBlockIntoWeekSegments(block);
-    if (weekSegments.length === 0) return null;
-
-    const summary = rosterSummaryLabel(block.unit, block.roster);
-    let blockTitle = '';
-    let blockLabel = '';
-    let showPersonIcon = false;
-    let showUserCheckIcon = false;
-
-    if (viewMode === 'requests' && lane.request) {
-      const req = lane.request;
-      const reqBounds = requestDateBounds(req);
-      const assignedRes = req.resourceId ? resources.find((r) => r.id === req.resourceId) : null;
-      const dateLabel = reqBounds ? `${reqBounds.startDate} to ${reqBounds.endDate}` : '';
-      if (assignedRes) {
-        blockTitle = `Assigned: ${assignedRes.name}\nRequest: ${req.requestName || 'General request'}\n${dateLabel}\n${summary}`;
-        blockLabel = assignedRes.name;
-        showUserCheckIcon = true;
-      } else {
-        blockTitle = `Request: ${req.requestName || 'General request'}\n${dateLabel}\n${summary}`;
-        blockLabel = req.requestName || 'Request';
-        showPersonIcon = true;
-      }
-    } else if (viewMode === 'projects') {
-      blockTitle = `${lane.resource?.name}: ${summary}${block.title ? `\n${block.title}` : ''}`;
-      blockLabel = lane.resource?.name || 'Resource';
-    } else {
-      blockTitle = `${lane.project?.name}: ${summary}${block.title ? `\n${block.title}` : ''}`;
-      blockLabel = block.title || lane.project?.name || 'Project';
-    }
-
-    let textClass = 'text-slate-800';
-    let blockSurfaceStyle: React.CSSProperties | undefined;
-    let blockCategory: ProjectCategory | null = null;
-    let blockChrome: AllocationBlockChrome | null = null;
-    let borderClass = 'border';
-
-    const proj = lane.project || row.project || projects.find((p) => p.id === block.projectId);
-    const effectiveBillable = getEffectiveBillableType(block.billableType, proj);
-    const projectIsOpportunity = proj ? getProjectCategory(proj) === 'Opportunity' : false;
-    // Hue from effective billable type; opportunity projects (and opportunity type) stay translucent.
-    const translucent = projectIsOpportunity || effectiveBillable === 'Opportunity';
-
-    if (viewMode === 'requests' && lane.request) {
-      const isAssigned = !!lane.request.resourceId;
-      blockCategory = effectiveBillable;
-      if (isAssigned) {
-        blockChrome = getAllocationBlockChrome(effectiveBillable, { translucent });
-        blockSurfaceStyle = getAllocationBlockBackgroundFromDays(0, blockChrome);
-      } else {
-        blockChrome = getRequestBlockChrome(effectiveBillable);
-        blockSurfaceStyle = getRequestBlockBackground(blockChrome);
-      }
-      textClass = blockChrome.textClass;
-      if (!isAssigned) borderClass = 'border border-dotted';
-    } else {
-      blockCategory = effectiveBillable;
-      blockChrome = getAllocationBlockChrome(effectiveBillable, { translucent });
-      blockSurfaceStyle = getAllocationBlockBackgroundFromDays(0, blockChrome);
-      textClass = blockChrome.textClass;
-    }
-
-    const blockTopOffset = viewMode === 'requests' ? 6 : 24;
-    const showBlockMenu = viewMode !== 'requests';
-    const blockBusy = busyBlockId === block.scheduleId;
-
-    return weekSegments.map((seg) => {
-      const bounds = getDateRangeBounds(dayColumns, seg.startDate, seg.endDate);
-      if (!bounds) return null;
-
-      const segLabel = weekSegmentLabel(block.unit, block.roster, seg.activeDays);
-      const subtitle = blockCategory
-        ? `${segLabel} - ${blockCategory.charAt(0)} - ${effectiveBillable}`
-        : segLabel;
-
-      const splitDate = addDays(seg.endDate, 1);
-      const canSplit =
-        showBlockMenu &&
-        Boolean(onSplitBlock) &&
-        splitDate > block.startDate &&
-        splitDate <= block.endDate;
-
-      return (
-        <div
-          key={`${block.scheduleId}-${seg.isoYear}-W${seg.isoWeek}`}
-          style={{
-            left: `${bounds.left + 4}px`,
-            width: `${Math.max(bounds.width - 8, 8)}px`,
-            height: '44px',
-            top: `${blockTopOffset}px`,
-            ...blockSurfaceStyle,
-          }}
-          onClick={() => {
-            if (viewMode === 'requests' && lane.request) {
-              setSelectedRequestForSkills(lane.request);
-              return;
-            }
-            onEditBlock(block);
-          }}
-          className={`absolute select-none overflow-visible text-left px-2 py-1.5 rounded-lg transition-transform hover:scale-[1.01] cursor-pointer shadow-sm flex items-center gap-1 ${borderClass} ${textClass} z-[5]`}
-          title={`${blockTitle}\n${seg.startDate} – ${seg.endDate}`}
-        >
-          <div className="flex-1 min-w-0 pr-1">
-            <div className="text-[11px] font-bold tracking-tight leading-tight truncate">{blockLabel}</div>
-            <div className="text-[9px] font-medium opacity-90 truncate mt-0.5">{subtitle}</div>
-          </div>
-          {showPersonIcon && <User className="w-3.5 h-3.5 shrink-0" />}
-          {showUserCheckIcon && <UserCheck className="w-3.5 h-3.5 shrink-0" />}
-          {showBlockMenu && (
-            <div
-              data-block-menu
-              className="shrink-0 opacity-70 hover:opacity-100"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Menu>
-                <DropdownMenuButton
-                  variant="ghost"
-                  size="icon"
-                  className={`h-6 w-6 text-inherit hover:bg-black/10 ${blockBusy ? 'opacity-100' : ''}`}
-                  aria-label="Allocation actions"
-                  title="Allocation actions"
-                  loading={blockBusy}
-                  disabled={Boolean(busyBlockId)}
-                >
-                  <MoreVertical className="w-3.5 h-3.5" />
-                </DropdownMenuButton>
-                <DropdownMenuItems anchor="bottom end" className="z-[80]">
-                  <DropdownMenuItem
-                    disabled={Boolean(busyBlockId)}
-                    onClick={() => onEditBlock(block)}
-                  >
-                    Edit
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={Boolean(busyBlockId)}
-                    onClick={() =>
-                      onEditBlock(block, {
-                        applyScope: 'partial',
-                        partialRange: { startDate: seg.startDate, endDate: seg.endDate },
-                      })
-                    }
-                  >
-                    Edit this week…
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!canSplit || Boolean(busyBlockId)}
-                    onClick={() => {
-                      if (!canSplit || !onSplitBlock || busyBlockId) return;
-                      setBusyBlockId(block.scheduleId);
-                      void Promise.resolve(onSplitBlock(block, splitDate)).finally(() => {
-                        setBusyBlockId(null);
-                      });
-                    }}
-                  >
-                    Split after this week
-                  </DropdownMenuItem>
-                  {onDeleteBlock && (
-                    <DropdownMenuItem
-                      destructive
-                      disabled={Boolean(busyBlockId)}
-                      onClick={() => {
-                        if (busyBlockId) return;
-                        if (window.confirm('Delete this entire allocation?')) {
-                          setBusyBlockId(block.scheduleId);
-                          void Promise.resolve(onDeleteBlock(block)).finally(() => {
-                            setBusyBlockId(null);
-                          });
-                        }
-                      }}
-                    >
-                      Delete
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuItems>
-              </Menu>
-            </div>
-          )}
-        </div>
-      );
-    });
-  };
-
-  const renderRow = (row: (typeof assignmentRows)[0]) => {
-    const resourceVacations =
-      viewMode === 'projects' || viewMode === 'requests' || !row.resource
-        ? []
-        : getApprovedVacationsForResource(row.resource.id);
-
-    const rowEntityId = row.resource?.id ?? row.project?.id ?? null;
-    const rowEntityLabel = row.resource?.name ?? row.project?.name ?? '';
-
-    const capacity = row.resource
-      ? personDailyCapacityHours(row.resource.weeklyHours, row.resource.fte)
-      : row.project
-        ? row.projectLanes.reduce((sum, lane) => {
-            if (!lane.resource || lane.resource.id === 'none') return sum;
-            return sum + personDailyCapacityHours(lane.resource.weeklyHours, lane.resource.fte);
-          }, 0)
-        : 0;
-
-    const dailyTotals =
-      viewMode === 'resources' && row.resource
-        ? resourceDailyTotals?.get(row.resource.id) ?? new Map<string, number>()
-        : viewMode === 'projects' && row.project
-          ? projectDailyTotals?.get(row.project.id) ?? new Map<string, number>()
-          : null;
-
-    const selectionActive =
-      !!selectedDateRange && !!rowEntityId && selectedDateRange.entityId === rowEntityId;
-
-    return (
-      <div
-        key={row.id}
-        data-schedule-row
-        data-entity-id={rowEntityId ?? undefined}
-        className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[72px]"
-      >
-        <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[72px]">
-          <div className="flex items-center gap-2 overflow-hidden py-3 w-full">
-            {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
-              <div className="truncate text-left flex-1">
-                <h4 className="text-xs font-black text-primary truncate" title={row.project.name}>{row.project.name}</h4>
-              </div>
-            ) : row.resource ? (
-              <>
-                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 text-xs font-bold flex items-center justify-center shrink-0">
-                  {(row.resource.name || '').split(' ').map((n) => n[0] || '').join('')}
-                </div>
-                <div className="truncate text-left flex-1">
-                  <h4 className="text-xs font-bold text-primary truncate">{row.resource.name}</h4>
-                  <p className="text-[10px] text-tertiary capitalize truncate">{row.resource.role}</p>
-                </div>
-              </>
-            ) : null}
-          </div>
-
-          {(viewMode === 'projects' || viewMode === 'requests') && row.project ? (
-            <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-              <IconButton
-                size="sm"
-                label={`Schedule on ${row.project.name}`}
-                onClick={() => onOpenScheduleModalWithRes('', row.project!.id)}
-                className="h-7 w-7 text-secondary"
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </IconButton>
-            </div>
-          ) : row.resource ? (
-            <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-              <IconButton
-                size="sm"
-                label={`Schedule ${row.resource.name}`}
-                onClick={() => onOpenScheduleModalWithRes(row.resource!.id)}
-                className="h-7 w-7 text-blue-600 hover:bg-blue-50"
-              >
-                <Calendar className="w-3.5 h-3.5" />
-              </IconButton>
-            </div>
-          ) : null}
-        </div>
-
-        <div style={{ width: `${gridWidth}px` }} className="relative flex flex-col justify-center py-3 shrink-0 min-h-[72px]">
-          {dailyTotals && rowEntityId && (
-            <DailyTotalStrip
-              columns={fetchDayColumns}
-              totals={dailyTotals}
-              capacity={capacity}
-              label={rowEntityLabel}
-              selectionActive={selectionActive && !isSelectingDates}
-              selectionStartIdx={selectedDateRange?.startIdx ?? null}
-              selectionEndIdx={selectedDateRange?.endIdx ?? null}
-              onDayMouseDown={(fullIndex) => beginDateSelection(fullIndex, rowEntityId)}
-              onDayMouseEnter={updateDateSelection}
-            />
-          )}
-
-          {selectionActive && selectedDateRange && (
-              <div
-                ref={(node) => {
-                  selectionOverlayRef.current = node;
-                }}
-                data-date-selection-overlay
-                className="absolute inset-y-0 z-[12] pointer-events-none"
-                style={{
-                  left: `${selectedDateRange.bounds.left}px`,
-                  width: `${selectedDateRange.bounds.width}px`,
-                }}
-              >
-                <div className="absolute inset-0 bg-sky-400/15 border-x-2 border-sky-400/50 rounded-sm" />
-                {!isSelectingDates && (
-                  <div
-                    ref={selectionMenuRef}
-                    className="absolute inset-0 flex items-center justify-center pointer-events-auto"
-                  >
-                    <div className="relative">
-                      <IconButton
-                        size="sm"
-                        label="Schedule actions for selected dates"
-                        className="h-8 w-8 rounded-md bg-surface border border-subtle shadow-app-sm text-secondary hover:bg-surface-hover"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectionMenuOpen((open) => !open);
-                        }}
-                      >
-                        <MoreVertical className="w-4 h-4" />
-                      </IconButton>
-                      {selectionMenuOpen && (
-                        <div className="absolute left-1/2 top-full z-[70] mt-1 w-36 -translate-x-1/2 rounded-lg border border-default bg-surface-raised shadow-app-md py-1">
-                          <button
-                            type="button"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleScheduleSelectedRange();
-                            }}
-                          >
-                            <Calendar className="w-3.5 h-3.5" />
-                            Schedule
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-          {/* Day column grid lines */}
-          <div className="absolute inset-0 flex pointer-events-none">
-            {dayColumns.map((col) => (
-              <div
-                key={col.dateStr}
-                style={{ width: `${col.width}px`, left: `${col.left}px` }}
-                className={`absolute top-0 bottom-0 border-r border-subtle ${
-                  col.isWeekend ? 'bg-weekend-cell' : 'bg-transparent'
-                }`}
-              />
-            ))}
-          </div>
-
-          {/* Vacation overlays */}
-          {resourceVacations.map((v) => {
-            const bounds = getDateRangeBounds(dayColumns, v.startDate, v.endDate);
-            if (!bounds) return null;
-
-            return (
-              <div
-                key={v.id}
-                style={{
-                  left: `${bounds.left}px`,
-                  width: `${bounds.width}px`,
-                  height: '44px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                }}
-                className="absolute bg-surface-muted border border-subtle text-secondary rounded px-2 flex items-center justify-center text-[9px] font-bold tracking-wider uppercase pointer-events-none z-[4]"
-                title={`Absence/Vacation: ${v.reason || 'Annual Leave'}`}
-              >
-                Time Off
-              </div>
-            );
-          })}
-
-          <div className="flex flex-col gap-1 w-full relative z-10 text-left">
-            {row.projectLanes.map((lane, lIdx) => {
-              const laneKey =
-                viewMode === 'requests'
-                  ? lane.request?.id || `lane-req-${lIdx}`
-                  : viewMode === 'projects'
-                    ? lane.resource?.id || `lane-res-${lIdx}`
-                    : lane.project?.id || `lane-proj-${lIdx}`;
-
-              return (
-                <div key={laneKey} className="h-[56px] relative w-full">
-                  {lane.blocks.flatMap((block) => renderBlockSegments(block, lane, row) ?? [])}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   const requestProject = useMemo(() => {
     if (!selectedRequestForSkills) return null;
     return projects.find((p) => p.id === selectedRequestForSkills.projectId) || null;
   }, [selectedRequestForSkills, projects]);
 
+  const activeSelectionEntityId = dragEntityId ?? dateSelection?.entityId ?? null;
+
+  const blockMenuCanSplit = (() => {
+    if (!blockMenu || !onSplitBlock) return false;
+    const splitDate = addDays(blockMenu.segment.endDate, 1);
+    return splitDate > blockMenu.block.startDate && splitDate <= blockMenu.block.endDate;
+  })();
+
   return (
+    <div className="relative flex flex-col h-full min-h-0">
     <Card className="overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
       {(showScheduleLoading) && (
         <div className="absolute inset-0 z-20 bg-black/20 pointer-events-none flex items-center justify-center">
@@ -1165,18 +1015,20 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
             >
               {viewMode === 'projects' || viewMode === 'requests' ? 'Projects' : 'Resources'}
             </div>
-            {monthsHeader.map((m) => (
-              <div
-                key={m.monthName}
-                style={{ width: `${m.width}px` }}
-                className="text-left pl-3 font-semibold text-primary tracking-wide border-r border-subtle shrink-0"
-              >
-                {m.monthName}
-              </div>
-            ))}
+            <div className="relative h-full shrink-0" style={{ width: `${gridWidth}px` }}>
+              {visibleMonthHeaders.map((m) => (
+                <div
+                  key={m.monthName}
+                  style={{ left: `${m.left}px`, width: `${m.width}px` }}
+                  className="absolute top-0 bottom-0 text-left pl-3 font-semibold text-primary tracking-wide border-r border-subtle flex items-center"
+                >
+                  {m.monthName}
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Day header row */}
+          {/* Day header row — only viewport ± overscan cells */}
           <div className="flex bg-grid-header border-b border-subtle text-[11px] font-semibold h-10 items-stretch sticky top-9 z-30">
             <div
               className="border-r border-subtle px-4 flex items-center bg-grid-header sticky left-0 z-40"
@@ -1186,32 +1038,34 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
                 {viewMode === 'projects' || viewMode === 'requests' ? 'Resource Allocation' : 'Project Allocation'}
               </span>
             </div>
-            {dayColumns.map((col) => {
-              const isToday = col.dateStr === CURRENT_DATE_STRING;
-              return (
-                <div
-                  key={`hdr-${col.dateStr}`}
-                  style={{ width: `${col.width}px` }}
-                  className={`text-center flex flex-col justify-center border-r border-subtle shrink-0 ${
-                    isToday
-                      ? 'bg-amber-400/25 text-secondary'
-                      : col.isWeekend
-                        ? 'bg-weekend-cell text-tertiary'
-                        : 'text-secondary'
-                  }`}
-                  title={isToday ? `${col.dateStr} (Today)` : col.dateStr}
-                >
-                  <span className="text-[10px] font-bold leading-none">{col.dayLabel}</span>
-                  <span
-                    className={`text-[11px] font-semibold leading-none mt-0.5 ${
-                      col.isWeekend && !isToday ? 'text-tertiary' : 'text-primary'
+            <div className="relative h-full shrink-0" style={{ width: `${gridWidth}px` }}>
+              {visibleDayHeaders.map((col) => {
+                const isToday = col.dateStr === CURRENT_DATE_STRING;
+                return (
+                  <div
+                    key={`hdr-${col.dateStr}`}
+                    style={{ left: `${col.left}px`, width: `${col.width}px` }}
+                    className={`absolute top-0 bottom-0 text-center flex flex-col justify-center border-r border-subtle ${
+                      isToday
+                        ? 'bg-amber-400/25 text-secondary'
+                        : col.isWeekend
+                          ? 'bg-weekend-cell text-tertiary'
+                          : 'text-secondary'
                     }`}
+                    title={isToday ? `${col.dateStr} (Today)` : col.dateStr}
                   >
-                    {col.dayNum}
-                  </span>
-                </div>
-              );
-            })}
+                    <span className="text-[10px] font-bold leading-none">{col.dayLabel}</span>
+                    <span
+                      className={`text-[11px] font-semibold leading-none mt-0.5 ${
+                        col.isWeekend && !isToday ? 'text-tertiary' : 'text-primary'
+                      }`}
+                    >
+                      {col.dayNum}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div className="relative w-full">
@@ -1227,6 +1081,13 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
                 {virtualItems.map((virtualRow) => {
                   const row = assignmentRows[virtualRow.index];
                   if (!row) return null;
+
+                  const rowEntityId = row.resource?.id ?? row.project?.id ?? null;
+                  const isActiveSelectionRow =
+                    !!rowEntityId && rowEntityId === activeSelectionEntityId;
+                  const selectionCommitted =
+                    isActiveSelectionRow && !!dateSelection && !dragEntityId;
+
                   return (
                     <div
                       key={row.id}
@@ -1237,7 +1098,46 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
                         transform: `translateY(${virtualRow.start - rowVirtualizer.options.scrollMargin}px)`,
                       }}
                     >
-                      {renderRow(row)}
+                      <SchedulerRow
+                        row={row}
+                        viewMode={viewMode}
+                        gridWidth={gridWidth}
+                        dayChromeStyle={dayChromeStyle}
+                        dayColumns={dayColumns}
+                        dateColumnIndex={dateColumnIndex}
+                        fetchDayColumns={fetchDayColumns}
+                        totalsRangeStart={scheduleQuery.startDate}
+                        totalsRangeEnd={scheduleQuery.endDate}
+                        vacations={vacations}
+                        projects={projects}
+                        resources={resources}
+                        showSelectionOverlay={isActiveSelectionRow}
+                        selectionCommitted={selectionCommitted}
+                        selectionBounds={
+                          selectionCommitted && selectedDateRange
+                            ? selectedDateRange.bounds
+                            : null
+                        }
+                        selectionStartIdx={
+                          selectionCommitted && selectedDateRange
+                            ? selectedDateRange.startIdx
+                            : null
+                        }
+                        selectionEndIdx={
+                          selectionCommitted && selectedDateRange
+                            ? selectedDateRange.endIdx
+                            : null
+                        }
+                        busyBlockId={rowOwnsBusyBlock(row, busyBlockId) ? busyBlockId : null}
+                        onBeginDateSelection={beginDateSelection}
+                        onUpdateDateSelection={updateDateSelection}
+                        onOpenSelectionMenu={openSelectionMenu}
+                        onSelectionOverlayRef={handleSelectionOverlayRef}
+                        onEditBlock={onEditBlock}
+                        onOpenBlockMenu={openBlockMenu}
+                        onOpenScheduleModalWithRes={onOpenScheduleModalWithRes}
+                        onRequestClick={handleRequestClick}
+                      />
                     </div>
                   );
                 })}
@@ -1256,6 +1156,39 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
         onApproveRequestWithResource={onApproveRequestWithResource}
       />
     </Card>
+
+      {selectionMenuAnchor && (
+        <SelectionScheduleMenu
+          anchorRect={selectionMenuAnchor}
+          menuRef={selectionMenuRef}
+          onSchedule={handleScheduleSelectedRange}
+        />
+      )}
+
+      {blockMenu && (
+        <BlockContextMenu
+          menu={blockMenu}
+          busy={Boolean(busyBlockId)}
+          canDelete={Boolean(onDeleteBlock)}
+          canSplit={blockMenuCanSplit}
+          onEdit={handleBlockMenuEdit}
+          onEditWeek={handleBlockMenuEditWeek}
+          onSplit={handleBlockMenuSplit}
+          onDelete={handleBlockMenuDelete}
+          menuRef={blockMenuRef}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmDeleteBlock != null}
+        onClose={() => setConfirmDeleteBlock(null)}
+        confirmLabel="Delete"
+        loading={Boolean(busyBlockId && confirmDeleteBlock)}
+        onConfirm={() => void handleConfirmDeleteBlock()}
+      >
+        Delete this entire allocation? This cannot be undone.
+      </ConfirmDialog>
+    </div>
   );
 }));
 

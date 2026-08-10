@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Resource, Project, AllocationBlock, Vacation, BookingRequest, ScheduleAssignment } from './types';
+import { Resource, Project, AllocationBlock, Vacation, BookingRequest } from './types';
 
 // Components
 import { SchedulerGrid, type SchedulerGridHandle } from './components/SchedulerGrid';
@@ -90,7 +90,6 @@ import {
   isScheduleArea,
 } from './lib/routes';
 import { CURRENT_DATE_STRING } from './lib/dateUtils';
-import { blockHoursOnDate, expandDates, personDailyCapacityHours } from './lib/rosterUtils';
 
 function navMenuItemClass(isActive: boolean): string {
   return cn(
@@ -173,9 +172,28 @@ export default function App() {
   const activeTab = route?.tab ?? 'scheduler';
   const sidebarActive = route?.scheduleSidebar ?? 'resources';
 
+  // Modal Visibility States (declared early so full-list fetch can gate on them)
+  const [isCapacityFinderOpen, setIsCapacityFinderOpen] = useState(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isAddResourceModalOpen, setIsAddResourceModalOpen] = useState(false);
+  const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
+  const [selectedEditBlock, setSelectedEditBlock] = useState<AllocationBlock | null>(null);
+  const [editApplyScope, setEditApplyScope] = useState<ScheduleApplyScope>('entire');
+  const [editPartialRange, setEditPartialRange] = useState<{ startDate: string; endDate: string } | null>(null);
+
+  // Pre-fill states for quick scheduling
+  const [prefilledResourceId, setPrefilledResourceId] = useState('');
+  const [prefilledProjectId, setPrefilledProjectId] = useState('');
+  const [prefilledStartDate, setPrefilledStartDate] = useState('');
+  const [prefilledEndDate, setPrefilledEndDate] = useState('');
+
   const { data: resources = [] } = usePeople();
   const { data: projects = [] } = useProjects();
-  const { data: scheduleAssignments = [] } = useSchedules();
+  // Full schedule list only when dashboard / reports / capacity finder need it.
+  const needsFullScheduleList =
+    activeTab === 'dashboard' || activeTab === 'reports' || isCapacityFinderOpen;
+  const { data: scheduleAssignments = [] } = useSchedules(needsFullScheduleList);
   const { data: vacations = [] } = useVacations();
   const { data: requests = [] } = useRequests();
   const {
@@ -320,47 +338,6 @@ export default function App() {
     else if (filterViewContext === 'resources') await deletePersonFilter.mutateAsync(id);
     else await deleteRequestFilter.mutateAsync(id);
   }, [filterViewContext, deleteProjectFilter, deletePersonFilter, deleteRequestFilter]);
-
-  // Modal Visibility States
-  const [isCapacityFinderOpen, setIsCapacityFinderOpen] = useState(false);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
-  const [isAddResourceModalOpen, setIsAddResourceModalOpen] = useState(false);
-  const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
-  const [selectedEditBlock, setSelectedEditBlock] = useState<AllocationBlock | null>(null);
-  const [editApplyScope, setEditApplyScope] = useState<ScheduleApplyScope>('entire');
-  const [editPartialRange, setEditPartialRange] = useState<{ startDate: string; endDate: string } | null>(null);
-
-  // Pre-fill states for quick scheduling
-  const [prefilledResourceId, setPrefilledResourceId] = useState('');
-  const [prefilledProjectId, setPrefilledProjectId] = useState('');
-  const [prefilledStartDate, setPrefilledStartDate] = useState('');
-  const [prefilledEndDate, setPrefilledEndDate] = useState('');
-
-  // Compute Scheduled Time hours dynamically to show in the gorgeous header metrics cards
-  const scheduledTimeKPIs = useMemo(() => {
-    let allHoursSum = 0;
-    let toDateHoursSum = 0;
-    let futureHoursSum = 0;
-
-    scheduleAssignments.forEach((assignment: ScheduleAssignment) => {
-      const resource = resources.find((r) => r.id === assignment.resourceId);
-      const capacity = personDailyCapacityHours(resource?.weeklyHours, resource?.fte);
-
-      for (const dateStr of expandDates(assignment.startDate, assignment.endDate)) {
-        const hours = blockHoursOnDate(assignment, dateStr, capacity);
-        allHoursSum += hours;
-        if (dateStr <= CURRENT_DATE_STRING) toDateHoursSum += hours;
-        else futureHoursSum += hours;
-      }
-    });
-
-    return {
-      all: Math.round(allHoursSum),
-      toDate: Math.round(toDateHoursSum),
-      future: Math.round(futureHoursSum),
-    };
-  }, [scheduleAssignments, resources]);
 
   // Operational State Mutators
   const handleSaveNewAllocation = async (params: {
@@ -1073,60 +1050,71 @@ export default function App() {
         </main>
       </div>
 
-      {/* 3. Global Interactives Modals Shells */}
-      <CapacityFinderModal
-        isOpen={isCapacityFinderOpen}
-        onClose={() => setIsCapacityFinderOpen(false)}
-        resources={resources}
-        projects={projects}
-        assignments={scheduleAssignments}
-        onBookResource={handleBookFromCapacityFinder}
-      />
+      {/* 3. Global Interactives Modals Shells — mount only when open */}
+      {isCapacityFinderOpen && (
+        <CapacityFinderModal
+          isOpen={isCapacityFinderOpen}
+          onClose={() => setIsCapacityFinderOpen(false)}
+          resources={resources}
+          projects={projects}
+          assignments={scheduleAssignments}
+          onBookResource={handleBookFromCapacityFinder}
+        />
+      )}
 
-      <ScheduleModal
-        isOpen={isScheduleModalOpen}
-        onClose={() => setIsScheduleModalOpen(false)}
-        resources={resources}
-        projects={projects}
-        onSave={handleSaveNewAllocation}
-        initialResourceId={prefilledResourceId}
-        initialProjectId={prefilledProjectId}
-        initialStartDate={prefilledStartDate || CURRENT_DATE_STRING}
-        initialEndDate={prefilledEndDate || CURRENT_DATE_STRING}
-      />
+      {isScheduleModalOpen && (
+        <ScheduleModal
+          isOpen={isScheduleModalOpen}
+          onClose={() => setIsScheduleModalOpen(false)}
+          resources={resources}
+          projects={projects}
+          onSave={handleSaveNewAllocation}
+          initialResourceId={prefilledResourceId}
+          initialProjectId={prefilledProjectId}
+          initialStartDate={prefilledStartDate || CURRENT_DATE_STRING}
+          initialEndDate={prefilledEndDate || CURRENT_DATE_STRING}
+        />
+      )}
 
-      <RequestModal
-        isOpen={isRequestModalOpen}
-        onClose={() => setIsRequestModalOpen(false)}
-        resources={resources}
-        projects={projects}
-        onSave={handleSaveBookingRequest}
-      />
+      {isRequestModalOpen && (
+        <RequestModal
+          isOpen={isRequestModalOpen}
+          onClose={() => setIsRequestModalOpen(false)}
+          resources={resources}
+          projects={projects}
+          onSave={handleSaveBookingRequest}
+        />
+      )}
 
-      <EditAllocationModal
-        isOpen={selectedEditBlock !== null}
-        onClose={handleCloseEditModal}
-        block={selectedEditBlock}
-        projects={projects}
-        resources={resources}
-        assignments={scheduleAssignments}
-        onUpdate={handleUpdateBlock}
-        onDelete={handleDeleteBlock}
-        initialApplyScope={editApplyScope}
-        initialPartialRange={editPartialRange}
-      />
+      {selectedEditBlock && (
+        <EditAllocationModal
+          isOpen
+          onClose={handleCloseEditModal}
+          block={selectedEditBlock}
+          projects={projects}
+          resources={resources}
+          onUpdate={handleUpdateBlock}
+          onDelete={handleDeleteBlock}
+          initialApplyScope={editApplyScope}
+          initialPartialRange={editPartialRange}
+        />
+      )}
 
-      <AddResourceModal
-        isOpen={isAddResourceModalOpen}
-        onClose={() => setIsAddResourceModalOpen(false)}
-        onAdd={handleAddResource}
-      />
+      {isAddResourceModalOpen && (
+        <AddResourceModal
+          isOpen={isAddResourceModalOpen}
+          onClose={() => setIsAddResourceModalOpen(false)}
+          onAdd={handleAddResource}
+        />
+      )}
 
-      <AddProjectModal
-        isOpen={isAddProjectModalOpen}
-        onClose={() => setIsAddProjectModalOpen(false)}
-        onAdd={handleAddProject}
-      />
+      {isAddProjectModalOpen && (
+        <AddProjectModal
+          isOpen={isAddProjectModalOpen}
+          onClose={() => setIsAddProjectModalOpen(false)}
+          onAdd={handleAddProject}
+        />
+      )}
 
     </div>
   );

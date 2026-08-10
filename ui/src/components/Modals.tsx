@@ -32,8 +32,10 @@ import {
 } from '../lib/rosterUtils';
 import { addDays } from '../lib/dateUtils';
 import { useLookups } from '../hooks/useLookups';
+import { useScheduleSiblings } from '../hooks/useSchedules';
 import {
   Modal,
+  ConfirmDialog,
   Button,
   Input,
   Textarea,
@@ -101,15 +103,6 @@ function weeklyOccurrencesForEndDate(startDate: string, endDate: string): number
   }
   return n;
 }
-
-const safeConfirm = (msg: string): boolean => {
-  try {
-    return window.confirm(msg);
-  } catch (e) {
-    console.warn("confirm() blocked by environment, auto-confirming", e);
-    return true;
-  }
-};
 
 const ALLOCATION_UNIT_OPTIONS: { value: ScheduleUnit; label: string }[] = [
   { value: 'utilization', label: '%' },
@@ -979,7 +972,10 @@ interface EditAllocationModalProps {
   block: AllocationBlock | null;
   projects: Project[];
   resources: Resource[];
-  /** All schedules — used to clamp Entire-mode dates away from same person+project siblings. */
+  /**
+   * Optional override for sibling clamps. When omitted, loads only the
+   * person+project schedules needed for Entire-mode date bounds.
+   */
   assignments?: ScheduleAssignment[];
   onUpdate: (block: AllocationBlock, updated: ScheduleEditPatch) => void | Promise<void>;
   onDelete: (block: AllocationBlock) => void | Promise<void>;
@@ -995,7 +991,7 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   block,
   projects,
   resources,
-  assignments = [],
+  assignments: assignmentsProp,
   onUpdate,
   onDelete,
   initialApplyScope = 'entire',
@@ -1014,6 +1010,15 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   const [partialTo, setPartialTo] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  const fetchSiblings = isOpen && !!block && assignmentsProp === undefined;
+  const { data: fetchedSiblings = [] } = useScheduleSiblings(
+    block?.resourceId,
+    block?.projectId,
+    fetchSiblings,
+  );
+  const assignments = assignmentsProp ?? fetchedSiblings;
 
   useEffect(() => {
     if (!isOpen || !block) return;
@@ -1032,6 +1037,7 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
     setPartialTo(to > block.endDate ? block.endDate : to < block.startDate ? block.startDate : to);
     setSaving(false);
     setDeleting(false);
+    setConfirmDeleteOpen(false);
   }, [isOpen, block, initialApplyScope, initialPartialRange]);
 
   if (!isOpen || !block) return null;
@@ -1159,6 +1165,7 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
   };
 
   return (
+    <>
     <Modal
       open={isOpen}
       onClose={onClose}
@@ -1174,18 +1181,7 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
             leftIcon={<Trash2 className="w-4 h-4" />}
             loading={deleting}
             disabled={saving}
-            onClick={() => {
-              if (!safeConfirm('Delete this entire allocation?')) return;
-              void (async () => {
-                setDeleting(true);
-                try {
-                  await onDelete(block);
-                  onClose();
-                } finally {
-                  setDeleting(false);
-                }
-              })();
-            }}
+            onClick={() => setConfirmDeleteOpen(true)}
           >
             {deleting ? 'Deleting…' : 'Delete'}
           </Button>
@@ -1370,6 +1366,26 @@ export const EditAllocationModal: React.FC<EditAllocationModalProps> = ({
         )}
       </form>
     </Modal>
+
+    <ConfirmDialog
+      open={confirmDeleteOpen}
+      onClose={() => setConfirmDeleteOpen(false)}
+      confirmLabel="Delete"
+      loading={deleting}
+      onConfirm={async () => {
+        setDeleting(true);
+        try {
+          await onDelete(block);
+          setConfirmDeleteOpen(false);
+          onClose();
+        } finally {
+          setDeleting(false);
+        }
+      }}
+    >
+      Delete this entire allocation? This cannot be undone.
+    </ConfirmDialog>
+    </>
   );
 };
 

@@ -134,17 +134,183 @@ export function buildDayColumnLayout(
   return { columns, totalWidth: left };
 }
 
+/** First index with `dateStr >= date`, or `columns.length` if none. */
+export function lowerBoundColumnIndex(columns: DayColumnLayout[], date: string): number {
+  let lo = 0;
+  let hi = columns.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (columns[mid].dateStr < date) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Last index with `dateStr <= date`, or `-1` if none. */
+export function upperBoundColumnIndex(columns: DayColumnLayout[], date: string): number {
+  let lo = 0;
+  let hi = columns.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (columns[mid].dateStr <= date) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
+/** Exact `dateStr → column index` map (O(1) lookup when dates are in-window). */
+export function buildDateColumnIndex(columns: DayColumnLayout[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (let i = 0; i < columns.length; i++) {
+    map.set(columns[i].dateStr, i);
+  }
+  return map;
+}
+
+/** First column whose right edge is past `x`, or last column if `x` is beyond the end. */
+export function columnIndexAtOffset(columns: DayColumnLayout[], x: number): number {
+  if (columns.length === 0) return -1;
+  let lo = 0;
+  let hi = columns.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (columns[mid].left + columns[mid].width <= x) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.min(lo, columns.length - 1);
+}
+
+/** Last index with `left < x`, or `-1` if none. */
+function lastColumnIndexBefore(columns: DayColumnLayout[], x: number): number {
+  let lo = 0;
+  let hi = columns.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (columns[mid].left < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
+/**
+ * Inclusive column index range overlapping `[rangeStartPx, rangeEndPx)` in timeline coords.
+ * Returns null when empty / no overlap.
+ */
+export function visibleColumnIndexRange(
+  columns: DayColumnLayout[],
+  rangeStartPx: number,
+  rangeEndPx: number,
+): { startIndex: number; endIndex: number } | null {
+  if (columns.length === 0 || rangeEndPx <= rangeStartPx) return null;
+  const startIndex = columnIndexAtOffset(columns, rangeStartPx);
+  const endIndex = lastColumnIndexBefore(columns, rangeEndPx);
+  if (startIndex < 0 || endIndex < 0 || startIndex > endIndex) return null;
+  return { startIndex, endIndex };
+}
+
 export function getDateRangeBounds(
   columns: DayColumnLayout[],
   startDate: string,
   endDate: string,
+  dateIndex?: Map<string, number> | null,
 ): { left: number; width: number } | null {
-  const startCol = columns.find((c) => c.dateStr >= startDate);
-  const endCol = [...columns].reverse().find((c) => c.dateStr <= endDate);
-  if (!startCol || !endCol || startCol.left > endCol.left + endCol.width) return null;
+  if (columns.length === 0) return null;
+
+  let startIdx = dateIndex?.get(startDate);
+  if (startIdx === undefined) startIdx = lowerBoundColumnIndex(columns, startDate);
+
+  let endIdx = dateIndex?.get(endDate);
+  if (endIdx === undefined) endIdx = upperBoundColumnIndex(columns, endDate);
+
+  if (startIdx >= columns.length || endIdx < 0 || startIdx > endIdx) return null;
+
+  const startCol = columns[startIdx];
+  const endCol = columns[endIdx];
+  if (startCol.left > endCol.left + endCol.width) return null;
   return {
     left: startCol.left,
     width: endCol.left + endCol.width - startCol.left,
+  };
+}
+
+/** Pixel width of one Mon–Sun week with weekday/weekend column sizes. */
+export function weekPatternWidthPx(weekdayWidth = 52, weekendWidth = 28): number {
+  return 5 * weekdayWidth + 2 * weekendWidth;
+}
+
+/**
+ * Horizontal offset so a Mon-aligned week chrome pattern lines up when
+ * `windowStart` is not Monday (e.g. after a non-7-day edge slide).
+ */
+export function weekPatternOffsetPx(
+  windowStart: string,
+  weekdayWidth = 52,
+  weekendWidth = 28,
+): number {
+  const dow = parseDateString(windowStart).getDay(); // 0=Sun … 6=Sat
+  const mondayBased = (dow + 6) % 7; // Mon=0 … Sun=6
+  let offset = 0;
+  for (let i = 0; i < mondayBased; i++) {
+    offset += i < 5 ? weekdayWidth : weekendWidth;
+  }
+  return offset;
+}
+
+/**
+ * CSS background for scheduler day gridlines + weekend tint (no per-day DOM).
+ * Pattern is Mon–Sun; use `backgroundPosition` offset from `weekPatternOffsetPx`.
+ *
+ * Use plain `linear-gradient` + `background-size`/`repeat-x` (not
+ * `repeating-linear-gradient`). With repeating gradients the period is
+ * lastStop − firstStop; our first border stop sits at weekdayWidth−1, so the
+ * period becomes weekW−(w−1) and Sat/Sun lines ghost into every Monday.
+ */
+export function buildSchedulerDayChromeStyle(
+  windowStart: string,
+  weekdayWidth = 52,
+  weekendWidth = 28,
+): {
+  backgroundImage: string;
+  backgroundSize: string;
+  backgroundRepeat: string;
+  backgroundPosition: string;
+} {
+  const w = weekdayWidth;
+  const e = weekendWidth;
+  const weekW = weekPatternWidthPx(w, e);
+  const offset = weekPatternOffsetPx(windowStart, w, e);
+
+  // Right edges within a Mon-start week (matches former border-r on each day cell).
+  const edges = [
+    w,
+    2 * w,
+    3 * w,
+    4 * w,
+    5 * w,
+    5 * w + e,
+    weekW,
+  ];
+
+  const borderStops: string[] = ['transparent 0'];
+  let prev = 0;
+  for (const edge of edges) {
+    if (prev > 0) borderStops.push(`transparent ${prev}px`);
+    borderStops.push(`transparent ${edge - 1}px`);
+    borderStops.push(`var(--app-border-subtle) ${edge - 1}px`);
+    borderStops.push(`var(--app-border-subtle) ${edge}px`);
+    prev = edge;
+  }
+
+  const weekendStart = 5 * w;
+  // Non-repeating gradients: tiling comes only from background-size + repeat-x.
+  const borders = `linear-gradient(to right, ${borderStops.join(', ')})`;
+  const weekends = `linear-gradient(to right, transparent 0, transparent ${weekendStart}px, var(--app-weekend-cell) ${weekendStart}px, var(--app-weekend-cell) ${weekW}px)`;
+
+  return {
+    backgroundImage: `${borders}, ${weekends}`,
+    backgroundSize: `${weekW}px 100%`,
+    backgroundRepeat: 'repeat-x',
+    backgroundPosition: `-${offset}px 0`,
   };
 }
 

@@ -5,6 +5,7 @@ export { Field, Label, Description, ErrorMessage } from './Field';
 export { Select, type SelectProps, type SelectOption } from './Select';
 export { Combobox, type ComboboxProps, type ComboboxOption } from './Combobox';
 export { Modal, Dialog, DialogPanel, DialogTitle, type ModalProps, type ModalSize } from './Modal';
+export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';
 export { Drawer, type DrawerProps } from './Drawer';
 export {
   Menu,

@@ -13,6 +13,7 @@ import {
   Badge,
   Button,
   CardHeader,
+  ConfirmDialog,
   DialogTitle,
   Drawer,
   IconButton,
@@ -22,14 +23,6 @@ import {
   DropdownMenuItems,
   DropdownMenuItem,
 } from './ui';
-
-const safeConfirm = (msg: string): boolean => {
-  try {
-    return window.confirm(msg);
-  } catch {
-    return true;
-  }
-};
 
 export type FilterViewContext = 'projects' | 'resources' | 'requests';
 
@@ -76,6 +69,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   const [formOpen, setFormOpen] = useState(false);
   const [editingFilter, setEditingFilter] = useState<SavedFilter | null>(null);
   const [deletingFilterId, setDeletingFilterId] = useState<string | null>(null);
+  const [confirmDeleteFilter, setConfirmDeleteFilter] = useState<SavedFilter | null>(null);
 
   const filterKind = contextToKind(viewContext);
 
@@ -234,14 +228,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                               disabled={Boolean(deletingFilterId)}
                               onClick={() => {
                                 if (deletingFilterId) return;
-                                if (!safeConfirm(`Delete filter "${filter.name}"?`)) return;
-                                if (activeFilterId === filter.id) {
-                                  onSelectFilter(null);
-                                }
-                                setDeletingFilterId(filter.id);
-                                void Promise.resolve(onDeleteFilter(filter.id)).finally(() => {
-                                  setDeletingFilterId(null);
-                                });
+                                setConfirmDeleteFilter(filter);
                               }}
                             >
                               Delete
@@ -276,6 +263,29 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         }}
         onDelete={editingFilter ? onDeleteFilter : undefined}
       />
+
+      <ConfirmDialog
+        open={confirmDeleteFilter != null}
+        onClose={() => setConfirmDeleteFilter(null)}
+        confirmLabel="Delete"
+        loading={Boolean(deletingFilterId)}
+        onConfirm={async () => {
+          const filter = confirmDeleteFilter;
+          if (!filter || deletingFilterId) return;
+          if (activeFilterId === filter.id) {
+            onSelectFilter(null);
+          }
+          setDeletingFilterId(filter.id);
+          try {
+            await onDeleteFilter(filter.id);
+            setConfirmDeleteFilter(null);
+          } finally {
+            setDeletingFilterId(null);
+          }
+        }}
+      >
+        Delete filter &quot;{confirmDeleteFilter?.name}&quot;? This cannot be undone.
+      </ConfirmDialog>
     </>
   );
 };
