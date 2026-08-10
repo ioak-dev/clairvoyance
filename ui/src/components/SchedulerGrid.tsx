@@ -84,6 +84,8 @@ interface SchedulerGridProps {
   filterCriteria?: Record<string, unknown> | null;
   focusedEntityId?: string | null;
   hideUnbooked?: boolean;
+  /** True while people/projects master lists are still loading. */
+  isEntitiesLoading?: boolean;
   viewMode?: 'resources' | 'projects' | 'requests';
   onEditBlock: (block: AllocationBlock, options?: EditBlockOptions) => void;
   onSplitBlock?: (block: AllocationBlock, splitDate: string) => void | Promise<void>;
@@ -334,6 +336,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   filterCriteria = null,
   focusedEntityId = null,
   hideUnbooked = false,
+  isEntitiesLoading = false,
   viewMode = 'resources',
   onEditBlock,
   onSplitBlock,
@@ -866,6 +869,52 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     scheduleQuery.endDate,
   ]);
 
+  const emptyBoardState = useMemo(() => {
+    if (assignmentRows.length > 0) return null;
+
+    if (isEntitiesLoading) {
+      return { kind: 'loading' as const, message: 'Loading…' };
+    }
+
+    if (viewMode === 'requests') {
+      return { kind: 'empty' as const, message: 'No requests match the current filters.' };
+    }
+
+    if (filteredEntityIds.length > 0) {
+      const queryUnscoped =
+        viewMode === 'projects'
+          ? (scheduleQuery.projectIds?.length ?? 0) === 0
+          : (scheduleQuery.resourceIds?.length ?? 0) === 0;
+      const awaitingSchedules =
+        queryUnscoped ||
+        isPendingSchedules ||
+        (isFetchingSchedules && rangeAssignments.length === 0);
+
+      if (hideUnbooked && awaitingSchedules) {
+        return { kind: 'loading' as const, message: 'Loading schedules…' };
+      }
+      if (hideUnbooked) {
+        return {
+          kind: 'empty' as const,
+          message: 'No booked rows in this date range.',
+        };
+      }
+    }
+
+    return { kind: 'empty' as const, message: 'No rows match the current filters.' };
+  }, [
+    assignmentRows.length,
+    isEntitiesLoading,
+    viewMode,
+    filteredEntityIds.length,
+    hideUnbooked,
+    scheduleQuery.projectIds,
+    scheduleQuery.resourceIds,
+    isPendingSchedules,
+    isFetchingSchedules,
+    rangeAssignments.length,
+  ]);
+
   const assignmentRowsRef = useRef(assignmentRows);
   assignmentRowsRef.current = assignmentRows;
 
@@ -992,7 +1041,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   return (
     <div className="relative flex flex-col h-full min-h-0">
     <Card className="overflow-hidden flex flex-col h-full min-h-0 relative" id="scheduler-grid-main-board">
-      {showScheduleLoading && (
+      {showScheduleLoading && emptyBoardState?.kind !== 'loading' && (
         <div
           role="status"
           aria-live="polite"
@@ -1082,9 +1131,16 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
           </div>
 
           <div className="relative w-full">
-            {assignmentRows.length === 0 ? (
-              <div className="flex items-center justify-center py-20 bg-surface-muted text-tertiary text-sm">
-                No rows match the current filters.
+            {emptyBoardState ? (
+              <div
+                role={emptyBoardState.kind === 'loading' ? 'status' : undefined}
+                aria-live={emptyBoardState.kind === 'loading' ? 'polite' : undefined}
+                className="flex items-center justify-center gap-2 py-20 bg-surface-muted text-tertiary text-sm"
+              >
+                {emptyBoardState.kind === 'loading' && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" aria-hidden />
+                )}
+                {emptyBoardState.message}
               </div>
             ) : (
               <div

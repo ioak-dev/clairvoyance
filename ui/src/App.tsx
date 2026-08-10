@@ -188,8 +188,8 @@ export default function App() {
   const [prefilledStartDate, setPrefilledStartDate] = useState('');
   const [prefilledEndDate, setPrefilledEndDate] = useState('');
 
-  const { data: resources = [] } = usePeople();
-  const { data: projects = [] } = useProjects();
+  const { data: resources = [], isPending: isPendingPeople } = usePeople();
+  const { data: projects = [], isPending: isPendingProjects } = useProjects();
   // Full schedule list only when dashboard / reports / capacity finder need it.
   const needsFullScheduleList =
     activeTab === 'dashboard' || activeTab === 'reports' || isCapacityFinderOpen;
@@ -958,6 +958,7 @@ export default function App() {
                 filterCriteria={filterCriteria}
                 focusedEntityId={focusedEntityId}
                 hideUnbooked={hideUnbooked}
+                isEntitiesLoading={isPendingPeople || isPendingProjects}
                 viewMode={activeTab === 'requests' ? 'requests' : sidebarActive}
                 onEditBlock={handleEditBlock}
                 onSplitBlock={handleSplitBlock}
