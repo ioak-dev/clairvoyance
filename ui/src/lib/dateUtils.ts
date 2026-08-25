@@ -26,6 +26,13 @@ export function daysBetween(startStr: string, endStr: string): number {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
 
+/** Signed calendar-day delta from `from` to `to` (negative if to is earlier). */
+export function signedDayDiff(fromStr: string, toStr: string): number {
+  const from = parseDateString(fromStr).getTime();
+  const to = parseDateString(toStr).getTime();
+  return Math.round((to - from) / (1000 * 60 * 60 * 24));
+}
+
 export interface TimelineDay {
   dateStr: string;
   dayLabel: string;

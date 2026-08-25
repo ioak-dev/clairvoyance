@@ -17,7 +17,7 @@ import React, {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { AllocationBlock, BookingRequest, Project, Resource, ScheduleAssignment, Vacation } from '../types';
 import { Calendar, Loader2 } from 'lucide-react';
-import { addDays, CURRENT_DATE_STRING } from '../lib/dateUtils';
+import { addDays, CURRENT_DATE_STRING, signedDayDiff } from '../lib/dateUtils';
 import { filterPeople, filterProjects, filterRequests } from '../lib/filterEngine';
 import {
   buildDateColumnIndex,
@@ -29,9 +29,11 @@ import {
 } from '../lib/weekUtils';
 import {
   assignmentToBlock,
+  getWeekMonday,
+  packBlocksIntoLanes,
   type WeekDisplaySegment,
 } from '../lib/rosterUtils';
-import { useSchedulesInRange } from '../hooks/useSchedules';
+import { useMoveSchedule, useSchedulesInRange, useUpsertSchedule } from '../hooks/useSchedules';
 import {
   centeredFetchRange,
   dateAtTimelineCenter,
@@ -49,9 +51,11 @@ import { Card, ConfirmDialog } from './ui';
 
 const WEEKDAY_COL_WIDTH = 52;
 const WEEKEND_COL_WIDTH = 28;
+const SIDEBAR_WIDTH = 190;
+const BLOCK_DRAG_THRESHOLD_PX = 5;
+const DROP_SCOPE_MENU_WIDTH_PX = 200;
 /** Schedule data window loaded per scroll-settle (inclusive days). */
 const SCHEDULE_FETCH_DAYS = 30;
-const SIDEBAR_WIDTH = 190;
 /** Sticky month + day header rows (h-9 + h-10). */
 const STICKY_HEADER_HEIGHT_PX = 76;
 const LANE_HEIGHT_PX = 56;
@@ -218,6 +222,120 @@ function menuPosition(anchorRect: DOMRect, menuWidth: number): { left: number; t
   return { left, top };
 }
 
+function DropScopeMenu({
+  anchorRect,
+  canMoveWeek,
+  busy,
+  onMoveEntire,
+  onMoveWeek,
+  onCancel,
+  menuRef,
+}: {
+  anchorRect: DOMRect;
+  canMoveWeek: boolean;
+  busy: boolean;
+  onMoveEntire: () => void;
+  onMoveWeek: () => void;
+  onCancel: () => void;
+  menuRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const { left, top } = menuPosition(anchorRect, DROP_SCOPE_MENU_WIDTH_PX);
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label="Move booking scope"
+      className="fixed z-[90] rounded-lg border border-default bg-surface-raised shadow-app-md py-1"
+      style={{ left, top, width: DROP_SCOPE_MENU_WIDTH_PX }}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        disabled={busy}
+        className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={onMoveEntire}
+      >
+        Move entire booking
+      </button>
+      {canMoveWeek && (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-primary hover:bg-surface-hover cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={onMoveWeek}
+        >
+          Move this week only
+        </button>
+      )}
+      <button
+        type="button"
+        role="menuitem"
+        disabled={busy}
+        className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left text-secondary hover:bg-surface-hover cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={onCancel}
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+function dayAtClientX(
+  clientX: number,
+  scrollEl: HTMLElement,
+  columns: Array<{ dateStr: string; left: number; width: number }>,
+): string | null {
+  const rect = scrollEl.getBoundingClientRect();
+  const xInContent = clientX - rect.left + scrollEl.scrollLeft - SIDEBAR_WIDTH;
+  if (xInContent < 0) return null;
+  for (const col of columns) {
+    if (xInContent >= col.left && xInContent < col.left + col.width) {
+      return col.dateStr;
+    }
+  }
+  if (columns.length === 0) return null;
+  const last = columns[columns.length - 1]!;
+  if (xInContent >= last.left) return last.dateStr;
+  return null;
+}
+
+function dropPersonIdAtPoint(clientX: number, clientY: number): string | null {
+  const el = document.elementFromPoint(clientX, clientY);
+  if (!el) return null;
+  const target = (el as HTMLElement).closest('[data-drop-person-id]') as HTMLElement | null;
+  const id = target?.getAttribute('data-drop-person-id');
+  if (!id || id === 'none') return null;
+  return id;
+}
+
+type BlockDragPreview = {
+  block: AllocationBlock;
+  segment: WeekDisplaySegment;
+  clientX: number;
+  clientY: number;
+  widthPx: number;
+};
+
+type BlockResizePreview = {
+  block: AllocationBlock;
+  edge: 'start' | 'end';
+  startDate: string;
+  endDate: string;
+};
+
+type DropScopeMenuState = {
+  block: AllocationBlock;
+  segment: WeekDisplaySegment;
+  targetPersonId: string;
+  /** New start for entire-booking move (preserves weekday vs source week). */
+  entireStartDate: string;
+  /** New start for this-week move (preserves weekday vs source week). */
+  weekStartDate: string;
+  anchorRect: DOMRect;
+};
+
 function SelectionScheduleMenu({
   anchorRect,
   menuRef,
@@ -358,6 +476,9 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   const [selectionMenuAnchor, setSelectionMenuAnchor] = useState<DOMRect | null>(null);
   const [blockMenu, setBlockMenu] = useState<BlockContextMenuState | null>(null);
   const [confirmDeleteBlock, setConfirmDeleteBlock] = useState<AllocationBlock | null>(null);
+  const [blockDragPreview, setBlockDragPreview] = useState<BlockDragPreview | null>(null);
+  const [blockResizePreview, setBlockResizePreview] = useState<BlockResizePreview | null>(null);
+  const [dropScopeMenu, setDropScopeMenu] = useState<DropScopeMenuState | null>(null);
   const isSelectingDatesRef = useRef(false);
   const dateSelectionRef = useRef<{
     anchorIndex: number;
@@ -366,7 +487,14 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   } | null>(null);
   const selectionMenuRef = useRef<HTMLDivElement>(null);
   const blockMenuRef = useRef<HTMLDivElement>(null);
+  const dropScopeMenuRef = useRef<HTMLDivElement>(null);
   const selectionOverlayRef = useRef<HTMLDivElement | null>(null);
+  const suppressBlockClickRef = useRef(false);
+  const resizeCancelRef = useRef(false);
+  const moveSchedule = useMoveSchedule();
+  const upsertSchedule = useUpsertSchedule();
+  const moveBusy = moveSchedule.isPending;
+  const upsertBusy = upsertSchedule.isPending;
 
   const {
     scrollRef,
@@ -547,11 +675,265 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   const openBlockMenu = useCallback(
     (block: AllocationBlock, segment: WeekDisplaySegment, anchorRect: DOMRect) => {
       setSelectionMenuAnchor(null);
+      setDropScopeMenu(null);
       setBlockMenu((prev) =>
         sameBlockMenuTarget(prev, block, segment) ? null : { block, segment, anchorRect },
       );
     },
     [],
+  );
+
+  const clearDropScopeMenu = useCallback(() => {
+    setDropScopeMenu(null);
+  }, []);
+
+  const clearBlockDrag = useCallback(() => {
+    setBlockDragPreview(null);
+  }, []);
+
+  const clearBlockResize = useCallback(() => {
+    resizeCancelRef.current = true;
+    setBlockResizePreview(null);
+  }, []);
+
+  const handleBlockResizePointerDown = useCallback(
+    (block: AllocationBlock, edge: 'start' | 'end', event: React.PointerEvent) => {
+      if (viewMode === 'requests' || busyBlockId || moveBusy || upsertBusy || dropScopeMenu) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+
+      resizeCancelRef.current = false;
+      suppressBlockClickRef.current = true;
+      setBlockMenu(null);
+      setSelectionMenuAnchor(null);
+      setDropScopeMenu(null);
+      setScrollSettlePaused(true);
+
+      let latestStart = block.startDate;
+      let latestEnd = block.endDate;
+      setBlockResizePreview({
+        block,
+        edge,
+        startDate: block.startDate,
+        endDate: block.endDate,
+      });
+
+      const onMove = (e: PointerEvent) => {
+        if (resizeCancelRef.current) return;
+        const day = dayAtClientX(e.clientX, scrollEl, dayColumnsRef.current);
+        if (!day) return;
+
+        let nextStart = block.startDate;
+        let nextEnd = block.endDate;
+        if (edge === 'start') {
+          nextStart = day > block.endDate ? block.endDate : day;
+        } else {
+          nextEnd = day < block.startDate ? block.startDate : day;
+        }
+        latestStart = nextStart;
+        latestEnd = nextEnd;
+        setBlockResizePreview({
+          block,
+          edge,
+          startDate: nextStart,
+          endDate: nextEnd,
+        });
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        setScrollSettlePaused(false);
+        setBlockResizePreview(null);
+
+        if (resizeCancelRef.current) {
+          resizeCancelRef.current = false;
+          return;
+        }
+        if (latestStart === block.startDate && latestEnd === block.endDate) return;
+
+        setBusyBlockId(block.scheduleId);
+        void upsertSchedule
+          .mutateAsync({
+            id: block.scheduleId,
+            title: block.title ?? null,
+            personId: block.resourceId,
+            projectId: block.projectId,
+            startDate: latestStart,
+            endDate: latestEnd,
+            unit: block.unit,
+            roster: block.roster,
+            billableType: block.billableType ?? null,
+            bookingType: block.bookingType,
+            requestId: block.requestId ?? null,
+          })
+          .catch((err) => {
+            window.alert(err instanceof Error ? err.message : 'Failed to resize booking');
+          })
+          .finally(() => {
+            setBusyBlockId(null);
+          });
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    },
+    [
+      viewMode,
+      busyBlockId,
+      moveBusy,
+      upsertBusy,
+      dropScopeMenu,
+      setScrollSettlePaused,
+      scrollRef,
+      upsertSchedule,
+    ],
+  );
+
+  const handleBlockDragPointerDown = useCallback(
+    (block: AllocationBlock, segment: WeekDisplaySegment, event: React.PointerEvent) => {
+      if (
+        viewMode === 'requests' ||
+        busyBlockId ||
+        moveBusy ||
+        upsertBusy ||
+        dropScopeMenu ||
+        blockResizePreview
+      ) {
+        return;
+      }
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let dragging = false;
+      const bounds = getDateRangeBounds(
+        dayColumnsRef.current,
+        segment.startDate,
+        segment.endDate,
+        dateColumnIndexRef.current,
+      );
+      const widthPx = bounds ? Math.max(bounds.width - 8, 8) : 80;
+
+      const onMove = (e: PointerEvent) => {
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!dragging) {
+          if (Math.hypot(dx, dy) < BLOCK_DRAG_THRESHOLD_PX) return;
+          dragging = true;
+          suppressBlockClickRef.current = true;
+          setBlockMenu(null);
+          setSelectionMenuAnchor(null);
+          setScrollSettlePaused(true);
+        }
+        setBlockDragPreview({
+          block,
+          segment,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          widthPx,
+        });
+      };
+
+      const onUp = (e: PointerEvent) => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        setScrollSettlePaused(false);
+
+        if (!dragging) return;
+
+        setBlockDragPreview(null);
+
+        const scrollEl = scrollRef.current;
+        if (!scrollEl) return;
+
+        // Temporarily hide ghost already cleared; hit-test under cursor.
+        const personId = dropPersonIdAtPoint(e.clientX, e.clientY);
+        const dropDay = dayAtClientX(e.clientX, scrollEl, dayColumnsRef.current);
+        if (!personId || !dropDay) return;
+
+        // Snap by ISO week so dropping mid-week still lands Mon–Fri bars fully.
+        // Shift = target week Monday − source (grabbed) week Monday.
+        const weekShift = signedDayDiff(
+          getWeekMonday(segment.startDate),
+          getWeekMonday(dropDay),
+        );
+        const entireStartDate = addDays(block.startDate, weekShift);
+        const weekStartDate = addDays(segment.startDate, weekShift);
+
+        const entireNoOp =
+          personId === block.resourceId && entireStartDate === block.startDate;
+        const weekNoOp =
+          personId === block.resourceId && weekStartDate === segment.startDate;
+        if (entireNoOp && weekNoOp) return;
+
+        setDropScopeMenu({
+          block,
+          segment,
+          targetPersonId: personId,
+          entireStartDate,
+          weekStartDate,
+          anchorRect: new DOMRect(e.clientX, e.clientY, 0, 0),
+        });
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    },
+    [viewMode, busyBlockId, moveBusy, upsertBusy, dropScopeMenu, blockResizePreview, setScrollSettlePaused, scrollRef],
+  );
+
+  const applyMoveScope = useCallback(
+    async (scope: 'entire' | 'range') => {
+      if (!dropScopeMenu) return;
+      const { block, segment, targetPersonId, entireStartDate, weekStartDate } =
+        dropScopeMenu;
+      setBusyBlockId(block.scheduleId);
+      try {
+        await moveSchedule.mutateAsync(
+          scope === 'entire'
+            ? {
+                id: block.scheduleId,
+                scope: 'entire',
+                personId: targetPersonId,
+                startDate: entireStartDate,
+              }
+            : {
+                id: block.scheduleId,
+                scope: 'range',
+                personId: targetPersonId,
+                startDate: weekStartDate,
+                rangeStart: segment.startDate,
+                rangeEnd: segment.endDate,
+              },
+        );
+        setDropScopeMenu(null);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : 'Failed to move booking');
+      } finally {
+        setBusyBlockId(null);
+      }
+    },
+    [dropScopeMenu, moveSchedule],
+  );
+
+  const handleEditBlockGuarded = useCallback(
+    (block: AllocationBlock, options?: EditBlockOptions) => {
+      if (suppressBlockClickRef.current) {
+        suppressBlockClickRef.current = false;
+        return;
+      }
+      onEditBlock(block, options);
+    },
+    [onEditBlock],
   );
 
   const beginDateSelection = useCallback((fullIndex: number, entityId: string) => {
@@ -658,9 +1040,31 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
   }, [endDateSelection]);
 
   useEffect(() => {
-    if (!dateSelection && !dragEntityId && !blockMenu && !selectionMenuAnchor) return;
+    if (
+      !dateSelection &&
+      !dragEntityId &&
+      !blockMenu &&
+      !selectionMenuAnchor &&
+      !dropScopeMenu &&
+      !blockDragPreview &&
+      !blockResizePreview
+    ) {
+      return;
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (blockResizePreview) {
+        clearBlockResize();
+        return;
+      }
+      if (dropScopeMenu) {
+        clearDropScopeMenu();
+        return;
+      }
+      if (blockDragPreview) {
+        clearBlockDrag();
+        return;
+      }
       if (blockMenu) {
         closeBlockMenu();
         return;
@@ -678,17 +1082,24 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
     dragEntityId,
     blockMenu,
     selectionMenuAnchor,
+    dropScopeMenu,
+    blockDragPreview,
+    blockResizePreview,
     clearDateSelection,
+    clearDropScopeMenu,
+    clearBlockDrag,
+    clearBlockResize,
     closeBlockMenu,
     closeSelectionMenu,
   ]);
 
   useEffect(() => {
-    if (!selectionMenuAnchor && !blockMenu) return;
+    if (!selectionMenuAnchor && !blockMenu && !dropScopeMenu) return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (selectionMenuAnchor && selectionMenuRef.current?.contains(target)) return;
       if (blockMenu && blockMenuRef.current?.contains(target)) return;
+      if (dropScopeMenu && dropScopeMenuRef.current?.contains(target)) return;
       // Opener buttons toggle/open on click; skip pointerdown so menu is not closed first.
       if (
         target instanceof Element &&
@@ -698,6 +1109,7 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
       }
       if (selectionMenuAnchor) closeSelectionMenu();
       if (blockMenu) closeBlockMenu();
+      if (dropScopeMenu) clearDropScopeMenu();
     };
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
@@ -813,10 +1225,14 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
           projBlocks.length === 0
             ? [{ resource: { id: 'none', name: 'Unassigned', role: '-' }, blocks: [] as AllocationBlock[] }]
             : Array.from(groupBlocksByKey(projBlocks, (b) => b.resourceId).entries())
-                .map(([rId, blocks]) => ({
-                  resource: resourcesById.get(rId) || { id: rId, name: 'Resource', role: 'Role' },
-                  blocks,
-                }))
+                .flatMap(([rId, blocks]) => {
+                  const resource =
+                    resourcesById.get(rId) || { id: rId, name: 'Resource', role: 'Role' };
+                  return packBlocksIntoLanes(blocks).map((laneBlocks) => ({
+                    resource,
+                    blocks: laneBlocks,
+                  }));
+                })
                 .sort((a, b) =>
                   (a.resource?.name || '').localeCompare(b.resource?.name || '', undefined, {
                     sensitivity: 'base',
@@ -839,12 +1255,15 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
                 blocks: [] as AllocationBlock[],
               }]
             : Array.from(groupBlocksByKey(resBlocks, (b) => b.projectId).entries())
-                .map(([pId, blocks]) => ({
-                  project: projectsById.get(pId) || {
+                .flatMap(([pId, blocks]) => {
+                  const project = projectsById.get(pId) || {
                     id: pId, name: 'Project', client: 'Client', color: 'bg-emerald-500', textColor: 'text-white',
-                  },
-                  blocks,
-                }))
+                  };
+                  return packBlocksIntoLanes(blocks).map((laneBlocks) => ({
+                    project,
+                    blocks: laneBlocks,
+                  }));
+                })
                 .sort((a, b) =>
                   (a.project?.name || '').localeCompare(b.project?.name || '', undefined, {
                     sensitivity: 'base',
@@ -1198,14 +1617,31 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
                             : null
                         }
                         busyBlockId={rowOwnsBusyBlock(row, busyBlockId) ? busyBlockId : null}
+                        draggingBlockId={blockDragPreview?.block.scheduleId ?? null}
+                        resizePreview={
+                          blockResizePreview &&
+                          rowOwnsBusyBlock(row, blockResizePreview.block.scheduleId)
+                            ? {
+                                scheduleId: blockResizePreview.block.scheduleId,
+                                startDate: blockResizePreview.startDate,
+                                endDate: blockResizePreview.endDate,
+                              }
+                            : null
+                        }
                         onBeginDateSelection={beginDateSelection}
                         onUpdateDateSelection={updateDateSelection}
                         onOpenSelectionMenu={openSelectionMenu}
                         onSelectionOverlayRef={handleSelectionOverlayRef}
-                        onEditBlock={onEditBlock}
+                        onEditBlock={handleEditBlockGuarded}
                         onOpenBlockMenu={openBlockMenu}
                         onOpenScheduleModalWithRes={onOpenScheduleModalWithRes}
                         onRequestClick={handleRequestClick}
+                        onBlockDragPointerDown={
+                          viewMode === 'requests' ? undefined : handleBlockDragPointerDown
+                        }
+                        onBlockResizePointerDown={
+                          viewMode === 'requests' ? undefined : handleBlockResizePointerDown
+                        }
                       />
                     </div>
                   );
@@ -1245,6 +1681,34 @@ export const SchedulerGrid = memo(forwardRef<SchedulerGridHandle, SchedulerGridP
           onSplit={handleBlockMenuSplit}
           onDelete={handleBlockMenuDelete}
           menuRef={blockMenuRef}
+        />
+      )}
+
+      {dropScopeMenu && (
+        <DropScopeMenu
+          anchorRect={dropScopeMenu.anchorRect}
+          canMoveWeek={
+            dropScopeMenu.segment.startDate !== dropScopeMenu.block.startDate ||
+            dropScopeMenu.segment.endDate !== dropScopeMenu.block.endDate
+          }
+          busy={moveBusy || Boolean(busyBlockId)}
+          onMoveEntire={() => void applyMoveScope('entire')}
+          onMoveWeek={() => void applyMoveScope('range')}
+          onCancel={clearDropScopeMenu}
+          menuRef={dropScopeMenuRef}
+        />
+      )}
+
+      {blockDragPreview && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed z-[85] rounded-lg border border-sky-400/60 bg-sky-500/25 shadow-app-md"
+          style={{
+            left: blockDragPreview.clientX - blockDragPreview.widthPx / 2,
+            top: blockDragPreview.clientY - 22,
+            width: blockDragPreview.widthPx,
+            height: 44,
+          }}
         />
       )}
 

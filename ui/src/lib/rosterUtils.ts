@@ -219,8 +219,40 @@ export function weekSegmentLabel(unit: ScheduleUnit, roster: Roster, activeDays:
 }
 
 /**
+ * Greedy interval packing: assign each block to the first lane whose blocks
+ * do not time-overlap it. Overlapping same-project bars become stacked lanes.
+ */
+export function packBlocksIntoLanes<T extends Pick<AllocationBlock, 'startDate' | 'endDate'>>(
+  blocks: T[],
+): T[][] {
+  if (blocks.length === 0) return [];
+
+  const sorted = [...blocks].sort((a, b) => {
+    if (a.startDate !== b.startDate) return a.startDate < b.startDate ? -1 : 1;
+    return a.endDate < b.endDate ? -1 : a.endDate > b.endDate ? 1 : 0;
+  });
+
+  const lanes: T[][] = [];
+  for (const block of sorted) {
+    let placed = false;
+    for (const lane of lanes) {
+      const overlaps = lane.some((existing) =>
+        datesOverlap(existing.startDate, existing.endDate, block.startDate, block.endDate),
+      );
+      if (!overlaps) {
+        lane.push(block);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) lanes.push([block]);
+  }
+  return lanes;
+}
+
+/**
  * Inclusive date bounds for resizing a schedule without overlapping another
- * allocation for the same person + project. Adjacent (touching) siblings are OK.
+ * allocation for the same person + project. Soft UX clamp only — overlaps are allowed.
  */
 export function scheduleSiblingDateBounds(
   block: Pick<AllocationBlock, 'scheduleId' | 'resourceId' | 'projectId' | 'startDate' | 'endDate'>,

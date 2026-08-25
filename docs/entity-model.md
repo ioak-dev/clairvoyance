@@ -10,7 +10,7 @@ Single-tenant data model for **date-range + weekly roster** resource scheduling.
 | **Master** | `project`, `person`, `project_filter`, `person_filter`, `request_filter` |
 | **Transactional** | `request`, `schedule`, `vacation`, `simulation_log`, `schedule_audit_log` |
 
-Each `schedule` / `request` row is a first-class **block**: `start_date` / `end_date`, `unit` (`utilization` \| `hours`), and a length-7 `roster` (Mon→Sun). Blocks for the **same person + project must not overlap** (adjacent touching ranges are allowed). Different projects on the same person may overlap; daily hour totals still sum across projects.
+Each `schedule` / `request` row is a first-class **block**: `start_date` / `end_date`, `unit` (`utilization` \| `hours`), and a length-7 `roster` (Mon→Sun). Multiple blocks for the **same person + project may overlap** in date range; the UI stacks them as separate lanes under that person/project. Daily hour totals sum across all overlapping schedules on a person (any project). No capacity hard-limit.
 
 ## UI mapping
 
@@ -110,16 +110,17 @@ For each calendar day `d` in the block:
 2. If `hours` → contribute `roster[i]`
 3. If `utilization` → contribute `roster[i] * (weekly_hours / 5) * fte`
 
-Resource-day total = sum across overlapping schedules on **different** projects (same person+project date ranges are rejected). No capacity enforcement yet.
+Resource-day total = sum across all overlapping schedules on that person (any project). No capacity enforcement yet. Overlapping bars for the same person+project render as stacked lanes.
 
 ## Key RPCs
 
 | Function | Purpose |
 |----------|---------|
 | `upsert_schedule(payload jsonb)` | Insert/update a schedule block |
-| `assert_schedule_no_person_project_overlap(...)` | Reject same person+project date overlaps |
+| `assert_schedule_no_person_project_overlap(...)` | No-op (overlaps allowed; kept for compatibility) |
 | `replace_schedule_range(payload jsonb)` | Carve a sub-range into up to 3 adjacent blocks |
 | `split_schedule(payload jsonb)` | Split one block at a date into head + tail |
+| `move_schedule(payload jsonb)` | Drag-drop move: entire block or carved sub-range to new person/dates |
 | `copy_request_to_schedule(request_id, person_id)` | Approve request → schedule |
 | `publish_lab_requests(type, payload)` | Upsert requests with start/end/unit/roster |
 | `publish_lab_projects(type, payload)` | Upsert opportunity projects |
@@ -129,7 +130,7 @@ Resource-day total = sum across overlapping schedules on **different** projects 
 
 ## Migrations
 
-Greenfield sequence under `thirdparty/flyway/migrations/` (`V1`–`V14`). Reset with:
+Greenfield sequence under `thirdparty/flyway/migrations/` (`V1`–`V15`). Reset with:
 
 ```bash
 cd thirdparty && docker compose down -v && docker compose up -d

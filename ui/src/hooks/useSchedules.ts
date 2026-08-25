@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tansta
 import {
   schedulesService,
   type ListSchedulesInRangeParams,
+  type MoveScheduleParams,
   type ReplaceScheduleRangeParams,
   type SplitScheduleParams,
   type UpsertScheduleParams,
@@ -107,6 +108,16 @@ export function useSplitSchedule() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (params: SplitScheduleParams) => schedulesService.split(params),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
+    },
+  });
+}
+
+export function useMoveSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: MoveScheduleParams) => schedulesService.move(params),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: scheduleQueryKeys.all });
     },

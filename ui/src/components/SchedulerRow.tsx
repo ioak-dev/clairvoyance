@@ -148,6 +148,12 @@ type AllocationSegmentsProps = {
   resources: Resource[];
   /** Busy schedule id for this row only (null when idle / other rows). */
   busyBlockId: string | null;
+  /** True while a block drag is active anywhere in the grid. */
+  blockDragActive: boolean;
+  /** Schedule id currently being dragged (dims source bar). */
+  draggingBlockId: string | null;
+  /** Live date override while resizing a block on this row. */
+  resizePreview: { scheduleId: string; startDate: string; endDate: string } | null;
   onEditBlock: (block: AllocationBlock, options?: EditBlockOptions) => void;
   onOpenBlockMenu: (
     block: AllocationBlock,
@@ -155,6 +161,16 @@ type AllocationSegmentsProps = {
     anchorRect: DOMRect,
   ) => void;
   onRequestClick: (request: BookingRequest) => void;
+  onBlockDragPointerDown?: (
+    block: AllocationBlock,
+    segment: WeekDisplaySegment,
+    event: React.PointerEvent,
+  ) => void;
+  onBlockResizePointerDown?: (
+    block: AllocationBlock,
+    edge: 'start' | 'end',
+    event: React.PointerEvent,
+  ) => void;
 };
 
 function AllocationSegments({
@@ -167,14 +183,27 @@ function AllocationSegments({
   projects,
   resources,
   busyBlockId,
+  blockDragActive,
+  draggingBlockId,
+  resizePreview,
   onEditBlock,
   onOpenBlockMenu,
   onRequestClick,
+  onBlockDragPointerDown,
+  onBlockResizePointerDown,
 }: AllocationSegmentsProps) {
-  const weekSegments = splitBlockIntoWeekSegments(block);
+  const displayBlock =
+    resizePreview && resizePreview.scheduleId === block.scheduleId
+      ? {
+          ...block,
+          startDate: resizePreview.startDate,
+          endDate: resizePreview.endDate,
+        }
+      : block;
+  const weekSegments = splitBlockIntoWeekSegments(displayBlock);
   if (weekSegments.length === 0) return null;
 
-  const summary = rosterSummaryLabel(block.unit, block.roster);
+  const summary = rosterSummaryLabel(displayBlock.unit, displayBlock.roster);
   let blockTitle = '';
   let blockLabel = '';
   let showPersonIcon = false;
@@ -236,27 +265,41 @@ function AllocationSegments({
   const showBlockMenu = viewMode !== 'requests';
   const blockBusy = busyBlockId === block.scheduleId;
   const anyBusy = Boolean(busyBlockId);
+  const canDrag = viewMode !== 'requests' && Boolean(onBlockDragPointerDown);
+  const canResize = viewMode !== 'requests' && Boolean(onBlockResizePointerDown);
+  const isResizing = Boolean(resizePreview && resizePreview.scheduleId === block.scheduleId);
 
   return (
     <>
-      {weekSegments.map((seg) => {
+      {weekSegments.map((seg, segIdx) => {
         const bounds = getDateRangeBounds(dayColumns, seg.startDate, seg.endDate, dateColumnIndex);
         if (!bounds) return null;
 
-        const segLabel = weekSegmentLabel(block.unit, block.roster, seg.activeDays);
+        const segLabel = weekSegmentLabel(displayBlock.unit, displayBlock.roster, seg.activeDays);
         const subtitle = blockCategory
           ? `${segLabel} - ${blockCategory.charAt(0)} - ${effectiveBillable}`
           : segLabel;
+        const isFirstSeg = segIdx === 0;
+        const isLastSeg = segIdx === weekSegments.length - 1;
 
         return (
           <div
             key={`${block.scheduleId}-${seg.isoYear}-W${seg.isoWeek}`}
+            data-schedule-block-segment
             style={{
               left: `${bounds.left + 4}px`,
               width: `${Math.max(bounds.width - 8, 8)}px`,
               height: '44px',
               top: `${blockTopOffset}px`,
               ...blockSurfaceStyle,
+              opacity: draggingBlockId === block.scheduleId ? 0.35 : undefined,
+              outline: isResizing ? '2px solid rgb(56 189 248 / 0.8)' : undefined,
+            }}
+            onPointerDown={(event) => {
+              if (!canDrag || anyBusy || event.button !== 0) return;
+              const target = event.target as HTMLElement;
+              if (target.closest('[data-block-menu], [data-resize-handle]')) return;
+              onBlockDragPointerDown?.(block, seg, event);
             }}
             onClick={() => {
               if (viewMode === 'requests' && lane.request) {
@@ -275,9 +318,33 @@ function AllocationSegments({
                 new DOMRect(event.clientX, event.clientY, 0, 0),
               );
             }}
-            className={`absolute select-none overflow-visible text-left px-2 py-1.5 rounded-lg transition-transform hover:scale-[1.01] cursor-pointer shadow-sm flex items-center gap-1 ${borderClass} ${textClass} z-[5]`}
-            title={`${blockTitle}\n${seg.startDate} – ${seg.endDate}`}
+            className={`absolute select-none overflow-visible text-left px-2 py-1.5 rounded-lg transition-transform hover:scale-[1.01] ${
+              canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+            } shadow-sm flex items-center gap-1 ${borderClass} ${textClass} z-[5]`}
+            title={`${blockTitle}\n${displayBlock.startDate} – ${displayBlock.endDate}`}
           >
+            {canResize && isFirstSeg && (
+              <div
+                data-resize-handle="start"
+                title="Drag to change start date"
+                className="absolute left-0 top-0 bottom-0 w-2 -translate-x-0.5 cursor-ew-resize z-20 rounded-l-lg hover:bg-sky-400/40"
+                onPointerDown={(event) => {
+                  if (anyBusy || event.button !== 0) return;
+                  onBlockResizePointerDown?.(block, 'start', event);
+                }}
+              />
+            )}
+            {canResize && isLastSeg && (
+              <div
+                data-resize-handle="end"
+                title="Drag to change end date"
+                className="absolute right-0 top-0 bottom-0 w-2 translate-x-0.5 cursor-ew-resize z-20 rounded-r-lg hover:bg-sky-400/40"
+                onPointerDown={(event) => {
+                  if (anyBusy || event.button !== 0) return;
+                  onBlockResizePointerDown?.(block, 'end', event);
+                }}
+              />
+            )}
             <div className="flex-1 min-w-0 pr-1">
               <div className="text-[11px] font-bold tracking-tight leading-tight truncate">{blockLabel}</div>
               <div className="text-[9px] font-medium opacity-90 truncate mt-0.5">{subtitle}</div>
@@ -337,6 +404,10 @@ export type SchedulerRowProps = {
   selectionEndIdx: number | null;
   /** Busy id only when a block on this row is busy; otherwise null. */
   busyBlockId: string | null;
+  /** Schedule id currently being dragged (dims source bar). */
+  draggingBlockId: string | null;
+  /** Live date override while resizing (null when idle). */
+  resizePreview: { scheduleId: string; startDate: string; endDate: string } | null;
   onBeginDateSelection: (fullIndex: number, entityId: string) => void;
   onUpdateDateSelection: (fullIndex: number) => void;
   onOpenSelectionMenu: (anchorRect: DOMRect, toggle?: boolean) => void;
@@ -349,6 +420,16 @@ export type SchedulerRowProps = {
   ) => void;
   onOpenScheduleModalWithRes: (resId: string, projId?: string, startDate?: string, endDate?: string) => void;
   onRequestClick: (request: BookingRequest) => void;
+  onBlockDragPointerDown?: (
+    block: AllocationBlock,
+    segment: WeekDisplaySegment,
+    event: React.PointerEvent,
+  ) => void;
+  onBlockResizePointerDown?: (
+    block: AllocationBlock,
+    edge: 'start' | 'end',
+    event: React.PointerEvent,
+  ) => void;
 };
 
 export const SchedulerRow = memo(function SchedulerRow({
@@ -370,6 +451,8 @@ export const SchedulerRow = memo(function SchedulerRow({
   selectionStartIdx,
   selectionEndIdx,
   busyBlockId,
+  draggingBlockId,
+  resizePreview,
   onBeginDateSelection,
   onUpdateDateSelection,
   onOpenSelectionMenu,
@@ -378,6 +461,8 @@ export const SchedulerRow = memo(function SchedulerRow({
   onOpenBlockMenu,
   onOpenScheduleModalWithRes,
   onRequestClick,
+  onBlockDragPointerDown,
+  onBlockResizePointerDown,
 }: SchedulerRowProps) {
   const rowEntityId = row.resource?.id ?? row.project?.id ?? null;
   const rowEntityLabel = row.resource?.name ?? row.project?.name ?? '';
@@ -446,6 +531,7 @@ export const SchedulerRow = memo(function SchedulerRow({
     <div
       data-schedule-row
       data-entity-id={rowEntityId ?? undefined}
+      data-drop-person-id={viewMode === 'resources' ? row.resource?.id : undefined}
       className="flex hover:bg-surface-muted/60 items-stretch relative group border-b border-subtle min-h-[72px]"
     >
       <div className="w-[190px] min-w-[190px] border-r border-subtle px-4 bg-surface sticky left-0 z-20 flex items-center justify-between shadow-app-sm min-h-[72px]">
@@ -585,7 +671,15 @@ export const SchedulerRow = memo(function SchedulerRow({
                   : lane.project?.id || `lane-proj-${lIdx}`;
 
             return (
-              <div key={laneKey} className="h-[56px] relative w-full">
+              <div
+                key={`${laneKey}-${lIdx}`}
+                data-drop-person-id={
+                  viewMode === 'projects' && lane.resource && lane.resource.id !== 'none'
+                    ? lane.resource.id
+                    : undefined
+                }
+                className="h-[56px] relative w-full"
+              >
                 {lane.blocks.map((block) => (
                   <AllocationSegments
                     key={block.scheduleId}
@@ -598,9 +692,18 @@ export const SchedulerRow = memo(function SchedulerRow({
                     projects={projects}
                     resources={resources}
                     busyBlockId={busyBlockId}
+                    blockDragActive={Boolean(draggingBlockId)}
+                    draggingBlockId={draggingBlockId}
+                    resizePreview={
+                      resizePreview && resizePreview.scheduleId === block.scheduleId
+                        ? resizePreview
+                        : null
+                    }
                     onEditBlock={onEditBlock}
                     onOpenBlockMenu={onOpenBlockMenu}
                     onRequestClick={onRequestClick}
+                    onBlockDragPointerDown={onBlockDragPointerDown}
+                    onBlockResizePointerDown={onBlockResizePointerDown}
                   />
                 ))}
               </div>

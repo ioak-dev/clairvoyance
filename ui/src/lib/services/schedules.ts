@@ -42,6 +42,16 @@ export interface SplitScheduleParams {
   splitDate: string;
 }
 
+export interface MoveScheduleParams {
+  id: string;
+  scope: 'entire' | 'range';
+  personId: string;
+  startDate: string;
+  /** Required when scope is `range` — source week bounds inside the parent block. */
+  rangeStart?: string;
+  rangeEnd?: string;
+}
+
 export interface ListSchedulesInRangeParams {
   startDate: string;
   endDate: string;
@@ -152,6 +162,19 @@ export const schedulesService = {
       p_payload: {
         id: params.id,
         split_date: params.splitDate,
+      },
+    });
+  },
+
+  async move(params: MoveScheduleParams): Promise<ScheduleRangeResult> {
+    return http.post<ScheduleRangeResult>(`${env.postgrestUrl}/rpc/move_schedule`, {
+      p_payload: {
+        id: params.id,
+        scope: params.scope,
+        person_id: params.personId,
+        start: params.startDate,
+        range_start: params.rangeStart ?? null,
+        range_end: params.rangeEnd ?? null,
       },
     });
   },
